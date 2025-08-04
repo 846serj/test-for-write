@@ -1,0 +1,35 @@
+# AI Blog Generator
+
+This project is a small Next.js app that generates blog articles using OpenAI.
+The Generate page collects a variety of options such as article type and tone of
+voice and sends them to `/api/generate`.
+
+## Include Links option
+
+A new checkbox on the Generate page allows toggling whether links are included in
+the generated article. When **Include links in article** is unchecked the API
+route skips pulling sources from SERP API and no link instructions are sent to
+the model.
+
+## Local storage of generated articles
+
+When an article is generated, the returned HTML content and list of sources are
+saved to `localStorage` as `lastArticleContent` and `lastArticleSources`.
+Opening the Editor page reads these values to prefill the editor. If the values
+are missing (for example, after clearing storage), the user is redirected back
+to the Generate page.
+
+## WordPress promo footer
+
+After connecting your WordPress site you can store a snippet of HTML that will
+be appended to every published post. Select an account in the editor to reveal a
+textarea where you can edit this footer. Click **Save Footer** to store the
+markup in Supabase. The `/api/wordpress/publish` route automatically appends the
+saved footer before creating the draft post.
+
+## More Specific Articles
+
+The generation API now includes a default instruction encouraging concrete
+examples. Generated content will reference real car models, release years or app
+names instead of placeholders like "App 1". You can override this by providing
+custom instructions.
