@@ -36,6 +36,7 @@ export default function GeneratePage() {
     | 'Listicle/Gallery'
     | 'YouTube video to blog post'
     | 'Rewrite blog post'
+    | 'Recipe article'
   >('Blog post');
 
   // for blog‐post & rewrite
@@ -81,14 +82,15 @@ export default function GeneratePage() {
     | 'Third Person'
   >('First Person Singular');
 
-  // Listicle fields
-  const [listNumberingFormat, setListNumberingFormat] = useState<
+  // Listicle/Recipe fields
+  const [numberingFormat, setNumberingFormat] = useState<
     | '1), 2), 3)'
     | '1., 2., 3.'
     | '1:, 2:, 3:'
     | 'None'
   >('1), 2), 3)');
-  const [listItemWordCount, setListItemWordCount] = useState<number>(100);
+  const [itemWordCount, setItemWordCount] = useState<number>(100);
+  const [recipeItemCount, setRecipeItemCount] = useState<number>(5);
 
   // ─── NEW: MODEL VERSION ───────────────────────────────────────────────────────
   const models = ['gpt-4', 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'];
@@ -117,6 +119,10 @@ export default function GeneratePage() {
       alert('Enter a YouTube video link');
       return;
     }
+    if (articleType === 'Recipe article' && recipeItemCount < 1) {
+      alert('Enter a valid number of recipes');
+      return;
+    }
 
     setLoading(true);
     try {
@@ -135,8 +141,12 @@ export default function GeneratePage() {
       };
 
       if (articleType === 'Listicle/Gallery') {
-        payload.listNumberingFormat = listNumberingFormat;
-        payload.listItemWordCount = listItemWordCount;
+        payload.listNumberingFormat = numberingFormat;
+        payload.listItemWordCount = itemWordCount;
+      } else if (articleType === 'Recipe article') {
+        payload.numberingFormat = numberingFormat;
+        payload.wordsPerItem = itemWordCount;
+        payload.itemCount = recipeItemCount;
       } else if (articleType === 'YouTube video to blog post') {
         payload.videoLink = videoLink;
       } else if (articleType === 'Rewrite blog post') {
@@ -156,7 +166,9 @@ export default function GeneratePage() {
         localStorage.setItem('lastPrompt', JSON.stringify(payload));
       } catch {}
 
-      const res = await fetch('/api/generate', {
+      const url =
+        articleType === 'Recipe article' ? '/api/generate-recipe' : '/api/generate';
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -239,6 +251,7 @@ export default function GeneratePage() {
             >
               <option value="Blog post">Blog post</option>
               <option value="Listicle/Gallery">Listicle/Gallery</option>
+              <option value="Recipe article">Recipe article</option>
               <option value="YouTube video to blog post">
                 YouTube video to blog post
               </option>
@@ -258,14 +271,14 @@ export default function GeneratePage() {
             />
           </div>
 
-          {/* LIST NUMBERING FORMAT */}
-          {articleType === 'Listicle/Gallery' && (
+          {/* NUMBERING FORMAT */}
+          {(articleType === 'Listicle/Gallery' || articleType === 'Recipe article') && (
             <div>
-              <label className={labelStyle}>List Numbering Format</label>
+              <label className={labelStyle}>Numbering Format</label>
               <select
                 className={clsx(inputStyle, 'mb-2')}
-                value={listNumberingFormat}
-                onChange={(e) => setListNumberingFormat(e.target.value as any)}
+                value={numberingFormat}
+                onChange={(e) => setNumberingFormat(e.target.value as any)}
               >
                 <option value="1), 2), 3)">1), 2), 3)</option>
                 <option value="1., 2., 3.">1., 2., 3.</option>
@@ -284,8 +297,31 @@ export default function GeneratePage() {
                   type="number"
                   min={1}
                   className={inputStyle + ' w-24'}
-                  value={listItemWordCount}
-                  onChange={(e) => setListItemWordCount(Number(e.target.value))}
+                  value={itemWordCount}
+                  onChange={(e) => setItemWordCount(Number(e.target.value))}
+                />
+              </div>
+            </div>
+          ) : articleType === 'Recipe article' ? (
+            <div>
+              <div className="flex items-center space-x-2">
+                <label className={labelStyle + ' mb-0'}>Number of recipes</label>
+                <input
+                  type="number"
+                  min={1}
+                  className={inputStyle + ' w-24'}
+                  value={recipeItemCount}
+                  onChange={(e) => setRecipeItemCount(Number(e.target.value))}
+                />
+              </div>
+              <div className="mt-2 flex items-center space-x-2">
+                <label className={labelStyle + ' mb-0'}>Words per item</label>
+                <input
+                  type="number"
+                  min={1}
+                  className={inputStyle + ' w-24'}
+                  value={itemWordCount}
+                  onChange={(e) => setItemWordCount(Number(e.target.value))}
                 />
               </div>
             </div>
