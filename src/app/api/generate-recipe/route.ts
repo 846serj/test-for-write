@@ -54,23 +54,44 @@ export async function POST(request: NextRequest) {
     // Generate a list section for each recipe record
     for (let i = 0; i < records.length; i++) {
       const fields = records[i].fields;
-      const recipeName: string = fields.Name || fields.title || fields.recipe || `Recipe ${i + 1}`;
+      const recipeName: string =
+        fields.Name ||
+        fields.Title ||
+        fields.title ||
+        fields.recipe ||
+        `Recipe ${i + 1}`;
 
-      // Use existing description if present, otherwise generate one with OpenAI
-      let description: string;
-      if (fields.Description) {
-        description = String(fields.Description);
-      } else {
-        const descPrompt = `Write a brief description (~${wordsPerItem} words) for the recipe "${recipeName}".`;
-        const descResponse = await openai.chat.completions.create({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            { role: 'system', content: 'You are a helpful culinary assistant.' },
-            { role: 'user', content: descPrompt }
-          ]
-        });
-        description = descResponse.choices[0]?.message?.content?.trim() || '';
-      }
+      const recipeUrl: string =
+        fields.URL ||
+        fields.Url ||
+        fields.link ||
+        fields.Link ||
+        '';
+
+      const imageUrl: string =
+        fields['Image Link'] ||
+        (Array.isArray(fields.Image) && fields.Image[0]?.url) ||
+        fields.image ||
+        '';
+
+      const source: string = fields.Source || fields['Blog Source'] || '';
+
+      // Always generate a 3-4 sentence description with OpenAI, using any
+      // existing description as context when available
+      const contextDesc =
+        typeof fields.Description === 'string'
+          ? fields.Description.slice(0, 200)
+          : '';
+      const descPrompt = `Write a 3-4 sentence engaging description for the recipe "${recipeName}". Use this context if helpful: ${contextDesc}`;
+      const descResponse = await openai.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          { role: 'system', content: 'You are a helpful culinary assistant.' },
+          { role: 'user', content: descPrompt }
+        ],
+        max_tokens: Math.max(100, wordsPerItem)
+      });
+      const description = descResponse.choices[0]?.message?.content?.trim() || '';
 
       // Determine numbering prefix based on format (e.g., "1. ", "1) ", or none)
       let prefix = '';
@@ -79,9 +100,17 @@ export async function POST(request: NextRequest) {
         prefix = numberingFormat.includes(')') ? `${i + 1}) ` : `${i + 1}. `;
       }
 
-      // Append the heading and paragraph blocks for this recipe item
+      // Append the heading, image (if any), and paragraph blocks for this recipe item
       content += `<!-- wp:heading {"level":2} -->\n<h2>${prefix}${recipeName}</h2>\n<!-- /wp:heading -->\n`;
-      content += `<!-- wp:paragraph -->\n<p>${description}</p>\n<!-- /wp:paragraph -->\n\n`;
+      if (imageUrl) {
+        content +=
+          `<!-- wp:image {"sizeSlug":"large","linkDestination":"custom"} -->\n` +
+          `<figure class="wp-block-image size-large"><a href="${recipeUrl}" target="_blank" rel="noreferrer noopener"><img src="${imageUrl}" alt="${recipeName}"/></a>` +
+          `${source ? `<figcaption class="wp-element-caption">Image by ${source}</figcaption>` : ''}</figure>\n` +
+          `<!-- /wp:image -->\n`;
+      }
+      content +=
+        `<!-- wp:paragraph -->\n<p>${description} ${recipeUrl ? `<a href="${recipeUrl}" target="_blank" rel="noreferrer noopener">${recipeName}</a>` : ''}</p>\n<!-- /wp:paragraph -->\n\n`;
     }
 
     // (Optional: add a conclusion or closing paragraph if needed using OpenAI)
