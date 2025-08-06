@@ -19,17 +19,70 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Airtable environment variables not configured' }, { status: 500 });
     }
 
-    // Fetch recipe records from Airtable
-    const url = `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/${process.env.AIRTABLE_TABLE_NAME}`;
-    const airtableRes = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${process.env.AIRTABLE_API_KEY}` }
+    // Use OpenAI to extract keywords from the provided title
+    let keywords: string[] = [];
+    if (title) {
+      try {
+        const keywordPrompt =
+          `Extract 3-5 key categories, tags, flavors, or dish types from this recipe roundup title: '${title}'. ` +
+          'Focus on the main theme, such as flavors (e.g., chocolate, vanilla) and types (e.g., desserts, cakes). ' +
+          'Output as a comma-separated list.';
+        const keywordRes = await openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [{ role: 'user', content: keywordPrompt }],
+          max_tokens: 50,
+        });
+        const kwText = keywordRes.choices[0]?.message?.content || '';
+        keywords = kwText
+          .split(',')
+          .map((k) => k.trim().toLowerCase())
+          .filter(Boolean);
+      } catch (e) {
+        console.error('Keyword extraction failed', e);
+      }
+    }
+
+    // Build Airtable filterByFormula using the extracted keywords
+    let filterFormula = 'NOT({Title} = "")';
+    if (keywords.length > 0) {
+      const parts: string[] = [];
+      for (const kw of keywords) {
+        const escaped = kw.replace(/'/g, "\\'");
+        parts.push(`FIND('${escaped}', LOWER({Category})) > 0`);
+        parts.push(`FIND('${escaped}', LOWER({Tag})) > 0`);
+        parts.push(`FIND('${escaped}', LOWER({Title})) > 0`);
+        parts.push(`FIND('${escaped}', LOWER({Description})) > 0`);
+      }
+      filterFormula = `OR(${parts.join(',')})`;
+    }
+
+    // Fetch recipe records from Airtable using the filter formula
+    const baseUrl = `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/${process.env.AIRTABLE_TABLE_NAME}`;
+    const params = new URLSearchParams({
+      filterByFormula: filterFormula,
+      'sort[0][field]': 'Date Published',
+      'sort[0][direction]': 'desc',
+    });
+    if (itemCount && itemCount > 0) {
+      params.set('maxRecords', String(itemCount));
+    }
+
+    const airtableRes = await fetch(`${baseUrl}?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
     });
     if (!airtableRes.ok) {
       const errorText = await airtableRes.text();
-      return NextResponse.json({ error: `Airtable request failed: ${errorText}` }, { status: 500 });
+      return NextResponse.json(
+        { error: `Airtable request failed: ${errorText}` },
+        { status: 500 }
+      );
     }
     const airtableData = await airtableRes.json();
     let records: any[] = airtableData.records || [];
+
+    if (records.length < (itemCount || 0)) {
+      console.warn(`Only ${records.length} recipes found matching keywords.`);
+    }
 
     // Use embeddings to rank recipes by relevance to the provided title
     if (title && records.length > 0) {
