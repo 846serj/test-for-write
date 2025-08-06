@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import sharp from 'sharp';
+import { getCenterCropRegion, getCroppedImg } from '../../../utils/imageCrop';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
 
@@ -76,6 +78,25 @@ export async function POST(request: NextRequest) {
 
       const source: string = fields.Source || fields['Blog Source'] || '';
 
+      let finalImageUrl = imageUrl;
+      if (imageUrl) {
+        try {
+          const imgRes = await fetch(imageUrl);
+          if (imgRes.ok) {
+            const arrayBuffer = await imgRes.arrayBuffer();
+            const imgBuffer = Buffer.from(arrayBuffer);
+            const metadata = await sharp(imgBuffer).metadata();
+            if (metadata.width && metadata.height) {
+              const cropRegion = getCenterCropRegion(metadata.width, metadata.height);
+              const croppedBuffer = await getCroppedImg(imgBuffer, cropRegion, 1280, 720);
+              finalImageUrl = `data:image/jpeg;base64,${croppedBuffer.toString('base64')}`;
+            }
+          }
+        } catch (e) {
+          console.error('Image processing failed', e);
+        }
+      }
+
       // Always generate a 3-4 sentence description with OpenAI, using any
       // existing description as context when available
       const contextDesc =
@@ -102,10 +123,10 @@ export async function POST(request: NextRequest) {
 
       // Append the heading, image (if any), and paragraph blocks for this recipe item
       content += `<!-- wp:heading {"level":2} -->\n<h2>${prefix}${recipeName}</h2>\n<!-- /wp:heading -->\n`;
-      if (imageUrl) {
+      if (finalImageUrl) {
         content +=
           `<!-- wp:image {"sizeSlug":"large","linkDestination":"custom"} -->\n` +
-          `<figure class="wp-block-image size-large"><a href="${recipeUrl}" target="_blank" rel="noreferrer noopener"><img src="${imageUrl}" alt="${recipeName}"/></a>` +
+          `<figure class="wp-block-image size-large"><a href="${recipeUrl}" target="_blank" rel="noreferrer noopener"><img src="${finalImageUrl}" alt="${recipeName}"/></a>` +
           `${source ? `<figcaption class="wp-element-caption">Image by ${source}</figcaption>` : ''}</figure>\n` +
           `<!-- /wp:image -->\n`;
       }
