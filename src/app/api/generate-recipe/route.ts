@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
 import sharp from 'sharp';
+import { openai } from '../../../lib/openai';
 import { getCenterCropRegion, getCroppedImg } from '../../../utils/imageCrop';
 import { getCachedRecipeEmbeddings } from '../../../utils/recipeEmbeddings';
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
 
 export async function POST(request: NextRequest) {
   try {
