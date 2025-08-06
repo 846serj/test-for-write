@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import sharp from 'sharp';
 import { getCenterCropRegion, getCroppedImg } from '../../../utils/imageCrop';
+import { getCachedRecipeEmbeddings } from '../../../utils/recipeEmbeddings';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
 
@@ -11,7 +12,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const title: string = body.title || '';
     const wordsPerItem: number = body.wordsPerItem ? parseInt(body.wordsPerItem) : 100;
-    const numberingFormat: string = body.numberingFormat || '1.';  // e.g. "1." or "1)" or "none"
+    const numberingFormat: string = body.numberingFormat || '1.'; // e.g. "1." or "1)" or "none"
     const itemCount: number | undefined = body.itemCount ? parseInt(body.itemCount) : undefined;
 
     // Ensure Airtable environment variables are set
@@ -19,102 +20,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Airtable environment variables not configured' }, { status: 500 });
     }
 
-    // Use OpenAI to extract keywords from the provided title
-    let keywords: string[] = [];
+    // Retrieve cached recipe embeddings and select top matches
+    const cachedEmbeddings = await getCachedRecipeEmbeddings();
+    const baseUrl = `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/${process.env.AIRTABLE_TABLE_NAME}`;
+    const headers = { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` };
+
+    const count = itemCount && itemCount > 0 ? itemCount : cachedEmbeddings.length;
+    let selectedIds: string[] = [];
+
     if (title) {
       try {
-        const keywordPrompt =
-          `Extract 3-5 key categories, tags, flavors, or dish types from this recipe roundup title: '${title}'. ` +
-          'Focus on the main theme, such as flavors (e.g., chocolate, vanilla) and types (e.g., desserts, cakes). ' +
-          'Output as a comma-separated list.';
-        const keywordRes = await openai.chat.completions.create({
-          model: 'gpt-3.5-turbo',
-          messages: [{ role: 'user', content: keywordPrompt }],
-          max_tokens: 50,
-        });
-        const kwText = keywordRes.choices[0]?.message?.content || '';
-        keywords = kwText
-          .split(',')
-          .map((k) => k.trim().toLowerCase())
-          .filter(Boolean);
-      } catch (e) {
-        console.error('Keyword extraction failed', e);
-      }
-    }
-
-    // Build Airtable filterByFormula using the extracted keywords
-    let filterFormula = 'NOT({Title} = "")';
-    if (keywords.length > 0) {
-      const parts: string[] = [];
-      for (const kw of keywords) {
-        const escaped = kw.replace(/'/g, "\\'");
-        parts.push(`FIND('${escaped}', LOWER({Category})) > 0`);
-        parts.push(`FIND('${escaped}', LOWER({Tag})) > 0`);
-        parts.push(`FIND('${escaped}', LOWER({Title})) > 0`);
-        parts.push(`FIND('${escaped}', LOWER({Description})) > 0`);
-      }
-      filterFormula = `OR(${parts.join(',')})`;
-    }
-
-    // Fetch recipe records from Airtable using the filter formula
-    const baseUrl = `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/${process.env.AIRTABLE_TABLE_NAME}`;
-    const params = new URLSearchParams({
-      filterByFormula: filterFormula,
-      'sort[0][field]': 'Date Published',
-      'sort[0][direction]': 'desc',
-    });
-    if (itemCount && itemCount > 0) {
-      params.set('maxRecords', String(itemCount));
-    }
-
-    const airtableRes = await fetch(`${baseUrl}?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!airtableRes.ok) {
-      const errorText = await airtableRes.text();
-      return NextResponse.json(
-        { error: `Airtable request failed: ${errorText}` },
-        { status: 500 }
-      );
-    }
-    const airtableData = await airtableRes.json();
-    let records: any[] = airtableData.records || [];
-
-    if (records.length < (itemCount || 0)) {
-      console.warn(`Only ${records.length} recipes found matching keywords.`);
-    }
-
-    // Use embeddings to rank recipes by relevance to the provided title
-    if (title && records.length > 0) {
-      try {
-        const recordTexts = records.map((r) => {
-          const f = r.fields || {};
-          const name =
-            f.Name ||
-            f.Title ||
-            f.title ||
-            f.recipe ||
-            '';
-          const cats =
-            f.Categories ||
-            f.Category ||
-            f.categories ||
-            f.category ||
-            f.Tags ||
-            '';
-          const catsStr = Array.isArray(cats) ? cats.join(' ') : cats;
-          return `${name} ${catsStr}`.trim();
-        });
-
         const embeddingRes = await openai.embeddings.create({
           model: 'text-embedding-3-small',
-          input: [title, ...recordTexts],
+          input: title,
         });
-
-        const [titleEmbedding, ...recipeEmbeddings] = embeddingRes.data.map(
-          (d: any) => d.embedding
-        );
-
+        const titleEmbedding = embeddingRes.data[0].embedding;
         const cosineSim = (a: number[], b: number[]) => {
           let dot = 0,
             normA = 0,
@@ -126,20 +46,36 @@ export async function POST(request: NextRequest) {
           }
           return dot / (Math.sqrt(normA) * Math.sqrt(normB));
         };
-
-        records = records
-          .map((rec, idx) => ({ rec, sim: cosineSim(titleEmbedding, recipeEmbeddings[idx]) }))
+        selectedIds = cachedEmbeddings
+          .map((r) => ({ id: r.id, sim: cosineSim(titleEmbedding, r.embedding) }))
           .sort((a, b) => b.sim - a.sim)
-          .map((r) => r.rec);
+          .slice(0, count)
+          .map((r) => r.id);
       } catch (err) {
-        console.error('Embedding ranking failed', err);
+        console.error('Title embedding failed', err);
+        selectedIds = cachedEmbeddings.slice(0, count).map((r) => r.id);
       }
+    } else {
+      selectedIds = cachedEmbeddings.slice(0, count).map((r) => r.id);
     }
 
-    // If a specific number of items is requested, slice the records after ranking
-    if (itemCount && itemCount > 0) {
-      records = records.slice(0, itemCount);
-    }
+    const records = (
+      await Promise.all(
+        selectedIds.map(async (id) => {
+          try {
+            const res = await fetch(`${baseUrl}/${id}`, { headers });
+            if (!res.ok) {
+              console.error(`Airtable fetch failed for ${id}: ${res.status}`);
+              return null;
+            }
+            return await res.json();
+          } catch (e) {
+            console.error(`Airtable fetch error for ${id}`, e);
+            return null;
+          }
+        })
+      )
+    ).filter(Boolean) as any[];
 
     let content = '';
     // Optionally generate an introduction using OpenAI, based on the given title
