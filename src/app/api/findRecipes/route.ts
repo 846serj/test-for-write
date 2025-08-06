@@ -59,8 +59,6 @@ export async function POST(req: NextRequest) {
     const maxRecords = count && count > 0 ? count : 10;
     const url = new URL(baseUrl);
     url.searchParams.append('filterByFormula', filterFormula);
-    url.searchParams.append('sort[0][field]', 'Date Published');
-    url.searchParams.append('sort[0][direction]', 'desc');
     url.searchParams.append('maxRecords', String(maxRecords));
     url.searchParams.append('fields[]', 'Title');
     url.searchParams.append('fields[]', 'URL');
