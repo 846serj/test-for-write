@@ -175,8 +175,10 @@ export default function GeneratePage() {
       });
       const data = await res.json();
 
-      if (!data.content) {
-        alert(`Failed to generate article: ${data.error || 'no content returned'}`);
+      if (!res.ok || !data.content) {
+        alert(
+          `Failed to generate article: ${data.error || res.statusText || 'no content returned'}`
+        );
         return;
       }
 

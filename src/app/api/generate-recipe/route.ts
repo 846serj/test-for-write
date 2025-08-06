@@ -75,6 +75,13 @@ export async function POST(request: NextRequest) {
       )
     ).filter(Boolean) as any[];
 
+    if (records.length === 0) {
+      return NextResponse.json(
+        { error: 'No recipe records found' },
+        { status: 404 }
+      );
+    }
+
     let content = '';
     // Optionally generate an introduction using OpenAI, based on the given title
     if (title) {
