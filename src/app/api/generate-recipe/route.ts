@@ -31,7 +31,59 @@ export async function POST(request: NextRequest) {
     const airtableData = await airtableRes.json();
     let records: any[] = airtableData.records || [];
 
-    // If a specific number of items is requested, slice the records
+    // Use embeddings to rank recipes by relevance to the provided title
+    if (title && records.length > 0) {
+      try {
+        const recordTexts = records.map((r) => {
+          const f = r.fields || {};
+          const name =
+            f.Name ||
+            f.Title ||
+            f.title ||
+            f.recipe ||
+            '';
+          const cats =
+            f.Categories ||
+            f.Category ||
+            f.categories ||
+            f.category ||
+            f.Tags ||
+            '';
+          const catsStr = Array.isArray(cats) ? cats.join(' ') : cats;
+          return `${name} ${catsStr}`.trim();
+        });
+
+        const embeddingRes = await openai.embeddings.create({
+          model: 'text-embedding-3-small',
+          input: [title, ...recordTexts],
+        });
+
+        const [titleEmbedding, ...recipeEmbeddings] = embeddingRes.data.map(
+          (d: any) => d.embedding
+        );
+
+        const cosineSim = (a: number[], b: number[]) => {
+          let dot = 0,
+            normA = 0,
+            normB = 0;
+          for (let i = 0; i < a.length; i++) {
+            dot += a[i] * b[i];
+            normA += a[i] * a[i];
+            normB += b[i] * b[i];
+          }
+          return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+        };
+
+        records = records
+          .map((rec, idx) => ({ rec, sim: cosineSim(titleEmbedding, recipeEmbeddings[idx]) }))
+          .sort((a, b) => b.sim - a.sim)
+          .map((r) => r.rec);
+      } catch (err) {
+        console.error('Embedding ranking failed', err);
+      }
+    }
+
+    // If a specific number of items is requested, slice the records after ranking
     if (itemCount && itemCount > 0) {
       records = records.slice(0, itemCount);
     }
@@ -103,7 +155,20 @@ export async function POST(request: NextRequest) {
         typeof fields.Description === 'string'
           ? fields.Description.slice(0, 200)
           : '';
-      const descPrompt = `Write a 3-4 sentence engaging description for the recipe "${recipeName}". Use this context if helpful: ${contextDesc}`;
+      const nextFields = records[i + 1]?.fields;
+      const nextName =
+        nextFields &&
+        (nextFields.Name ||
+          nextFields.Title ||
+          nextFields.title ||
+          nextFields.recipe);
+      let descPrompt = `Write a 3-4 sentence engaging description for the recipe "${recipeName}".`;
+      if (contextDesc) {
+        descPrompt += ` Use this context if helpful: ${contextDesc}`;
+      }
+      if (nextName) {
+        descPrompt += ` Conclude with a short transitional sentence introducing the next recipe, "${nextName}".`;
+      }
       const descResponse = await openai.chat.completions.create({
         model: 'gpt-3.5-turbo',
         messages: [
@@ -134,7 +199,38 @@ export async function POST(request: NextRequest) {
         `<!-- wp:paragraph -->\n<p>${description} ${recipeUrl ? `<a href="${recipeUrl}" target="_blank" rel="noreferrer noopener">${recipeName}</a>` : ''}</p>\n<!-- /wp:paragraph -->\n\n`;
     }
 
-    // (Optional: add a conclusion or closing paragraph if needed using OpenAI)
+    // Add a concluding paragraph to tie the recipes together
+    if (records.length > 0 && title) {
+      try {
+        const recipeNames = records
+          .map((r) => {
+            const f = r.fields || {};
+            return (
+              f.Name ||
+              f.Title ||
+              f.title ||
+              f.recipe ||
+              ''
+            );
+          })
+          .filter(Boolean)
+          .join(', ');
+        const outroPrompt = `Write a brief concluding paragraph for an article titled "${title}" that featured these recipes: ${recipeNames}. Connect them smoothly and end on an inviting note.`;
+        const outroRes = await openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: 'You are an expert blog writer.' },
+            { role: 'user', content: outroPrompt }
+          ]
+        });
+        const outroText = outroRes.choices[0]?.message?.content?.trim() || '';
+        if (outroText) {
+          content += `<!-- wp:paragraph -->\n<p>${outroText}</p>\n<!-- /wp:paragraph -->\n`;
+        }
+      } catch (e) {
+        console.error('Conclusion generation failed', e);
+      }
+    }
 
     return NextResponse.json({ content }, { status: 200 });
   } catch (err) {
