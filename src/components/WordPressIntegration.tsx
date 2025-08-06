@@ -141,6 +141,116 @@ export default function WordPressIntegration({ title, content }: Props) {
     }
   };
 
+  // Convert a data URL to a Blob
+  const dataUrlToBlob = (dataUrl: string): Blob => {
+    const [header, data] = dataUrl.split(',');
+    const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+    const binary = atob(data);
+    const array = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+    return new Blob([array], { type: mime });
+  };
+
+  // Resize/crop an image Blob using a canvas
+  const getCroppedImg = async (blob: Blob): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read image'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Failed to load image'));
+        img.onload = () => {
+          const maxWidth = 1200;
+          let { width, height } = img;
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Canvas context not available'));
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(
+            (b) => {
+              if (b) resolve(b);
+              else reject(new Error('Canvas is empty'));
+            },
+            blob.type || 'image/jpeg',
+            0.9
+          );
+        };
+        img.src = reader.result as string;
+      };
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  // Upload any data/external images in the content to WordPress media library
+  const replaceImageSources = async (
+    html: string,
+    account: Account
+  ): Promise<string> => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const imgs = Array.from(doc.querySelectorAll('img'));
+    const cache: Record<string, string> = {};
+
+    for (const img of imgs) {
+      const src = img.getAttribute('src') || '';
+      const isData = src.startsWith('data:');
+      const isExternal = /^https?:\/\//i.test(src);
+      if (!isData && !isExternal) continue;
+
+      if (cache[src]) {
+        img.setAttribute('src', cache[src]);
+        continue;
+      }
+
+      try {
+        let blob: Blob;
+        if (isData) {
+          blob = dataUrlToBlob(src);
+        } else {
+          const fetched = await fetch(src);
+          if (!fetched.ok) throw new Error('Failed to fetch image');
+          const original = await fetched.blob();
+          blob = await getCroppedImg(original);
+        }
+
+        const formData = new FormData();
+        formData.append('file', blob, `image-${Date.now()}.jpg`);
+
+        const mediaUrl =
+          account.site_url.replace(/\/$/, '') + '/wp-json/wp/v2/media';
+        const uploadRes = await fetch(
+          `/api/wordpress/proxy?userId=${userId}&accountId=${selectedId}&url=${encodeURIComponent(mediaUrl)}`,
+          {
+            method: 'POST',
+            body: formData,
+          }
+        );
+        const uploadJson = await uploadRes.json();
+        if (!uploadRes.ok) {
+          throw new Error(uploadJson.error || uploadRes.statusText);
+        }
+        const newUrl = uploadJson.source_url || uploadJson.guid?.rendered;
+        if (!newUrl) throw new Error('No media URL returned');
+
+        img.setAttribute('src', newUrl);
+        cache[src] = newUrl;
+      } catch (err: any) {
+        throw new Error(err?.message || 'Image upload failed');
+      }
+    }
+
+    return doc.body.innerHTML;
+  };
+
   // 4) Publish the article
   const publish = async () => {
     setMsg('');
@@ -166,26 +276,34 @@ export default function WordPressIntegration({ title, content }: Props) {
     }
   
     console.log('WP proxy publish payload:', { accountId: selectedId, title, content });
-  
+
     try {
       const account = accounts.find((a) => a.id === selectedId);
       if (!account) {
         throw new Error('Selected account not found');
       }
-  
+
+      // Replace image sources with uploaded media URLs
+      let updatedContent = content;
+      try {
+        updatedContent = await replaceImageSources(content, account);
+      } catch (imgErr: any) {
+        throw new Error(imgErr?.message || 'Image upload failed');
+      }
+
       const postsUrl = account.site_url.replace(/\/$/, '') + '/wp-json/wp/v2/posts';
-  
+
       const res = await fetch(
         `/api/wordpress/proxy?userId=${userId}&accountId=${selectedId}&url=${encodeURIComponent(postsUrl)}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title, content }),
+          body: JSON.stringify({ title, content: updatedContent }),
         }
       );
-  
+
       const json = await res.json();
-  
+
       if (!res.ok) {
         console.error('Proxy publish error:', json.error);
         setMsg('Publish failed: ' + (json.error || res.status));
