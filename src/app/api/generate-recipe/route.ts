@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { openai } from '../../../lib/openai';
 import { getCenterCropRegion, getCroppedImg } from '../../../utils/imageCrop';
-import { getCachedRecipeEmbeddings } from '../../../utils/recipeEmbeddings';
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,69 +17,64 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Airtable environment variables not configured' }, { status: 500 });
     }
 
-    // Retrieve cached recipe embeddings and select top matches
-    const cachedEmbeddings = await getCachedRecipeEmbeddings();
-    const baseUrl = `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/${process.env.AIRTABLE_TABLE_NAME}`;
-    const headers = { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` };
+      const baseUrl = `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/${encodeURIComponent(
+        process.env.AIRTABLE_TABLE_NAME as string
+      )}`;
+      const headers = { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` };
 
-    const count = itemCount && itemCount > 0 ? itemCount : cachedEmbeddings.length;
-    let selectedIds: string[] = [];
+      const count = itemCount && itemCount > 0 ? itemCount : 10;
 
-    if (title) {
-      try {
-        const embeddingRes = await openai.embeddings.create({
-          model: 'text-embedding-3-small',
-          input: title,
-        });
-        const titleEmbedding = embeddingRes.data[0].embedding;
-        const cosineSim = (a: number[], b: number[]) => {
-          let dot = 0,
-            normA = 0,
-            normB = 0;
-          for (let i = 0; i < a.length; i++) {
-            dot += a[i] * b[i];
-            normA += a[i] * a[i];
-            normB += b[i] * b[i];
-          }
-          return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-        };
-        selectedIds = cachedEmbeddings
-          .map((r) => ({ id: r.id, sim: cosineSim(titleEmbedding, r.embedding) }))
-          .sort((a, b) => b.sim - a.sim)
-          .slice(0, count)
-          .map((r) => r.id);
-      } catch (err) {
-        console.error('Title embedding failed', err);
-        selectedIds = cachedEmbeddings.slice(0, count).map((r) => r.id);
-      }
-    } else {
-      selectedIds = cachedEmbeddings.slice(0, count).map((r) => r.id);
-    }
-
-    const records = (
-      await Promise.all(
-        selectedIds.map(async (id) => {
-          try {
-            const res = await fetch(`${baseUrl}/${id}`, { headers });
-            if (!res.ok) {
-              console.error(`Airtable fetch failed for ${id}: ${res.status}`);
-              return null;
+      let filterFormula = "NOT({Title} = '')";
+      if (title) {
+        try {
+          const keywordPrompt = `Extract 3-5 key categories, tags, flavors, or dish types from this recipe roundup title: '${title}'. Focus on the main theme, such as flavors (e.g., chocolate, vanilla) and types (e.g., desserts, cakes). Output as a comma-separated list.`;
+          const keywordRes = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [{ role: 'user', content: keywordPrompt }],
+            max_tokens: 50,
+          });
+          const keywords = keywordRes.choices[0]?.message?.content
+            ?.split(',')
+            .map((kw) => kw.trim().toLowerCase())
+            .filter(Boolean);
+          if (keywords && keywords.length) {
+            const parts: string[] = [];
+            for (const kw of keywords) {
+              parts.push(`FIND('${kw}', LOWER({Category})) > 0`);
+              parts.push(`FIND('${kw}', LOWER({Tag})) > 0`);
+              parts.push(`FIND('${kw}', LOWER({Title})) > 0`);
+              parts.push(`FIND('${kw}', LOWER({Description})) > 0`);
             }
-            return await res.json();
-          } catch (e) {
-            console.error(`Airtable fetch error for ${id}`, e);
-            return null;
+            filterFormula = `OR(${parts.join(',')})`;
           }
-        })
-      )
-    ).filter(Boolean) as any[];
+        } catch (err) {
+          console.error('Keyword extraction failed', err);
+        }
+      }
 
-    if (records.length === 0) {
-      return NextResponse.json(
-        { error: 'No recipe records found' },
-        { status: 404 }
-      );
-    }
+      const url = new URL(baseUrl);
+      url.searchParams.append('filterByFormula', filterFormula);
+      url.searchParams.append('sort[0][field]', 'Date Published');
+      url.searchParams.append('sort[0][direction]', 'desc');
+      url.searchParams.append('maxRecords', String(count));
+      for (const f of ['Title', 'URL', 'Image Link', 'Blog Source', 'Description', 'Category', 'Tag']) {
+        url.searchParams.append('fields[]', f);
+      }
+
+      const res = await fetch(url.toString(), { headers });
+      if (!res.ok) {
+        console.error('Airtable fetch failed', await res.text());
+        return NextResponse.json({ error: 'Failed to fetch recipes' }, { status: res.status });
+      }
+      const data = await res.json();
+      const records = (data.records || []) as any[];
+
+      if (records.length === 0) {
+        return NextResponse.json(
+          { error: 'No recipe records found' },
+          { status: 404 }
+        );
+      }
 
     let content = '';
     // Optionally generate an introduction using OpenAI, based on the given title
