@@ -19,6 +19,7 @@
     "openai": "^4.96.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "sharp": "^0.33.2",
     "sonner": "^2.0.7"
   },
   "devDependencies": {
