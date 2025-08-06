@@ -84,18 +84,19 @@ async function handleRequest(req: NextRequest, method: string) {
       'Accept': 'application/json',
       'Accept-Encoding': 'gzip, deflate'
     };
-    if (contentType && !contentType.includes('multipart/form-data')) {
+    if (contentType) {
       forwardHeaders['Content-Type'] = contentType;
     }
 
     // 4. Set up fetch options, including forwarding the request body if present
     const fetchOptions: any = { method, headers: forwardHeaders };
     if (method === 'POST' || method === 'PUT') {
-      if (req.body) {
+      if (contentType?.includes('multipart/form-data')) {
+        fetchOptions.body = req.body;
+        fetchOptions.duplex = 'half';
+      } else if (req.body) {
         fetchOptions.body = req.body;
         fetchOptions.duplex = 'half'; // body was replaced above if JSON with footer
-      } else if (contentType?.includes('multipart/form-data')) {
-        fetchOptions.body = await req.formData();
       } else if (contentType?.includes('application/json')) {
         fetchOptions.body = JSON.stringify(await req.json());
       } else {
