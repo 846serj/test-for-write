@@ -51,7 +51,7 @@ test('findRecipes returns empty array when no close match exists', async () => {
     { id: '2', title: 'Vanilla Ice Cream', url: 'b', embedding: [0, 1] }
   );
   queryEmbedding.length = 0;
-  queryEmbedding.push(0, 1);
+  queryEmbedding.push(-1, 0);
   const res = await findRecipes('Savory steak', 5, 0.9);
   assert.deepStrictEqual(res, []);
 });
