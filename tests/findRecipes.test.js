@@ -3,14 +3,14 @@ import fs from 'fs';
 import * as ts from 'typescript';
 import { test } from 'node:test';
 
-// Load the TypeScript source for the findRecipes route
-const routePath = new URL('../src/app/api/findRecipes/route.ts', import.meta.url);
-const tsCode = fs.readFileSync(routePath, 'utf8');
+// Load the TypeScript source for the findRecipes helper
+const modulePath = new URL('../src/lib/findRecipes.ts', import.meta.url);
+const tsCode = fs.readFileSync(modulePath, 'utf8');
 
 // Extract the findRecipes helper function
 const funcMatch = tsCode.match(/async function findRecipes[\s\S]*?\n\}/);
 if (!funcMatch) {
-  throw new Error('findRecipes function not found in route.ts');
+  throw new Error('findRecipes function not found in findRecipes.ts');
 }
 
 // Build a testable module that mocks openai and embedding cache

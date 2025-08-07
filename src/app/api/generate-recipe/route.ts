@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { openai } from '../../../lib/openai';
 import { getCenterCropRegion, getCroppedImg } from '../../../utils/imageCrop';
-import { findRecipes } from '../findRecipes/route';
+import { findRecipes } from '../../../lib/findRecipes';
 import type { RecipeResult } from '../../../types/api';
 
 export function formatNumberingPrefix(
