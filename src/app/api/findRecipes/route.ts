@@ -7,6 +7,37 @@ interface RecipeResult {
   url?: string;
 }
 
+async function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function extractKeywordsWithRetry(
+  prompt: string,
+  retries = 3,
+  baseDelay = 500
+): Promise<string[]> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const keywordRes = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 50,
+      });
+      const keywords =
+        keywordRes.choices[0]?.message?.content
+          ?.split(',')
+          .map((kw) => kw.trim().toLowerCase())
+          .filter(Boolean) ?? [];
+      if (keywords.length) return keywords;
+      throw new Error('No keywords extracted');
+    } catch (err) {
+      if (attempt === retries) throw err;
+      await sleep(baseDelay * 2 ** attempt);
+    }
+  }
+  return [];
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { headline, count } = await req.json();
@@ -31,17 +62,9 @@ export async function POST(req: NextRequest) {
     const headers = { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` };
 
     let filterFormula = "NOT({Title} = '')";
+    const keywordPrompt = `Extract 3-5 key categories, tags, flavors, or dish types from this recipe roundup title: '${headline}'. Focus on the main theme, such as flavors (e.g., chocolate, vanilla) and types (e.g., desserts, cakes). Output as a comma-separated list.`;
     try {
-      const keywordPrompt = `Extract 3-5 key categories, tags, flavors, or dish types from this recipe roundup title: '${headline}'. Focus on the main theme, such as flavors (e.g., chocolate, vanilla) and types (e.g., desserts, cakes). Output as a comma-separated list.`;
-      const keywordRes = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: keywordPrompt }],
-        max_tokens: 50,
-      });
-      const keywords = keywordRes.choices[0]?.message?.content
-        ?.split(',')
-        .map((kw) => kw.trim().toLowerCase())
-        .filter(Boolean);
+      const keywords = await extractKeywordsWithRetry(keywordPrompt);
       if (keywords && keywords.length) {
         const parts: string[] = [];
         for (const kw of keywords) {
@@ -53,7 +76,11 @@ export async function POST(req: NextRequest) {
         filterFormula = `OR(${parts.join(',')})`;
       }
     } catch (err) {
-      console.error('Keyword extraction failed', err);
+      console.warn(
+        'Keyword extraction failed after multiple attempts. Falling back to broad filter. Verify OpenAI API key or network connectivity.',
+        err
+      );
+      filterFormula = "NOT({Title} = '')";
     }
 
     const maxRecords = count && count > 0 ? count : 10;
