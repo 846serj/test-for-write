@@ -185,39 +185,6 @@ export async function POST(request: NextRequest) {
         `<!-- wp:paragraph -->\n<p>${description} ${recipeUrl ? `<a href="${recipeUrl}" target="_blank" rel="noreferrer noopener">${recipeName}</a>` : ''}</p>\n<!-- /wp:paragraph -->\n\n`;
     }
 
-    // Add a concluding paragraph to tie the recipes together
-    if (records.length > 0 && title) {
-      try {
-        const recipeNames = records
-          .map((r) => {
-            const f = r.fields || {};
-            return (
-              f.Name ||
-              f.Title ||
-              f.title ||
-              f.recipe ||
-              ''
-            );
-          })
-          .filter(Boolean)
-          .join(', ');
-        const outroPrompt = `Write a brief concluding paragraph for an article titled "${title}" that featured these recipes: ${recipeNames}. Connect them smoothly and end on an inviting note.`;
-        const outroRes = await openai.chat.completions.create({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            { role: 'system', content: 'You are an expert blog writer.' },
-            { role: 'user', content: outroPrompt }
-          ]
-        });
-        const outroText = outroRes.choices[0]?.message?.content?.trim() || '';
-        if (outroText) {
-          content += `<!-- wp:paragraph -->\n<p>${outroText}</p>\n<!-- /wp:paragraph -->\n`;
-        }
-      } catch (e) {
-        console.error('Conclusion generation failed', e);
-      }
-    }
-
     return NextResponse.json({ content }, { status: 200 });
   } catch (err) {
     console.error('Error in generate-recipe route:', err);
