@@ -9,9 +9,16 @@ export interface RecipeEmbedding {
 
 let cache: RecipeEmbedding[] | null = null;
 
-export async function getCachedRecipeEmbeddings(): Promise<RecipeEmbedding[]> {
+/**
+ * Returns recipe embeddings generated ahead of time and cached in memory.
+ */
+export function getRecipeEmbeddings(): RecipeEmbedding[] {
   if (!cache) {
     cache = recipeEmbeddingsData as RecipeEmbedding[];
   }
   return cache;
 }
+
+// TODO: remove this alias once all imports are updated.
+export const getCachedRecipeEmbeddings = async (): Promise<RecipeEmbedding[]> =>
+  getRecipeEmbeddings();
