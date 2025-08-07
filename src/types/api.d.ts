@@ -22,4 +22,10 @@ export interface WordPressPostResponse {
   content: {
     rendered: string;
   };
-} 
+}
+
+export interface RecipeResult {
+  id: string;
+  title: string;
+  url?: string;
+}
