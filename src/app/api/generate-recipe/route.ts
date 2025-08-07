@@ -4,17 +4,7 @@ import { openai } from '../../../lib/openai';
 import { getCenterCropRegion, getCroppedImg } from '../../../utils/imageCrop';
 import { findRecipes } from '../../../lib/findRecipes';
 import type { RecipeResult } from '../../../types/api';
-
-export function formatNumberingPrefix(
-  index: number,
-  numberingFormat: string
-): string {
-  if (numberingFormat.toLowerCase() === 'none') return '';
-  const sample = numberingFormat.split(',')[0]?.trim() || numberingFormat;
-  const match = sample.match(/\d+(\D*)/);
-  const suffix = match && match[1].trim() ? match[1].trim() : '.';
-  return `${index}${suffix} `;
-}
+import { formatNumberingPrefix } from '../../../utils/formatNumberingPrefix';
 
 export async function POST(request: NextRequest) {
   try {
