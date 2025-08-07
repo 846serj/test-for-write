@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { openai } from '../../../lib/openai';
-
-interface RecipeResult {
-  id: string;
-  title: string;
-  url?: string;
-}
+import type { RecipeResult } from '../../../types/api';
 
 export async function POST(req: NextRequest) {
   try {
