@@ -3,7 +3,7 @@ import { openai } from '../../../lib/openai';
 import { getCachedRecipeEmbeddings } from '../../../lib/recipeEmbeddings';
 import type { RecipeResult } from '../../../types/api';
 
-async function findRecipes(
+export async function findRecipes(
   headline: string,
   count = 10,
   minSimilarity = 0.8
