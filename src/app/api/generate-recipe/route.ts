@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { openai } from '../../../lib/openai';
 import { getCenterCropRegion, getCroppedImg } from '../../../utils/imageCrop';
+import { findRecipes } from '../findRecipes/route';
+import type { RecipeResult } from '../../../types/api';
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,31 +26,56 @@ export async function POST(request: NextRequest) {
 
       const count = itemCount && itemCount > 0 ? itemCount : 10;
 
-      let filterFormula = "NOT({Title} = '')";
-      if (title) {
+      let filterFormula: string | null = null;
+      let fallbackResults: RecipeResult[] | undefined;
+
+      if (!title) {
+        return NextResponse.json({ error: 'title is required' }, { status: 400 });
+      }
+
+      try {
+        const keywordPrompt = `Extract 3-5 key categories, tags, flavors, or dish types from this recipe roundup title: '${title}'. Focus on the main theme, such as flavors (e.g., chocolate, vanilla) and types (e.g., desserts, cakes). Output as a comma-separated list.`;
+        const keywordRes = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: keywordPrompt }],
+          max_tokens: 50,
+        });
+        const keywords = keywordRes.choices[0]?.message?.content
+          ?.split(',')
+          .map((kw) => kw.trim().toLowerCase())
+          .filter(Boolean);
+        if (keywords && keywords.length) {
+          const parts: string[] = [];
+          for (const kw of keywords) {
+            parts.push(`FIND('${kw}', LOWER({Category})) > 0`);
+            parts.push(`FIND('${kw}', LOWER({Tag})) > 0`);
+            parts.push(`FIND('${kw}', LOWER({Title})) > 0`);
+            parts.push(`FIND('${kw}', LOWER({Description})) > 0`);
+          }
+          filterFormula = `OR(${parts.join(',')})`;
+        }
+      } catch (err) {
+        console.error('Keyword extraction failed', err);
+      }
+
+      if (!filterFormula) {
         try {
-          const keywordPrompt = `Extract 3-5 key categories, tags, flavors, or dish types from this recipe roundup title: '${title}'. Focus on the main theme, such as flavors (e.g., chocolate, vanilla) and types (e.g., desserts, cakes). Output as a comma-separated list.`;
-          const keywordRes = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            messages: [{ role: 'user', content: keywordPrompt }],
-            max_tokens: 50,
-          });
-          const keywords = keywordRes.choices[0]?.message?.content
-            ?.split(',')
-            .map((kw) => kw.trim().toLowerCase())
-            .filter(Boolean);
-          if (keywords && keywords.length) {
-            const parts: string[] = [];
-            for (const kw of keywords) {
-              parts.push(`FIND('${kw}', LOWER({Category})) > 0`);
-              parts.push(`FIND('${kw}', LOWER({Tag})) > 0`);
-              parts.push(`FIND('${kw}', LOWER({Title})) > 0`);
-              parts.push(`FIND('${kw}', LOWER({Description})) > 0`);
-            }
-            filterFormula = `OR(${parts.join(',')})`;
+          fallbackResults = await findRecipes(title, count);
+          if (fallbackResults.length) {
+            const idParts = fallbackResults.map((r) => `RECORD_ID()='${r.id}'`);
+            filterFormula = `OR(${idParts.join(',')})`;
+          } else {
+            return NextResponse.json(
+              { error: 'No relevant recipes found' },
+              { status: 404 }
+            );
           }
         } catch (err) {
-          console.error('Keyword extraction failed', err);
+          console.error('findRecipes fallback failed', err);
+          return NextResponse.json(
+            { error: 'Failed to find recipes' },
+            { status: 500 }
+          );
         }
       }
 
@@ -66,6 +93,11 @@ export async function POST(request: NextRequest) {
       }
       const data = await res.json();
       const records = (data.records || []) as any[];
+
+      if (fallbackResults) {
+        const order = new Map(fallbackResults.map((r, idx) => [r.id, idx]));
+        records.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+      }
 
       if (records.length === 0) {
         return NextResponse.json(
