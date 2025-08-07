@@ -54,8 +54,6 @@ export async function POST(request: NextRequest) {
 
       const url = new URL(baseUrl);
       url.searchParams.append('filterByFormula', filterFormula);
-      url.searchParams.append('sort[0][field]', 'Date Published');
-      url.searchParams.append('sort[0][direction]', 'desc');
       url.searchParams.append('maxRecords', String(count));
       for (const f of ['Title', 'URL', 'Image Link', 'Blog Source', 'Description', 'Category', 'Tag']) {
         url.searchParams.append('fields[]', f);
