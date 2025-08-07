@@ -5,6 +5,17 @@ import { getCenterCropRegion, getCroppedImg } from '../../../utils/imageCrop';
 import { findRecipes } from '../findRecipes/route';
 import type { RecipeResult } from '../../../types/api';
 
+export function formatNumberingPrefix(
+  index: number,
+  numberingFormat: string
+): string {
+  if (numberingFormat.toLowerCase() === 'none') return '';
+  const sample = numberingFormat.split(',')[0]?.trim() || numberingFormat;
+  const match = sample.match(/\d+(\D*)/);
+  const suffix = match && match[1].trim() ? match[1].trim() : '.';
+  return `${index}${suffix} `;
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Parse request JSON for necessary fields
@@ -197,12 +208,7 @@ export async function POST(request: NextRequest) {
       });
       const description = descResponse.choices[0]?.message?.content?.trim() || '';
 
-      // Determine numbering prefix based on format (e.g., "1. ", "1) ", or none)
-      let prefix = '';
-      if (numberingFormat.toLowerCase() !== 'none') {
-        // Use ")" if format contains it, otherwise use "." by default
-        prefix = numberingFormat.includes(')') ? `${i + 1}) ` : `${i + 1}. `;
-      }
+      const prefix = formatNumberingPrefix(i + 1, numberingFormat);
 
       // Append the heading, image (if any), and paragraph blocks for this recipe item
       content += `<!-- wp:heading {"level":2} -->\n<h2>${prefix}${recipeName}</h2>\n<!-- /wp:heading -->\n`;
