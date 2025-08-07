@@ -3,12 +3,9 @@ import fs from 'fs';
 import * as ts from 'typescript';
 import { test } from 'node:test';
 
-const routePath = new URL('../src/app/api/generate-recipe/route.ts', import.meta.url);
-const tsCode = fs.readFileSync(routePath, 'utf8');
-
-const funcMatch = tsCode.match(/export function formatNumberingPrefix[\s\S]*?\n\}/);
-const snippet = `${funcMatch[0]}\nexport { formatNumberingPrefix };`;
-const jsCode = ts.transpileModule(snippet, {
+const utilPath = new URL('../src/utils/formatNumberingPrefix.ts', import.meta.url);
+const tsCode = fs.readFileSync(utilPath, 'utf8');
+const jsCode = ts.transpileModule(tsCode, {
   compilerOptions: { module: ts.ModuleKind.ESNext },
 }).outputText;
 const moduleUrl =
