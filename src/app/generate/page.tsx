@@ -177,7 +177,9 @@ export default function GeneratePage() {
 
       if (!res.ok || !data.content) {
         alert(
-          `Failed to generate article: ${data.error || res.statusText || 'no content returned'}`
+          `Failed to generate article: ${
+            data.error || res.statusText || 'no content returned'
+          }${data.airtableError ? ` - ${data.airtableError}` : ''}`
         );
         return;
       }

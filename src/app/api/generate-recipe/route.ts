@@ -89,8 +89,12 @@ export async function POST(request: NextRequest) {
 
       const res = await fetch(url.toString(), { headers });
       if (!res.ok) {
-        console.error('Airtable fetch failed', await res.text());
-        return NextResponse.json({ error: 'Failed to fetch recipes' }, { status: res.status });
+        const airtableError = await res.text();
+        console.error('Airtable fetch failed', airtableError);
+        return NextResponse.json(
+          { error: 'Failed to fetch recipes', airtableError },
+          { status: res.status }
+        );
       }
       const data = await res.json();
       const records = (data.records || []) as any[];
