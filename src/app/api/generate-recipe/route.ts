@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
           const parts: string[] = [];
           for (const kw of keywords) {
             parts.push(`FIND('${kw}', LOWER({Category})) > 0`);
-            parts.push(`FIND('${kw}', LOWER({Tags})) > 0`);
+            parts.push(`FIND('${kw}', LOWER({Tag})) > 0`);
             parts.push(`FIND('${kw}', LOWER({Title})) > 0`);
             parts.push(`FIND('${kw}', LOWER({Description})) > 0`);
           }
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
       const url = new URL(baseUrl);
       url.searchParams.append('filterByFormula', filterFormula);
       url.searchParams.append('maxRecords', String(count));
-      for (const f of ['Title', 'URL', 'Image Link', 'Blog Source', 'Description', 'Category', 'Tags']) {
+      for (const f of ['Title', 'URL', 'Image Link', 'Blog Source', 'Description', 'Category', 'Tag']) {
         url.searchParams.append('fields[]', f);
       }
 
