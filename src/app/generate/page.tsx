@@ -37,6 +37,7 @@ export default function GeneratePage() {
     | 'YouTube video to blog post'
     | 'Rewrite blog post'
     | 'Recipe article'
+    | 'News article'
   >('Blog post');
 
   // for blog‐post & rewrite
@@ -97,6 +98,7 @@ export default function GeneratePage() {
   const [modelVersion, setModelVersion] = useState<string>(models[0]);
   const [useSerpApi, setUseSerpApi] = useState<boolean>(true);
   const [includeLinks, setIncludeLinks] = useState<boolean>(true);
+  const [newsFreshness, setNewsFreshness] = useState<'1h' | '6h' | '24h'>('6h');
 
   const handleGenerate = async () => {
     if (!title.trim()) {
@@ -131,6 +133,7 @@ export default function GeneratePage() {
       const payload: any = {
         title,
         articleType,
+        newsFreshness,
         ...(instructions && { customInstructions: instructions }),
         toneOfVoice,
         ...(toneOfVoice === 'Custom' && { customTone }),
@@ -260,8 +263,26 @@ export default function GeneratePage() {
                 YouTube video to blog post
               </option>
               <option value="Rewrite blog post">Rewrite blog post</option>
+              <option value="News article">News article</option>
             </select>
           </div>
+
+          {articleType === 'News article' && (
+            <div>
+              <label className={labelStyle}>News Freshness</label>
+              <select
+                className={inputStyle}
+                value={newsFreshness}
+                onChange={(e) =>
+                  setNewsFreshness(e.target.value as '1h' | '6h' | '24h')
+                }
+              >
+                <option value="1h">Past hour</option>
+                <option value="6h">Past 6 hours</option>
+                <option value="24h">Past 24 hours</option>
+              </select>
+            </div>
+          )}
 
           {/* CUSTOM INSTRUCTIONS */}
           <div>

@@ -6,12 +6,36 @@ import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
 export const runtime = 'edge';
 export const revalidate = 0;
 
+interface SerpApiNewsResult {
+  title?: string;
+  link?: string;
+  snippet?: string;
+  date?: string;
+  published_at?: string;
+  source?: string;
+}
+
 interface SerpApiResponse {
   organic_results?: { link: string }[];
-  news_results?: { link: string }[];
+  news_results?: SerpApiNewsResult[];
   scholar_results?: { link: string }[];
   error?: string;
 }
+
+type NewsFreshness = '1h' | '6h' | '24h';
+
+interface NewsArticle {
+  title: string;
+  url: string;
+  summary: string;
+  publishedAt: string;
+}
+
+const FRESHNESS_TO_HOURS: Record<NewsFreshness, number> = {
+  '1h': 1,
+  '6h': 6,
+  '24h': 24,
+};
 
 const sectionRanges: Record<string, [number, number]> = {
   shorter: [2, 4],
@@ -69,11 +93,22 @@ function calcMaxTokens(
   return Math.min(tokens, limit);
 }
 
-async function serpapiSearch(q: string, engine: string): Promise<string[]> {
+async function serpapiSearch(
+  q: string,
+  engine: string,
+  extraParams: Record<string, string> = {}
+): Promise<string[]> {
+  if (!process.env.SERPAPI_KEY) return [];
   try {
-    const url =
-      `https://serpapi.com/search.json?` +
-      `q=${encodeURIComponent(q)}&engine=${engine}&api_key=${process.env.SERPAPI_KEY}`;
+    const params = new URLSearchParams({
+      q,
+      engine,
+      api_key: process.env.SERPAPI_KEY || '',
+    });
+    Object.entries(extraParams).forEach(([key, value]) => {
+      if (value) params.append(key, value);
+    });
+    const url = `https://serpapi.com/search.json?${params.toString()}`;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
@@ -105,6 +140,98 @@ async function fetchSources(headline: string): Promise<string[]> {
     [unique[i], unique[j]] = [unique[j], unique[i]];
   }
   return unique.slice(0, 5);
+}
+
+function resolveFreshness(freshness: NewsFreshness | undefined): NewsFreshness {
+  if (!freshness) return '6h';
+  return freshness;
+}
+
+function computeFreshnessIso(freshness: NewsFreshness): string {
+  const hours = FRESHNESS_TO_HOURS[freshness] ?? FRESHNESS_TO_HOURS['6h'];
+  const from = new Date(Date.now() - hours * 60 * 60 * 1000);
+  return from.toISOString();
+}
+
+async function fetchNewsArticles(
+  query: string,
+  freshness: NewsFreshness | undefined,
+  serpFallbackEnabled: boolean
+): Promise<NewsArticle[]> {
+  const resolvedFreshness = resolveFreshness(freshness);
+  const fromIso = computeFreshnessIso(resolvedFreshness);
+  const newsKey = process.env.NEWS_API_KEY;
+
+  if (newsKey) {
+    try {
+      const url = new URL('https://newsapi.org/v2/everything');
+      url.searchParams.set('q', query);
+      url.searchParams.set('from', fromIso);
+      url.searchParams.set('sortBy', 'publishedAt');
+      url.searchParams.set('language', 'en');
+      url.searchParams.set('pageSize', '8');
+      const resp = await fetch(url, {
+        headers: { 'X-Api-Key': newsKey },
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data?.status === 'ok' && Array.isArray(data.articles)) {
+          const parsed = (data.articles as any[])
+            .map((article) => ({
+              title: article?.title || article?.headline || 'Untitled',
+              url: article?.url || '',
+              summary:
+                article?.description || article?.content || article?.summary || '',
+              publishedAt:
+                article?.publishedAt || article?.updatedAt || article?.date || '',
+            }))
+            .filter((item: NewsArticle) => item.title && item.url);
+          if (parsed.length > 0) {
+            return parsed.slice(0, 8);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[api/generate] news api fetch failed, falling back to SerpAPI', err);
+    }
+  }
+
+  if (!serpFallbackEnabled || !process.env.SERPAPI_KEY) {
+    return [];
+  }
+
+  const freshnessParam =
+    resolvedFreshness === '1h'
+      ? 'qdr:h'
+      : resolvedFreshness === '6h'
+      ? 'qdr:h6'
+      : 'qdr:d';
+
+  try {
+    const params = new URLSearchParams({
+      q: query,
+      engine: 'google_news',
+      api_key: process.env.SERPAPI_KEY || '',
+      tbs: freshnessParam,
+    });
+    const url = `https://serpapi.com/search.json?${params.toString()}`;
+    const resp = await fetch(url);
+    if (!resp.ok) return [];
+    const data = (await resp.json()) as SerpApiResponse;
+    const results = Array.isArray(data.news_results) ? data.news_results : [];
+    return results
+      .map((item) => ({
+        title: item.title || 'Untitled',
+        url: item.link || '',
+        summary: item.snippet || '',
+        publishedAt: item.date || item.published_at || '',
+      }))
+      .filter((item) => item.title && item.url)
+      .slice(0, 8);
+  } catch (err) {
+    console.warn('[api/generate] serpapi fallback failed', err);
+    return [];
+  }
 }
 
 // Fetch YouTube captions
@@ -254,6 +381,7 @@ export async function POST(request: Request) {
       useSerpApi = true,
       includeLinks = true,
       useSummary = false,
+      newsFreshness,
     }: {
       articleType: string;
       title: string;
@@ -271,6 +399,7 @@ export async function POST(request: Request) {
       useSerpApi?: boolean;
       includeLinks?: boolean;
       useSummary?: boolean;
+      newsFreshness?: NewsFreshness;
     } = await request.json();
 
     if (!title?.trim()) {
@@ -278,8 +407,6 @@ export async function POST(request: Request) {
     }
 
     const serpEnabled = includeLinks && useSerpApi && !!process.env.SERPAPI_KEY;
-    const sources = serpEnabled ? await fetchSources(title) : [];
-
     const baseMaxTokens = calcMaxTokens(lengthOption, customSections, modelVersion);
 
     const toneChoice =
@@ -290,6 +417,103 @@ export async function POST(request: Request) {
     const povInstruction = pointOfView
       ? `- Use a ${pointOfView} perspective.\n`
       : '';
+
+    if (articleType === 'News article') {
+      const articles = await fetchNewsArticles(title, newsFreshness, serpEnabled);
+      if (!articles.length) {
+        return NextResponse.json(
+          { error: 'No recent news articles found for that topic.' },
+          { status: 502 }
+        );
+      }
+
+      const newsSources = Array.from(
+        new Set(articles.map((item) => item.url).filter(Boolean))
+      );
+      const linkSources = includeLinks ? newsSources : [];
+      const minLinks = includeLinks
+        ? Math.min(MIN_LINKS, linkSources.length)
+        : 0;
+      const linkInstruction =
+        includeLinks && linkSources.length
+          ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${linkSources
+              .map((u) => `  - ${u}`)
+              .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
+          : '';
+
+      const articleSummaries = articles
+        .map((item) => {
+          const date = item.publishedAt ? new Date(item.publishedAt) : null;
+          const timestamp = date && !isNaN(date.getTime())
+            ? date.toISOString()
+            : 'Unknown publication time';
+          const summary = item.summary
+            ? item.summary.replace(/\s+/g, ' ').trim()
+            : 'No summary provided.';
+          return `- "${item.title}" (${timestamp})\n  Summary: ${summary}\n  URL: ${item.url}`;
+        })
+        .join('\n');
+
+      let lengthInstruction = '';
+      if (lengthOption === 'custom' && customSections) {
+        const approx = customSections * 220;
+        lengthInstruction = `- Use exactly ${customSections} sections (~${approx} words total).\n`;
+      } else if (lengthOption && WORD_RANGES[lengthOption]) {
+        const [minW, maxW] = WORD_RANGES[lengthOption];
+        lengthInstruction = `- Keep the article between ${minW} and ${maxW} words.\n`;
+      } else {
+        lengthInstruction = '- Aim for a concise, timely report (~900 words).\n';
+      }
+
+      const customInstruction = customInstructions?.trim();
+      const customInstructionBlock = customInstruction
+        ? `- ${customInstruction}\n`
+        : '';
+
+      const articlePrompt = `
+You are a professional news reporter writing a fast-turnaround article about "${title}".
+
+Do NOT include the title or any <h1> tag in the HTML output.
+
+Recent reporting to reference:
+${articleSummaries}
+
+${toneInstruction}${povInstruction}Requirements:
+  ${lengthInstruction}${customInstructionBlock}  - Synthesize the developments from the listed sources into a cohesive news article.
+  - Attribute key facts to the appropriate source by linking the relevant URL directly in the text.
+  - Clearly indicate the timing of significant events and why they matter now.
+  - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
+  - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
+  - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
+  - Do NOT wrap your output in markdown code fences or extra <p> tags.
+  ${DETAIL_INSTRUCTION}${customInstructionBlock}${linkInstruction}  - Do NOT invent sources or information not present in the listed reporting.
+
+Write the full article in valid HTML below:
+`.trim();
+
+      const [minBound] = getWordBounds(lengthOption, customSections);
+      const minWords =
+        !lengthOption || lengthOption === 'default'
+          ? Math.min(minBound, 900)
+          : minBound;
+      const maxTokens = Math.min(baseMaxTokens, 4000);
+
+      const content = await generateWithLinks(
+        articlePrompt,
+        modelVersion,
+        linkSources,
+        minLinks,
+        maxTokens,
+        minWords
+      );
+
+      return NextResponse.json({
+        content,
+        sources: newsSources,
+      });
+    }
+
+    const sources = serpEnabled ? await fetchSources(title) : [];
 
     // ─── Listicle/Gallery ────────────────────────────────────────────────────────
     if (articleType === 'Listicle/Gallery') {
