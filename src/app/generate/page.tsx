@@ -6,6 +6,12 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../constants/lengthOptions';
+import { NormalizedSiteProfile } from '../../types/profile';
+import {
+  buildProfileHeadlineQuery,
+  extractHostname,
+  getProfileQuotaTotal,
+} from '../../utils/profile';
 
 const LANGUAGE_OPTIONS = [
   { value: 'all', label: 'All languages' },
@@ -24,6 +30,10 @@ const LANGUAGE_OPTIONS = [
   { value: 'ud', label: 'Undetermined (ud)' },
   { value: 'zh', label: 'Chinese' },
 ];
+
+const LANGUAGE_OPTION_VALUES = new Set(
+  LANGUAGE_OPTIONS.map((option) => option.value)
+);
 
 const SORT_BY_OPTIONS = [
   { value: 'publishedAt' as const, label: 'Newest first' },
@@ -60,10 +70,19 @@ type HeadlineItem = {
   description?: string;
 };
 
+type ProfileStatus = { type: 'info' | 'error' | 'success'; message: string } | null;
+
 export default function GeneratePage() {
   const router = useRouter();
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [activeTab, setActiveTab] = useState<'writing' | 'headlines'>('writing');
+  const [userId, setUserId] = useState<string | null>(null);
+  const [siteProfile, setSiteProfile] = useState<NormalizedSiteProfile | null>(null);
+  const [profileSiteUrl, setProfileSiteUrl] = useState('');
+  const [profileText, setProfileText] = useState('');
+  const [profileStatus, setProfileStatus] = useState<ProfileStatus>(null);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(false);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
@@ -71,6 +90,69 @@ export default function GeneratePage() {
     setTheme(defaultTheme);
     document.documentElement.classList.toggle('dark', defaultTheme === 'dark');
   }, []);
+
+  useEffect(() => {
+    supabase.auth
+      .getUser()
+      .then(({ data }) => setUserId(data.user?.id ?? null))
+      .catch((error) => {
+        console.error('[profiles] failed to load user', error);
+        setUserId(null);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!userId) {
+      setSiteProfile(null);
+      setProfileSiteUrl('');
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadProfile = async () => {
+      setProfileLoading(true);
+      try {
+        const response = await fetch(
+          `/api/profiles?userId=${encodeURIComponent(userId)}`
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data?.error || 'Failed to load profile');
+        }
+        if (cancelled) return;
+        if (data?.profile) {
+          setSiteProfile(data.profile);
+          setProfileSiteUrl(data.siteUrl || '');
+          setProfileText(data.rawText || '');
+        } else {
+          setSiteProfile(null);
+          setProfileSiteUrl(data?.siteUrl || '');
+        }
+        setProfileStatus(null);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('[profiles] load failed', error);
+        setProfileStatus({
+          type: 'error',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Unable to load saved profile.',
+        });
+      } finally {
+        if (!cancelled) {
+          setProfileLoading(false);
+        }
+      }
+    };
+
+    loadProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   const toggleTheme = () => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
@@ -184,6 +266,122 @@ export default function GeneratePage() {
     );
   };
 
+  const applyProfileToFilters = (
+    profileData: NormalizedSiteProfile | null = siteProfile,
+    siteUrlValue: string | null = profileSiteUrl
+  ) => {
+    if (!profileData) {
+      return;
+    }
+
+    const query = buildProfileHeadlineQuery(profileData);
+    if (query) {
+      setHeadlinePrompt(query);
+      setHeadlineError(null);
+    }
+
+    const normalizedLanguage = profileData.language?.toLowerCase();
+    if (normalizedLanguage && LANGUAGE_OPTION_VALUES.has(normalizedLanguage)) {
+      setLanguage(normalizedLanguage);
+    }
+
+    const quotaTotal = getProfileQuotaTotal(profileData);
+    if (quotaTotal > 0) {
+      setHeadlineLimit(Math.min(50, Math.max(1, quotaTotal)));
+    }
+
+    const host = siteUrlValue ? extractHostname(siteUrlValue) : null;
+    if (host) {
+      setDomainsInput((current) => (current ? current : host));
+    }
+
+    setSearchIn(['title', 'description']);
+  };
+
+  const handleApplyProfile = () => {
+    if (!siteProfile) {
+      setProfileStatus({
+        type: 'error',
+        message: 'Create and save a profile before applying it to the filters.',
+      });
+      return;
+    }
+
+    applyProfileToFilters(siteProfile, profileSiteUrl);
+    setProfileStatus({
+      type: 'success',
+      message: 'Profile applied to headline filters.',
+    });
+  };
+
+  const handleSaveProfile = async () => {
+    if (!userId) {
+      setProfileStatus({
+        type: 'error',
+        message: 'You must be signed in to save a profile.',
+      });
+      return;
+    }
+
+    if (!profileSiteUrl.trim()) {
+      setProfileStatus({
+        type: 'error',
+        message: 'Enter your site URL before saving a profile.',
+      });
+      return;
+    }
+
+    if (!profileText.trim()) {
+      setProfileStatus({
+        type: 'error',
+        message: 'Paste some details about your site so we can build a profile.',
+      });
+      return;
+    }
+
+    setProfileSaving(true);
+    setProfileStatus({
+      type: 'info',
+      message: 'Normalizing your site profile…',
+    });
+
+    try {
+      const response = await fetch('/api/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          siteUrl: profileSiteUrl,
+          rawText: profileText,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to save profile');
+      }
+
+      setSiteProfile(data.profile || null);
+      setProfileSiteUrl(data.siteUrl || profileSiteUrl);
+      setProfileText(data.rawText || profileText);
+      setProfileStatus({ type: 'success', message: 'Profile saved.' });
+
+      if (data.profile) {
+        applyProfileToFilters(data.profile, data.siteUrl || profileSiteUrl);
+      }
+    } catch (error) {
+      console.error('[profiles] save failed', error);
+      setProfileStatus({
+        type: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Failed to save profile. Try again.',
+      });
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
   const handleGenerate = async () => {
     if (!title.trim()) {
       alert('Enter a title first');
@@ -290,9 +488,20 @@ export default function GeneratePage() {
 
   const handleFetchHeadlines = async () => {
     const trimmedQuery = headlinePrompt.trim();
-    if (!trimmedQuery) {
-      setHeadlineError('Please describe the article to fetch headlines.');
+    const profileQuery = !trimmedQuery && siteProfile
+      ? buildProfileHeadlineQuery(siteProfile)
+      : '';
+    const queryToUse = trimmedQuery || profileQuery;
+
+    if (!queryToUse) {
+      setHeadlineError(
+        'Please describe the article or save a site profile to generate headlines.'
+      );
       return;
+    }
+
+    if (!trimmedQuery && profileQuery) {
+      setHeadlinePrompt(profileQuery);
     }
 
     const sanitizedSources = sanitizeListInput(sourcesInput);
@@ -340,13 +549,22 @@ export default function GeneratePage() {
     );
 
     const payload: Record<string, unknown> = {
-      query: trimmedQuery,
+      query: queryToUse,
       limit: headlineLimit,
       sortBy,
     };
 
-    if (language !== 'all') {
-      payload.language = language;
+    const normalizedLanguage =
+      language === 'all' && siteProfile?.language
+        ? siteProfile.language
+        : language;
+
+    if (
+      normalizedLanguage &&
+      normalizedLanguage !== 'all' &&
+      LANGUAGE_OPTION_VALUES.has(normalizedLanguage)
+    ) {
+      payload.language = normalizedLanguage;
     }
 
     if (fromValue) {
@@ -819,12 +1037,128 @@ export default function GeneratePage() {
           </div>
         ) : (
           <div className="space-y-6 bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                    Site profile
+                  </h2>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Paste anything about your publication. We will normalize it into a
+                    reusable profile so you can pull niche headlines with one click.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleApplyProfile}
+                  disabled={!siteProfile || profileSaving}
+                  className={clsx(
+                    'self-start rounded-md px-4 py-2 text-sm font-medium transition-colors',
+                    siteProfile && !profileSaving
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-gray-300 text-gray-600 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
+                  )}
+                >
+                  Apply profile to filters
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                <div>
+                  <label className={labelStyle}>Site URL</label>
+                  <input
+                    type="url"
+                    className={inputStyle}
+                    placeholder="https://example.com"
+                    value={profileSiteUrl}
+                    onChange={(e) => setProfileSiteUrl(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className={labelStyle}>Site details</label>
+                  <textarea
+                    className={inputStyle}
+                    rows={6}
+                    placeholder="Paste your about page, categories, audience, tone, competitors, and anything else."
+                    value={profileText}
+                    onChange={(e) => setProfileText(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    We send this text to the LLM with a structured extraction prompt and
+                    save the normalized JSON for future sessions.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveProfile}
+                    disabled={profileSaving}
+                    className={clsx(
+                      'rounded-md px-4 py-2 text-sm font-medium transition-colors',
+                      profileSaving
+                        ? 'bg-gray-300 text-gray-600 cursor-wait dark:bg-gray-700 dark:text-gray-400'
+                        : 'bg-blue-600 text-white hover:bg-blue-700'
+                    )}
+                  >
+                    {profileSaving ? 'Saving profile…' : 'Save & Normalize Profile'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleApplyProfile}
+                    disabled={!siteProfile || profileSaving}
+                    className={clsx(
+                      'rounded-md px-4 py-2 text-sm font-medium transition-colors',
+                      siteProfile && !profileSaving
+                        ? 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+                        : 'bg-gray-300 text-gray-600 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
+                    )}
+                  >
+                    Use saved profile
+                  </button>
+                </div>
+
+                {profileLoading && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Loading saved profile…
+                  </p>
+                )}
+
+                {profileStatus && (
+                  <p
+                    className={clsx(
+                      'text-sm',
+                      profileStatus.type === 'success'
+                        ? 'text-green-600 dark:text-green-400'
+                        : profileStatus.type === 'error'
+                        ? 'text-red-500'
+                        : 'text-blue-600 dark:text-blue-400'
+                    )}
+                  >
+                    {profileStatus.message}
+                  </p>
+                )}
+
+                {siteProfile && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                      Normalized profile JSON
+                    </h3>
+                    <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-gray-100 p-3 text-xs text-gray-800 dark:bg-gray-950 dark:text-gray-200">
+                      {JSON.stringify(siteProfile, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div>
               <label className={labelStyle}>Article Description</label>
               <textarea
                 className={inputStyle}
                 rows={4}
-                placeholder="Describe the article to fetch relevant headlines"
+                placeholder="Describe the article to fetch relevant headlines (leave blank to use your saved profile)"
                 value={headlinePrompt}
                 onChange={(e) => setHeadlinePrompt(e.target.value)}
               />
@@ -994,7 +1328,7 @@ export default function GeneratePage() {
             <div className="pt-2">
               <button
                 onClick={handleFetchHeadlines}
-                disabled={headlineLoading || !headlinePrompt.trim()}
+                disabled={headlineLoading || (!headlinePrompt.trim() && !siteProfile)}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded shadow disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {headlineLoading ? 'Fetching…' : 'Fetch Headlines'}
