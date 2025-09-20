@@ -7,6 +7,51 @@ import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../constants/lengthOptions';
 
+const LANGUAGE_OPTIONS = [
+  { value: 'all', label: 'All languages' },
+  { value: 'ar', label: 'Arabic' },
+  { value: 'de', label: 'German' },
+  { value: 'en', label: 'English' },
+  { value: 'es', label: 'Spanish' },
+  { value: 'fr', label: 'French' },
+  { value: 'he', label: 'Hebrew' },
+  { value: 'it', label: 'Italian' },
+  { value: 'nl', label: 'Dutch' },
+  { value: 'no', label: 'Norwegian' },
+  { value: 'pt', label: 'Portuguese' },
+  { value: 'ru', label: 'Russian' },
+  { value: 'sv', label: 'Swedish' },
+  { value: 'ud', label: 'Undetermined (ud)' },
+  { value: 'zh', label: 'Chinese' },
+];
+
+const SORT_BY_OPTIONS = [
+  { value: 'publishedAt' as const, label: 'Newest first' },
+  { value: 'relevancy' as const, label: 'Most relevant' },
+  { value: 'popularity' as const, label: 'Most popular' },
+];
+
+const SEARCH_IN_OPTIONS = [
+  { value: 'title', label: 'Title' },
+  { value: 'description', label: 'Description' },
+  { value: 'content', label: 'Full content' },
+];
+
+const MAX_LIST_ITEMS = 20;
+
+function sanitizeListInput(
+  value: string,
+  { lowercase }: { lowercase?: boolean } = {}
+) {
+  const entries = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => (lowercase ? item.toLowerCase() : item));
+
+  return Array.from(new Set(entries)).slice(0, MAX_LIST_ITEMS);
+}
+
 type HeadlineItem = {
   title: string;
   source?: string;
@@ -68,6 +113,16 @@ export default function GeneratePage() {
   const [headlineLoading, setHeadlineLoading] = useState(false);
   const [headlineError, setHeadlineError] = useState<string | null>(null);
   const [headlineResults, setHeadlineResults] = useState<HeadlineItem[]>([]);
+  const [language, setLanguage] = useState<string>('en');
+  const [sortBy, setSortBy] = useState<'publishedAt' | 'relevancy' | 'popularity'>(
+    'publishedAt'
+  );
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [searchIn, setSearchIn] = useState<string[]>([]);
+  const [sourcesInput, setSourcesInput] = useState('');
+  const [domainsInput, setDomainsInput] = useState('');
+  const [excludeDomainsInput, setExcludeDomainsInput] = useState('');
 
   // YouTube link
   const [videoLink, setVideoLink] = useState('');
@@ -120,6 +175,14 @@ export default function GeneratePage() {
       setHeadlineError(null);
     }
   }, [activeTab]);
+
+  const toggleSearchIn = (value: string) => {
+    setSearchIn((current) =>
+      current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value]
+    );
+  };
 
   const handleGenerate = async () => {
     if (!title.trim()) {
@@ -226,9 +289,88 @@ export default function GeneratePage() {
   };
 
   const handleFetchHeadlines = async () => {
-    if (!headlinePrompt.trim()) {
+    const trimmedQuery = headlinePrompt.trim();
+    if (!trimmedQuery) {
       setHeadlineError('Please describe the article to fetch headlines.');
       return;
+    }
+
+    const sanitizedSources = sanitizeListInput(sourcesInput);
+    const sanitizedDomains = sanitizeListInput(domainsInput, { lowercase: true });
+    const sanitizedExcludeDomains = sanitizeListInput(excludeDomainsInput, {
+      lowercase: true,
+    });
+
+    setSourcesInput(sanitizedSources.join(', '));
+    setDomainsInput(sanitizedDomains.join(', '));
+    setExcludeDomainsInput(sanitizedExcludeDomains.join(', '));
+
+    if (
+      sanitizedSources.length > 0 &&
+      (sanitizedDomains.length > 0 || sanitizedExcludeDomains.length > 0)
+    ) {
+      setHeadlineError(
+        'Choose either specific sources or domain filters. NewsAPI does not allow combining them.'
+      );
+      return;
+    }
+
+    const fromValue = fromDate.trim();
+    const toValue = toDate.trim();
+    const fromTimestamp = fromValue ? Date.parse(fromValue) : Number.NaN;
+    const toTimestamp = toValue ? Date.parse(toValue) : Number.NaN;
+
+    if (fromValue && Number.isNaN(fromTimestamp)) {
+      setHeadlineError('Please provide a valid "From" date in YYYY-MM-DD format.');
+      return;
+    }
+
+    if (toValue && Number.isNaN(toTimestamp)) {
+      setHeadlineError('Please provide a valid "To" date in YYYY-MM-DD format.');
+      return;
+    }
+
+    if (!Number.isNaN(fromTimestamp) && !Number.isNaN(toTimestamp) && fromTimestamp > toTimestamp) {
+      setHeadlineError('The "From" date must be on or before the "To" date.');
+      return;
+    }
+
+    const orderedSearchIn = SEARCH_IN_OPTIONS.map((option) => option.value).filter((value) =>
+      searchIn.includes(value)
+    );
+
+    const payload: Record<string, unknown> = {
+      query: trimmedQuery,
+      limit: headlineLimit,
+      sortBy,
+    };
+
+    if (language !== 'all') {
+      payload.language = language;
+    }
+
+    if (fromValue) {
+      payload.from = fromValue;
+    }
+
+    if (toValue) {
+      payload.to = toValue;
+    }
+
+    if (orderedSearchIn.length > 0) {
+      payload.searchIn = orderedSearchIn;
+    }
+
+    if (sanitizedSources.length > 0) {
+      payload.sources = sanitizedSources;
+    }
+
+    if (sanitizedDomains.length > 0) {
+      payload.domains = sanitizedDomains;
+    }
+
+    if (sanitizedExcludeDomains.length > 0) {
+      payload.excludeDomains = sanitizedExcludeDomains;
     }
 
     setHeadlineLoading(true);
@@ -238,10 +380,7 @@ export default function GeneratePage() {
       const response = await fetch('/api/headlines', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: headlinePrompt.trim(),
-          limit: headlineLimit,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await response.json();
 
@@ -709,6 +848,148 @@ export default function GeneratePage() {
                 Choose between 1 and 50 headlines.
               </p>
             </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className={labelStyle}>Language</label>
+                <select
+                  className={inputStyle}
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                >
+                  {LANGUAGE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Defaults to English. Select "All languages" to let NewsAPI decide.
+                </p>
+              </div>
+              <div>
+                <label className={labelStyle}>Sort by</label>
+                <select
+                  className={inputStyle}
+                  value={sortBy}
+                  onChange={(e) =>
+                    setSortBy(e.target.value as 'publishedAt' | 'relevancy' | 'popularity')
+                  }
+                >
+                  {SORT_BY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Newest first mirrors the previous default.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className={labelStyle}>From date (optional)</label>
+                <input
+                  type="date"
+                  className={inputStyle}
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  max={toDate || undefined}
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Limits the earliest article date. Leave blank to use NewsAPI defaults.
+                </p>
+              </div>
+              <div>
+                <label className={labelStyle}>To date (optional)</label>
+                <input
+                  type="date"
+                  className={inputStyle}
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                  min={fromDate || undefined}
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Must be on or after the "From" date when both are set.
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <span className={labelStyle}>Search within</span>
+              <div className="mt-2 flex flex-wrap gap-4">
+                {SEARCH_IN_OPTIONS.map((option) => {
+                  const checkboxId = `search-in-${option.value}`;
+                  return (
+                    <label
+                      key={option.value}
+                      htmlFor={checkboxId}
+                      className="flex items-center space-x-2 text-sm text-gray-700 dark:text-gray-300"
+                    >
+                      <input
+                        id={checkboxId}
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={searchIn.includes(option.value)}
+                        onChange={() => toggleSearchIn(option.value)}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Leave unchecked to let NewsAPI search across all fields.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className={labelStyle}>Sources (comma-separated)</label>
+                <input
+                  type="text"
+                  className={inputStyle}
+                  placeholder="bbc-news, the-verge"
+                  value={sourcesInput}
+                  onChange={(e) => setSourcesInput(e.target.value)}
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Up to 20 NewsAPI source IDs.
+                </p>
+              </div>
+              <div>
+                <label className={labelStyle}>Domains (comma-separated)</label>
+                <input
+                  type="text"
+                  className={inputStyle}
+                  placeholder="techcrunch.com, wired.com"
+                  value={domainsInput}
+                  onChange={(e) => setDomainsInput(e.target.value)}
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Filter to stories hosted on these domains.
+                </p>
+              </div>
+              <div className="md:col-span-2">
+                <label className={labelStyle}>Exclude domains (comma-separated)</label>
+                <input
+                  type="text"
+                  className={inputStyle}
+                  placeholder="example.com"
+                  value={excludeDomainsInput}
+                  onChange={(e) => setExcludeDomainsInput(e.target.value)}
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Skip articles from these domains.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              NewsAPI prevents combining specific sources with domain filters.
+            </p>
 
             <div className="pt-2">
               <button
