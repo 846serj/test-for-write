@@ -17,6 +17,8 @@ services:
         sync: false
       - key: SERPAPI_KEY
         sync: false
+      - key: NEWSAPI_API_KEY
+        sync: false
       - key: WORDPRESS_SITE_URL
         sync: false
       - key: WORDPRESS_USERNAME

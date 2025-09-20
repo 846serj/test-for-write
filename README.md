@@ -43,3 +43,10 @@ hash of each recipe's content, so only new or modified recipes trigger fresh
 embedding requests. A scheduled GitHub Action automatically executes this task
 weekly and commits any updates back to the repository, ensuring the JSON file
 stays current.
+
+## Headlines fetching
+
+The Headlines tab on the Generate page calls the `/api/headlines` route to pull
+recent stories from NewsAPI.org. Supply a NewsAPI key in `.env.local` (see
+`.env.example`) by setting `NEWSAPI_API_KEY` so the route can authenticate
+requests.
