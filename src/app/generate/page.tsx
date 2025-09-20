@@ -7,9 +7,18 @@ import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../constants/lengthOptions';
 
+type HeadlineItem = {
+  title: string;
+  source?: string;
+  url?: string;
+  publishedAt?: string;
+  description?: string;
+};
+
 export default function GeneratePage() {
   const router = useRouter();
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [activeTab, setActiveTab] = useState<'writing' | 'headlines'>('writing');
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
@@ -54,6 +63,11 @@ export default function GeneratePage() {
 
   const [customInstructions, setCustomInstructions] = useState('');
   const [loading, setLoading] = useState(false);
+  const [headlinePrompt, setHeadlinePrompt] = useState('');
+  const [headlineLimit, setHeadlineLimit] = useState<number>(5);
+  const [headlineLoading, setHeadlineLoading] = useState(false);
+  const [headlineError, setHeadlineError] = useState<string | null>(null);
+  const [headlineResults, setHeadlineResults] = useState<HeadlineItem[]>([]);
 
   // YouTube link
   const [videoLink, setVideoLink] = useState('');
@@ -99,6 +113,13 @@ export default function GeneratePage() {
   const [useSerpApi, setUseSerpApi] = useState<boolean>(true);
   const [includeLinks, setIncludeLinks] = useState<boolean>(true);
   const [newsFreshness, setNewsFreshness] = useState<'1h' | '6h' | '24h'>('6h');
+
+  useEffect(() => {
+    if (activeTab !== 'headlines') {
+      setHeadlineLoading(false);
+      setHeadlineError(null);
+    }
+  }, [activeTab]);
 
   const handleGenerate = async () => {
     if (!title.trim()) {
@@ -204,6 +225,63 @@ export default function GeneratePage() {
     }
   };
 
+  const handleFetchHeadlines = async () => {
+    if (!headlinePrompt.trim()) {
+      setHeadlineError('Please describe the article to fetch headlines.');
+      return;
+    }
+
+    setHeadlineLoading(true);
+    setHeadlineError(null);
+
+    try {
+      const response = await fetch('/api/headlines', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: headlinePrompt.trim(),
+          limit: headlineLimit,
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error || response.statusText || 'Failed to fetch headlines'
+        );
+      }
+
+      const rawHeadlines = Array.isArray(data?.headlines)
+        ? data.headlines
+        : Array.isArray(data?.results)
+        ? data.results
+        : null;
+
+      if (!rawHeadlines) {
+        throw new Error('Invalid response from server');
+      }
+
+      const normalized: HeadlineItem[] = rawHeadlines.map((item: any) => ({
+        title: item.title ?? '',
+        source:
+          typeof item.source === 'string'
+            ? item.source
+            : item.source?.name ?? item.source?.title ?? '',
+        url: item.url ?? item.link ?? item.href ?? '',
+        publishedAt: item.publishedAt ?? item.published_at ?? '',
+        description: item.description ?? item.summary ?? '',
+      }));
+
+      setHeadlineResults(normalized);
+    } catch (error: any) {
+      console.error('[headlines] fetch error:', error);
+      setHeadlineError(error?.message || 'Unable to fetch headlines.');
+      setHeadlineResults([]);
+    } finally {
+      setHeadlineLoading(false);
+    }
+  };
+
   const labelStyle = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1';
   const inputStyle =
     'border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-black dark:text-white rounded-md px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500';
@@ -234,8 +312,36 @@ export default function GeneratePage() {
         </div>
       </div>
 
+      <div className="w-full px-6 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex space-x-2">
+          <button
+            onClick={() => setActiveTab('writing')}
+            className={clsx(
+              'px-4 py-2 rounded-md text-sm font-medium transition-colors',
+              activeTab === 'writing'
+                ? 'bg-blue-600 text-white shadow'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+            )}
+          >
+            Writing
+          </button>
+          <button
+            onClick={() => setActiveTab('headlines')}
+            className={clsx(
+              'px-4 py-2 rounded-md text-sm font-medium transition-colors',
+              activeTab === 'headlines'
+                ? 'bg-blue-600 text-white shadow'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+            )}
+          >
+            Headlines
+          </button>
+        </div>
+      </div>
+
       <div className="max-w-3xl mx-auto px-6 py-10">
-        <div className="space-y-6 bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
+        {activeTab === 'writing' ? (
+          <div className="space-y-6 bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
           {/* TITLE */}
           <div>
             <label className={labelStyle}>Title</label>
@@ -571,7 +677,111 @@ export default function GeneratePage() {
               {loading ? 'Generating…' : 'Generate & Edit'}
             </button>
           </div>
-        </div>
+          </div>
+        ) : (
+          <div className="space-y-6 bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
+            <div>
+              <label className={labelStyle}>Article Description</label>
+              <textarea
+                className={inputStyle}
+                rows={4}
+                placeholder="Describe the article to fetch relevant headlines"
+                value={headlinePrompt}
+                onChange={(e) => setHeadlinePrompt(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className={labelStyle}>Number of Headlines</label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                className={clsx(inputStyle, 'w-32')}
+                value={headlineLimit}
+                onChange={(e) => {
+                  const value = Number(e.target.value);
+                  const clamped = Math.min(50, Math.max(1, Number.isNaN(value) ? 1 : value));
+                  setHeadlineLimit(clamped);
+                }}
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Choose between 1 and 50 headlines.
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <button
+                onClick={handleFetchHeadlines}
+                disabled={headlineLoading || !headlinePrompt.trim()}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded shadow disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {headlineLoading ? 'Fetching…' : 'Fetch Headlines'}
+              </button>
+            </div>
+
+            {headlineError && (
+              <p className="text-sm text-red-500" role="alert">
+                {headlineError}
+              </p>
+            )}
+
+            {headlineLoading && !headlineError && (
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Fetching headlines…
+              </p>
+            )}
+
+            {!headlineLoading && !headlineError && headlineResults.length === 0 && (
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Headlines will appear here after fetching.
+              </p>
+            )}
+
+            {headlineResults.length > 0 && (
+              <div className="space-y-4">
+                <h2 className="text-lg font-semibold">Headlines</h2>
+                <ul className="space-y-4">
+                  {headlineResults.map((headline, index) => {
+                    const headlineUrl = headline.url;
+                    return (
+                      <li
+                        key={headlineUrl || index}
+                        className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900"
+                      >
+                        <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                          {headline.title || 'Untitled headline'}
+                        </h3>
+                        {(headline.source || headline.publishedAt) && (
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            {headline.source && <span>Source: {headline.source}</span>}
+                            {headline.source && headline.publishedAt && <span className="mx-2">•</span>}
+                            {headline.publishedAt && <span>Published: {headline.publishedAt}</span>}
+                          </p>
+                        )}
+                        {headline.description && (
+                          <p className="text-sm text-gray-700 dark:text-gray-300 mt-2">
+                            {headline.description}
+                          </p>
+                        )}
+                        {headlineUrl && (
+                          <a
+                            href={headlineUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-blue-600 dark:text-blue-400 mt-3 inline-block"
+                          >
+                            Read more
+                          </a>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
