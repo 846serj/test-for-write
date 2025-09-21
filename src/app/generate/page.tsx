@@ -1,7 +1,7 @@
 // page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
@@ -12,6 +12,11 @@ import {
   extractHostname,
   getProfileQuotaTotal,
 } from '../../utils/profile';
+import {
+  buildHeadlineRequest,
+  normalizeKeywordInput,
+  SEARCH_IN_ORDER,
+} from './headlineFormHelpers';
 
 const LANGUAGE_OPTIONS = [
   { value: 'all', label: 'All languages' },
@@ -41,26 +46,16 @@ const SORT_BY_OPTIONS = [
   { value: 'popularity' as const, label: 'Most popular' },
 ];
 
-const SEARCH_IN_OPTIONS = [
-  { value: 'title', label: 'Title' },
-  { value: 'description', label: 'Description' },
-  { value: 'content', label: 'Full content' },
-];
+const SEARCH_IN_LABELS: Record<(typeof SEARCH_IN_ORDER)[number], string> = {
+  title: 'Title',
+  description: 'Description',
+  content: 'Full content',
+};
 
-const MAX_LIST_ITEMS = 20;
-
-function sanitizeListInput(
-  value: string,
-  { lowercase }: { lowercase?: boolean } = {}
-) {
-  const entries = value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => (lowercase ? item.toLowerCase() : item));
-
-  return Array.from(new Set(entries)).slice(0, MAX_LIST_ITEMS);
-}
+const SEARCH_IN_OPTIONS = SEARCH_IN_ORDER.map((value) => ({
+  value,
+  label: SEARCH_IN_LABELS[value],
+}));
 
 type HeadlineItem = {
   title: string;
@@ -68,6 +63,7 @@ type HeadlineItem = {
   url?: string;
   publishedAt?: string;
   description?: string;
+  matchedQuery?: string;
 };
 
 type ProfileStatus = { type: 'info' | 'error' | 'success'; message: string } | null;
@@ -128,10 +124,13 @@ export default function GeneratePage() {
   const [customInstructions, setCustomInstructions] = useState('');
   const [loading, setLoading] = useState(false);
   const [headlinePrompt, setHeadlinePrompt] = useState('');
+  const [keywordInput, setKeywordInput] = useState('');
+  const [keywords, setKeywords] = useState<string[]>([]);
   const [headlineLimit, setHeadlineLimit] = useState<number>(5);
   const [headlineLoading, setHeadlineLoading] = useState(false);
   const [headlineError, setHeadlineError] = useState<string | null>(null);
   const [headlineResults, setHeadlineResults] = useState<HeadlineItem[]>([]);
+  const [headlineQueries, setHeadlineQueries] = useState<string[]>([]);
   const [language, setLanguage] = useState<string>('en');
   const [sortBy, setSortBy] = useState<'publishedAt' | 'relevancy' | 'popularity'>(
     'publishedAt'
@@ -194,6 +193,18 @@ export default function GeneratePage() {
       setHeadlineError(null);
     }
   }, [activeTab]);
+
+  const profileGeneratedQuery = useMemo(() => {
+    if (!siteProfile) {
+      return '';
+    }
+    try {
+      return buildProfileHeadlineQuery(siteProfile) || '';
+    } catch (error) {
+      console.error('[profiles] failed to build profile query', error);
+      return '';
+    }
+  }, [siteProfile]);
 
   const toggleSearchIn = (value: string) => {
     setSearchIn((current) =>
@@ -432,118 +443,45 @@ export default function GeneratePage() {
   };
 
   const handleFetchHeadlines = async () => {
-    const trimmedQuery = headlinePrompt.trim();
-    const profileQuery = !trimmedQuery && siteProfile
-      ? buildProfileHeadlineQuery(siteProfile)
-      : '';
-    const queryToUse = trimmedQuery || profileQuery;
-
-    if (!queryToUse) {
-      setHeadlineError(
-        'Please describe the article or save a site profile to generate headlines.'
-      );
-      return;
-    }
-
-    if (!trimmedQuery && profileQuery) {
-      setHeadlinePrompt(profileQuery);
-    }
-
-    const sanitizedSources = sanitizeListInput(sourcesInput);
-    const sanitizedDomains = sanitizeListInput(domainsInput, { lowercase: true });
-    const sanitizedExcludeDomains = sanitizeListInput(excludeDomainsInput, {
-      lowercase: true,
-    });
-
-    setSourcesInput(sanitizedSources.join(', '));
-    setDomainsInput(sanitizedDomains.join(', '));
-    setExcludeDomainsInput(sanitizedExcludeDomains.join(', '));
-
-    if (
-      sanitizedSources.length > 0 &&
-      (sanitizedDomains.length > 0 || sanitizedExcludeDomains.length > 0)
-    ) {
-      setHeadlineError(
-        'Choose either specific sources or domain filters. NewsAPI does not allow combining them.'
-      );
-      return;
-    }
-
-    const fromValue = fromDate.trim();
-    const toValue = toDate.trim();
-    const fromTimestamp = fromValue ? Date.parse(fromValue) : Number.NaN;
-    const toTimestamp = toValue ? Date.parse(toValue) : Number.NaN;
-
-    if (fromValue && Number.isNaN(fromTimestamp)) {
-      setHeadlineError('Please provide a valid "From" date in YYYY-MM-DD format.');
-      return;
-    }
-
-    if (toValue && Number.isNaN(toTimestamp)) {
-      setHeadlineError('Please provide a valid "To" date in YYYY-MM-DD format.');
-      return;
-    }
-
-    if (!Number.isNaN(fromTimestamp) && !Number.isNaN(toTimestamp) && fromTimestamp > toTimestamp) {
-      setHeadlineError('The "From" date must be on or before the "To" date.');
-      return;
-    }
-
-    const orderedSearchIn = SEARCH_IN_OPTIONS.map((option) => option.value).filter((value) =>
-      searchIn.includes(value)
-    );
-
-    const payload: Record<string, unknown> = {
-      query: queryToUse,
+    const buildResult = buildHeadlineRequest({
+      prompt: headlinePrompt,
+      keywords,
+      profileQuery: profileGeneratedQuery,
+      profileLanguage: siteProfile?.language ?? undefined,
       limit: headlineLimit,
       sortBy,
-    };
+      language,
+      fromDate,
+      toDate,
+      searchIn,
+      sourcesInput,
+      domainsInput,
+      excludeDomainsInput,
+    });
 
-    const normalizedLanguage =
-      language === 'all' && siteProfile?.language
-        ? siteProfile.language
-        : language;
+    setSourcesInput(buildResult.sanitizedSources.join(', '));
+    setDomainsInput(buildResult.sanitizedDomains.join(', '));
+    setExcludeDomainsInput(buildResult.sanitizedExcludeDomains.join(', '));
 
-    if (
-      normalizedLanguage &&
-      normalizedLanguage !== 'all' &&
-      LANGUAGE_OPTION_VALUES.has(normalizedLanguage)
-    ) {
-      payload.language = normalizedLanguage;
+    if (!headlinePrompt.trim() && buildResult.resolvedPrompt) {
+      setHeadlinePrompt(buildResult.resolvedPrompt);
     }
 
-    if (fromValue) {
-      payload.from = fromValue;
-    }
-
-    if (toValue) {
-      payload.to = toValue;
-    }
-
-    if (orderedSearchIn.length > 0) {
-      payload.searchIn = orderedSearchIn;
-    }
-
-    if (sanitizedSources.length > 0) {
-      payload.sources = sanitizedSources;
-    }
-
-    if (sanitizedDomains.length > 0) {
-      payload.domains = sanitizedDomains;
-    }
-
-    if (sanitizedExcludeDomains.length > 0) {
-      payload.excludeDomains = sanitizedExcludeDomains;
+    if (!buildResult.ok) {
+      setHeadlineError(buildResult.error);
+      setHeadlineQueries([]);
+      return;
     }
 
     setHeadlineLoading(true);
     setHeadlineError(null);
+    setHeadlineQueries([]);
 
     try {
       const response = await fetch('/api/headlines', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(buildResult.payload),
       });
       const data = await response.json();
 
@@ -563,6 +501,25 @@ export default function GeneratePage() {
         throw new Error('Invalid response from server');
       }
 
+      const normalizedQueries = Array.isArray(data?.queriesAttempted)
+        ? (() => {
+            const seen = new Set<string>();
+            const collected: string[] = [];
+            for (const raw of data.queriesAttempted) {
+              if (typeof raw !== 'string') {
+                continue;
+              }
+              const trimmed = raw.trim();
+              if (!trimmed || seen.has(trimmed)) {
+                continue;
+              }
+              seen.add(trimmed);
+              collected.push(trimmed);
+            }
+            return collected;
+          })()
+        : [];
+
       const normalized: HeadlineItem[] = rawHeadlines.map((item: any) => ({
         title: item.title ?? '',
         source:
@@ -572,13 +529,27 @@ export default function GeneratePage() {
         url: item.url ?? item.link ?? item.href ?? '',
         publishedAt: item.publishedAt ?? item.published_at ?? '',
         description: item.description ?? item.summary ?? '',
+        matchedQuery:
+          typeof item.queryUsed === 'string'
+            ? item.queryUsed
+            : typeof item.query === 'string'
+            ? item.query
+            : typeof item.generatedBy === 'string'
+            ? item.generatedBy
+            : typeof item.keyword === 'string'
+            ? item.keyword
+            : typeof item.searchQuery === 'string'
+            ? item.searchQuery
+            : undefined,
       }));
 
       setHeadlineResults(normalized);
+      setHeadlineQueries(normalizedQueries);
     } catch (error: any) {
       console.error('[headlines] fetch error:', error);
       setHeadlineError(error?.message || 'Unable to fetch headlines.');
       setHeadlineResults([]);
+      setHeadlineQueries([]);
     } finally {
       setHeadlineLoading(false);
     }
@@ -1094,6 +1065,37 @@ export default function GeneratePage() {
             </div>
 
             <div>
+              <label className={labelStyle}>Keywords (optional)</label>
+              <textarea
+                className={inputStyle}
+                rows={3}
+                placeholder="marketing funnel, product launch, conversion rate"
+                value={keywordInput}
+                onChange={(event) => {
+                  const { value } = event.target;
+                  setKeywordInput(value);
+                  setKeywords(normalizeKeywordInput(value));
+                }}
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Enter up to 20 keywords separated by commas or new lines. We'll expand
+                these into detailed NewsAPI queries.
+              </p>
+              {keywords.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {keywords.map((keyword) => (
+                    <span
+                      key={keyword}
+                      className="inline-flex items-center rounded-full bg-gray-200 px-3 py-1 text-xs font-medium text-gray-800 dark:bg-gray-700 dark:text-gray-100"
+                    >
+                      {keyword}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
               <label className={labelStyle}>Number of Headlines</label>
               <input
                 type="number"
@@ -1257,8 +1259,13 @@ export default function GeneratePage() {
             <div className="pt-2">
               <button
                 onClick={handleFetchHeadlines}
-                disabled={headlineLoading || (!headlinePrompt.trim() && !siteProfile)}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded shadow disabled:opacity-60 disabled:cursor-not-allowed"
+                disabled={
+                  headlineLoading ||
+                  (!headlinePrompt.trim() &&
+                    keywords.length === 0 &&
+                    !profileGeneratedQuery)
+                }
               >
                 {headlineLoading ? 'Fetching…' : 'Fetch Headlines'}
               </button>
@@ -1280,6 +1287,24 @@ export default function GeneratePage() {
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Headlines will appear here after fetching.
               </p>
+            )}
+
+            {headlineQueries.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                  Queries attempted
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {headlineQueries.map((query) => (
+                    <span
+                      key={query}
+                      className="inline-flex items-center rounded-full bg-blue-100 dark:bg-blue-900/40 px-3 py-1 text-xs font-medium text-blue-700 dark:text-blue-300"
+                    >
+                      {query}
+                    </span>
+                  ))}
+                </div>
+              </div>
             )}
 
             {headlineResults.length > 0 && (
@@ -1306,6 +1331,11 @@ export default function GeneratePage() {
                         {headline.description && (
                           <p className="text-sm text-gray-700 dark:text-gray-300 mt-2">
                             {headline.description}
+                          </p>
+                        )}
+                        {headline.matchedQuery && (
+                          <p className="text-xs text-blue-700 dark:text-blue-300 mt-2">
+                            Matched query: <span className="font-medium">{headline.matchedQuery}</span>
                           </p>
                         )}
                         {headlineUrl && (
