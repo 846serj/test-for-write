@@ -1364,43 +1364,39 @@ function normalizeSerpResult(result: SerpApiResult): NormalizedHeadline | null {
   };
 }
 
-function computeSerpTimeFilter(
-  from: string | null,
-  to: string | null
-): string | undefined {
-  if (!from) {
-    return undefined;
+function computeSerpTimeFilter(from: string | null, to: string | null): string {
+  const nowCandidate = to ? new Date(to) : new Date();
+  const now = Number.isNaN(nowCandidate.getTime()) ? new Date() : nowCandidate;
+
+  if (from) {
+    const fromDate = new Date(from);
+    if (!Number.isNaN(fromDate.getTime())) {
+      const diffHours = Math.max(
+        0,
+        (now.getTime() - fromDate.getTime()) / (1000 * 60 * 60)
+      );
+
+      if (diffHours <= 1) {
+        return 'qdr:h';
+      }
+      if (diffHours <= 6) {
+        return 'qdr:h6';
+      }
+      if (diffHours <= 24) {
+        return 'qdr:d';
+      }
+      if (diffHours <= 24 * 7) {
+        return 'qdr:w';
+      }
+      if (diffHours <= 24 * 30) {
+        return 'qdr:m';
+      }
+
+      return 'qdr:y';
+    }
   }
 
-  const fromDate = new Date(from);
-  if (Number.isNaN(fromDate.getTime())) {
-    return undefined;
-  }
-
-  const now = to ? new Date(to) : new Date();
-  if (Number.isNaN(now.getTime())) {
-    return undefined;
-  }
-
-  const diffHours = Math.max(0, (now.getTime() - fromDate.getTime()) / (1000 * 60 * 60));
-
-  if (diffHours <= 1) {
-    return 'qdr:h';
-  }
-  if (diffHours <= 6) {
-    return 'qdr:h6';
-  }
-  if (diffHours <= 24) {
-    return 'qdr:d';
-  }
-  if (diffHours <= 24 * 7) {
-    return 'qdr:w';
-  }
-  if (diffHours <= 24 * 30) {
-    return 'qdr:m';
-  }
-
-  return 'qdr:y';
+  return 'qdr:d';
 }
 
 function createHeadlinesHandler(
@@ -1920,7 +1916,9 @@ function createHeadlinesHandler(
     }
 
     if (serpApiConfigured && aggregatedHeadlines.length < limit) {
-      const baseParams: Record<string, string> = {};
+      const baseParams: Record<string, string> = {
+        tbs: serpTimeFilter,
+      };
 
       if (language && language !== null) {
         baseParams.hl = language;
@@ -1928,10 +1926,6 @@ function createHeadlinesHandler(
 
       if (country) {
         baseParams.gl = country;
-      }
-
-      if (serpTimeFilter) {
-        baseParams.tbs = serpTimeFilter;
       }
 
       const serpEngines: Array<{
