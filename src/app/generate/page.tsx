@@ -76,13 +76,11 @@ export default function GeneratePage() {
   const router = useRouter();
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [activeTab, setActiveTab] = useState<'writing' | 'headlines'>('writing');
-  const [userId, setUserId] = useState<string | null>(null);
   const [siteProfile, setSiteProfile] = useState<NormalizedSiteProfile | null>(null);
   const [profileSiteUrl, setProfileSiteUrl] = useState('');
   const [profileText, setProfileText] = useState('');
   const [profileStatus, setProfileStatus] = useState<ProfileStatus>(null);
   const [profileSaving, setProfileSaving] = useState(false);
-  const [profileLoading, setProfileLoading] = useState(false);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
@@ -91,68 +89,7 @@ export default function GeneratePage() {
     document.documentElement.classList.toggle('dark', defaultTheme === 'dark');
   }, []);
 
-  useEffect(() => {
-    supabase.auth
-      .getUser()
-      .then(({ data }) => setUserId(data.user?.id ?? null))
-      .catch((error) => {
-        console.error('[profiles] failed to load user', error);
-        setUserId(null);
-      });
-  }, []);
-
-  useEffect(() => {
-    if (!userId) {
-      setSiteProfile(null);
-      setProfileSiteUrl('');
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadProfile = async () => {
-      setProfileLoading(true);
-      try {
-        const response = await fetch(
-          `/api/profiles?userId=${encodeURIComponent(userId)}`
-        );
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data?.error || 'Failed to load profile');
-        }
-        if (cancelled) return;
-        if (data?.profile) {
-          setSiteProfile(data.profile);
-          setProfileSiteUrl(data.siteUrl || '');
-          setProfileText(data.rawText || '');
-        } else {
-          setSiteProfile(null);
-          setProfileSiteUrl(data?.siteUrl || '');
-        }
-        setProfileStatus(null);
-      } catch (error) {
-        if (cancelled) return;
-        console.error('[profiles] load failed', error);
-        setProfileStatus({
-          type: 'error',
-          message:
-            error instanceof Error
-              ? error.message
-              : 'Unable to load saved profile.',
-        });
-      } finally {
-        if (!cancelled) {
-          setProfileLoading(false);
-        }
-      }
-    };
-
-    loadProfile();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [userId]);
+  
 
   const toggleTheme = () => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
@@ -302,7 +239,8 @@ export default function GeneratePage() {
     if (!siteProfile) {
       setProfileStatus({
         type: 'error',
-        message: 'Create and save a profile before applying it to the filters.',
+        message:
+          'Normalize a profile for this session before applying it to the filters.',
       });
       return;
     }
@@ -315,18 +253,10 @@ export default function GeneratePage() {
   };
 
   const handleSaveProfile = async () => {
-    if (!userId) {
-      setProfileStatus({
-        type: 'error',
-        message: 'You must be signed in to save a profile.',
-      });
-      return;
-    }
-
     if (!profileSiteUrl.trim()) {
       setProfileStatus({
         type: 'error',
-        message: 'Enter your site URL before saving a profile.',
+        message: 'Enter your site URL before normalizing a profile.',
       });
       return;
     }
@@ -334,7 +264,7 @@ export default function GeneratePage() {
     if (!profileText.trim()) {
       setProfileStatus({
         type: 'error',
-        message: 'Paste some details about your site so we can build a profile.',
+        message: 'Paste some site details so we can build a session profile.',
       });
       return;
     }
@@ -342,40 +272,55 @@ export default function GeneratePage() {
     setProfileSaving(true);
     setProfileStatus({
       type: 'info',
-      message: 'Normalizing your site profile…',
+      message: 'Normalizing your session profile…',
     });
 
     try {
-      const response = await fetch('/api/profiles', {
+      const response = await fetch('/api/profiles/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId,
           siteUrl: profileSiteUrl,
           rawText: profileText,
         }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data?.error || 'Failed to save profile');
+        throw new Error(data?.error || 'Failed to normalize profile');
       }
 
-      setSiteProfile(data.profile || null);
-      setProfileSiteUrl(data.siteUrl || profileSiteUrl);
-      setProfileText(data.rawText || profileText);
-      setProfileStatus({ type: 'success', message: 'Profile saved.' });
+      const normalizedProfile: NormalizedSiteProfile | null = data?.profile || null;
+      const normalizedSiteUrl: string = data?.siteUrl || profileSiteUrl;
+      const statusFromResponse =
+        data?.status &&
+        typeof data.status === 'object' &&
+        typeof data.status.message === 'string' &&
+        (data.status.type === 'info' ||
+          data.status.type === 'error' ||
+          data.status.type === 'success')
+          ? { type: data.status.type, message: data.status.message }
+          : null;
 
-      if (data.profile) {
-        applyProfileToFilters(data.profile, data.siteUrl || profileSiteUrl);
+      setSiteProfile(normalizedProfile);
+      setProfileSiteUrl(normalizedSiteUrl);
+      setProfileStatus(
+        statusFromResponse ?? {
+          type: 'success',
+          message: 'Session profile ready to use for this visit.',
+        }
+      );
+
+      if (normalizedProfile) {
+        applyProfileToFilters(normalizedProfile, normalizedSiteUrl);
       }
     } catch (error) {
-      console.error('[profiles] save failed', error);
+      console.error('[profiles] normalization failed', error);
       setProfileStatus({
         type: 'error',
         message:
           error instanceof Error
             ? error.message
-            : 'Failed to save profile. Try again.',
+            : 'Failed to normalize profile. Try again.',
       });
     } finally {
       setProfileSaving(false);
@@ -1045,7 +990,8 @@ export default function GeneratePage() {
                   </h2>
                   <p className="text-sm text-gray-600 dark:text-gray-400">
                     Paste anything about your publication. We will normalize it into a
-                    reusable profile so you can pull niche headlines with one click.
+                    session-only profile so you can pull niche headlines with one click
+                    before it resets.
                   </p>
                 </div>
                 <button
@@ -1059,7 +1005,7 @@ export default function GeneratePage() {
                       : 'bg-gray-300 text-gray-600 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
                   )}
                 >
-                  Apply profile to filters
+                  Apply session profile to filters
                 </button>
               </div>
 
@@ -1086,7 +1032,7 @@ export default function GeneratePage() {
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     We send this text to the LLM with a structured extraction prompt and
-                    save the normalized JSON for future sessions.
+                    keep the normalized JSON in memory for this session only.
                   </p>
                 </div>
 
@@ -1102,28 +1048,11 @@ export default function GeneratePage() {
                         : 'bg-blue-600 text-white hover:bg-blue-700'
                     )}
                   >
-                    {profileSaving ? 'Saving profile…' : 'Save & Normalize Profile'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleApplyProfile}
-                    disabled={!siteProfile || profileSaving}
-                    className={clsx(
-                      'rounded-md px-4 py-2 text-sm font-medium transition-colors',
-                      siteProfile && !profileSaving
-                        ? 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-                        : 'bg-gray-300 text-gray-600 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
-                    )}
-                  >
-                    Use saved profile
+                    {profileSaving
+                      ? 'Normalizing session profile…'
+                      : 'Normalize profile for this session'}
                   </button>
                 </div>
-
-                {profileLoading && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Loading saved profile…
-                  </p>
-                )}
 
                 {profileStatus && (
                   <p
@@ -1158,7 +1087,7 @@ export default function GeneratePage() {
               <textarea
                 className={inputStyle}
                 rows={4}
-                placeholder="Describe the article to fetch relevant headlines (leave blank to use your saved profile)"
+                placeholder="Describe the article to fetch relevant headlines (leave blank to use your session profile)"
                 value={headlinePrompt}
                 onChange={(e) => setHeadlinePrompt(e.target.value)}
               />
