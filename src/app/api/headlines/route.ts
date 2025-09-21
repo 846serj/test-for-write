@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   CATEGORY_FEED_SET,
-  CATEGORY_FEED_VALUES,
   type CategoryFeedValue,
 } from '../../../constants/categoryFeeds';
 import { openai } from '../../../lib/openai';
@@ -30,7 +29,6 @@ const LANGUAGE_CODES = [
 type LanguageCode = (typeof LANGUAGE_CODES)[number];
 const LANGUAGE_SET = new Set<string>(LANGUAGE_CODES);
 
-const CATEGORY_VALUES = CATEGORY_FEED_VALUES;
 type CategoryValue = CategoryFeedValue;
 const CATEGORY_SET = CATEGORY_FEED_SET;
 
