@@ -356,6 +356,7 @@ function normalizeDomains(
 type HeadlinesRequestBody = {
   query?: unknown;
   keywords?: unknown;
+  description?: unknown;
   limit?: unknown;
   language?: unknown;
   sortBy?: unknown;
@@ -468,6 +469,246 @@ function parseGeneratedQueries(raw: string): string[] {
     .filter(Boolean);
 }
 
+function normalizeStringList(
+  values: unknown,
+  {
+    limit = MAX_FILTER_LIST_ITEMS,
+    lowercaseDedup = true,
+  }: { limit?: number; lowercaseDedup?: boolean } = {}
+): string[] {
+  const entries: unknown[] = Array.isArray(values)
+    ? values
+    : typeof values === 'string'
+    ? values.split(/[\r\n,;]+/)
+    : [];
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of entries) {
+    if (typeof entry !== 'string') {
+      continue;
+    }
+
+    const trimmed = entry.replace(/^[\s*-•]+/, '').trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const key = lowercaseDedup ? trimmed.toLowerCase() : trimmed;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    normalized.push(trimmed);
+
+    if (normalized.length >= limit) {
+      break;
+    }
+  }
+
+  return normalized;
+}
+
+function extractSectionList(text: string, labels: string[]): string[] {
+  for (const label of labels) {
+    const regex = new RegExp(
+      `${label.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\s*:\\s*([\\s\\S]*?)(?:\\n\\s*\\n|$)`,
+      'i'
+    );
+    const match = text.match(regex);
+    if (match) {
+      return normalizeStringList(match[1]);
+    }
+  }
+
+  return [];
+}
+
+function parseKeywordCategoryResponse(raw: string): {
+  keywords: string[];
+  categories: string[];
+} {
+  if (!raw) {
+    return { keywords: [], categories: [] };
+  }
+
+  const attemptParse = (text: string) => {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // ignore parse failure
+    }
+
+    return null;
+  };
+
+  const keywordKeys = ['keywords', 'keywordSuggestions', 'topics', 'queries'];
+  const categoryKeys = ['categories', 'categorySuggestions', 'sections'];
+
+  const candidates: Record<string, unknown>[] = [];
+
+  const direct = attemptParse(raw);
+  if (direct) {
+    candidates.push(direct);
+  }
+
+  if (!direct) {
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const nested = attemptParse(jsonMatch[0]);
+      if (nested) {
+        candidates.push(nested);
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    let keywords: string[] = [];
+    for (const key of keywordKeys) {
+      if (key in candidate) {
+        keywords = normalizeStringList(candidate[key]);
+      }
+      if (keywords.length > 0) {
+        break;
+      }
+    }
+
+    let categories: string[] = [];
+    for (const key of categoryKeys) {
+      if (key in candidate) {
+        categories = normalizeStringList(candidate[key]);
+      }
+      if (categories.length > 0) {
+        break;
+      }
+    }
+
+    if (keywords.length > 0 || categories.length > 0) {
+      return { keywords, categories };
+    }
+  }
+
+  const fallbackKeywords = extractSectionList(raw, [
+    'keywords',
+    'keyword ideas',
+    'topics',
+    'key phrases',
+    'search terms',
+  ]);
+  const fallbackCategories = extractSectionList(raw, [
+    'categories',
+    'category suggestions',
+    'recommended categories',
+    'sections',
+  ]);
+
+  return { keywords: fallbackKeywords, categories: fallbackCategories };
+}
+
+function fallbackKeywordsFromDescription(
+  description: string,
+  limit: number
+): string[] {
+  const tokens = description
+    .split(/[^a-z0-9]+/i)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 4);
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const token of tokens) {
+    const lowered = token.toLowerCase();
+    if (seen.has(lowered)) {
+      continue;
+    }
+
+    seen.add(lowered);
+    normalized.push(token);
+
+    if (normalized.length >= limit) {
+      break;
+    }
+  }
+
+  return normalized;
+}
+
+async function inferKeywordsAndCategories(
+  client: OpenAIClient,
+  description: string,
+  requestedLimit: number
+): Promise<{ keywords: string[]; categories: CategoryValue[] }> {
+  const keywordTarget = Math.min(
+    MAX_FILTER_LIST_ITEMS,
+    Math.max(4, Math.ceil(requestedLimit * 1.5))
+  );
+  const allowedCategories = Array.from(CATEGORY_SET.values()).join(', ');
+  const systemPrompt =
+    'You analyze news-focused website descriptions to recommend search keywords and NewsAPI categories. ' +
+    'Always respond with a valid JSON object that only contains "keywords" and "categories" properties. ' +
+    'Keywords should be short search phrases suitable for the NewsAPI everything endpoint.';
+  const userPrompt =
+    `The description of the news site is:\n"""${description}"""\n\n` +
+    `Return around ${keywordTarget} diverse keywords capturing geographic, topical, and audience angles. ` +
+    'Include up to 4 categories drawn from the following list when relevant: ' +
+    `${allowedCategories}. ` +
+    'Format: {"keywords": [..], "categories": [..]}.';
+
+  const response = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    temperature: 0.5,
+    max_tokens: 400,
+  });
+
+  const content = response.choices?.[0]?.message?.content?.trim() ?? '';
+  const parsed = parseKeywordCategoryResponse(content);
+
+  let keywords = normalizeStringList(parsed.keywords, {
+    limit: keywordTarget,
+    lowercaseDedup: true,
+  });
+
+  if (keywords.length === 0) {
+    keywords = fallbackKeywordsFromDescription(description, keywordTarget);
+  }
+
+  if (keywords.length === 0) {
+    throw new Error('No keywords returned from OpenAI');
+  }
+
+  let categories = normalizeStringList(parsed.categories, {
+    limit: 4,
+    lowercaseDedup: true,
+  })
+    .map((value) => value.toLowerCase())
+    .filter((value): value is CategoryValue =>
+      CATEGORY_SET.has(value as CategoryValue)
+    );
+
+  if (categories.length === 0) {
+    const loweredDescription = description.toLowerCase();
+    const inferred = new Set<CategoryValue>();
+    CATEGORY_SET.forEach((option) => {
+      if (loweredDescription.includes(option)) {
+        inferred.add(option);
+      }
+    });
+    categories = Array.from(inferred).slice(0, 4);
+  }
+
+  return { keywords, categories };
+}
+
 async function generateKeywordQueries(
   client: OpenAIClient,
   keywords: string[],
@@ -539,6 +780,15 @@ function createHeadlinesHandler(
     );
   }
 
+  let description = '';
+  if (body.description === undefined || body.description === null) {
+    description = '';
+  } else if (typeof body.description === 'string') {
+    description = body.description.trim();
+  } else {
+    return badRequest('description must be a string value');
+  }
+
   let category: CategoryValue | null;
   try {
     category = normalizeCategory(body.category);
@@ -563,8 +813,8 @@ function createHeadlinesHandler(
 
   const isCategoryRequest = category !== null;
 
-  if (!query && keywords.length === 0 && !isCategoryRequest) {
-    return badRequest('Either query or keywords must be provided');
+  if (!query && keywords.length === 0 && !description && !isCategoryRequest) {
+    return badRequest('Either query, keywords, or description must be provided');
   }
 
   const limit = resolveLimit(body.limit);
@@ -639,6 +889,30 @@ function createHeadlinesHandler(
 
   if (isCategoryRequest && sources.length > 0) {
     return badRequest('Category feeds cannot be combined with specific sources');
+  }
+
+  let inferenceResult: { keywords: string[]; categories: CategoryValue[] } | null =
+    null;
+
+  if (!isCategoryRequest && keywords.length === 0 && description) {
+    try {
+      inferenceResult = await inferKeywordsAndCategories(
+        aiClient,
+        description,
+        limit
+      );
+      keywords = inferenceResult.keywords;
+    } catch (error) {
+      log.error('[api/headlines] keyword inference failed', error);
+      return NextResponse.json(
+        { error: 'Failed to infer keywords from description' },
+        { status: 502 }
+      );
+    }
+
+    if (keywords.length === 0) {
+      return badRequest('Unable to infer keywords from the provided description');
+    }
   }
 
   if (isCategoryRequest) {
@@ -788,6 +1062,11 @@ function createHeadlinesHandler(
       queriesAttempted,
       successfulQueries: 1,
     };
+
+    if (inferenceResult) {
+      payload.inferredKeywords = inferenceResult.keywords;
+      payload.inferredCategories = inferenceResult.categories;
+    }
 
     if (queryWarnings.length > 0) {
       payload.warnings = queryWarnings;
@@ -998,10 +1277,18 @@ function createHeadlinesHandler(
   if (successfulQueries === 0 && aggregatedHeadlines.length === 0) {
     const message =
       queryWarnings[0] || 'NewsAPI request failed for all generated queries';
-    return NextResponse.json(
-      { error: message, queryErrors: queryWarnings, queriesAttempted },
-      { status: 502 }
-    );
+    const errorPayload: Record<string, unknown> = {
+      error: message,
+      queryErrors: queryWarnings,
+      queriesAttempted,
+    };
+
+    if (inferenceResult) {
+      errorPayload.inferredKeywords = inferenceResult.keywords;
+      errorPayload.inferredCategories = inferenceResult.categories;
+    }
+
+    return NextResponse.json(errorPayload, { status: 502 });
   }
 
   const payload: Record<string, unknown> = {
@@ -1010,6 +1297,11 @@ function createHeadlinesHandler(
     queriesAttempted,
     successfulQueries,
   };
+
+  if (inferenceResult) {
+    payload.inferredKeywords = inferenceResult.keywords;
+    payload.inferredCategories = inferenceResult.categories;
+  }
 
   if (queryWarnings.length > 0) {
     payload.warnings = queryWarnings;
