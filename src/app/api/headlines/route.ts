@@ -226,11 +226,13 @@ function normalizeCategory(raw: unknown): CategoryValue | null {
   }
 
   const lowered = trimmed.toLowerCase();
-  if (!CATEGORY_SET.has(lowered)) {
+  const candidate = lowered as CategoryValue;
+
+  if (!CATEGORY_SET.has(candidate)) {
     throw new Error(`Unsupported category selection: ${trimmed}`);
   }
 
-  return lowered as CategoryValue;
+  return candidate;
 }
 
 function normalizeCountry(raw: unknown): CountryCode | null {
