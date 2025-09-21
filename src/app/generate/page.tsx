@@ -108,6 +108,19 @@ const TOP_HEADLINE_COUNTRY_OPTIONS = [
   { value: 'za', label: 'South Africa' },
 ];
 
+type HeadlineSummary = {
+  overview: string;
+  bullets: string[];
+};
+
+type RelatedArticle = {
+  title?: string;
+  description?: string;
+  url?: string;
+  source?: string;
+  publishedAt?: string;
+};
+
 type HeadlineItem = {
   title: string;
   source?: string;
@@ -115,6 +128,8 @@ type HeadlineItem = {
   publishedAt?: string;
   description?: string;
   matchedQuery?: string;
+  summary?: HeadlineSummary;
+  relatedArticles?: RelatedArticle[];
 };
 
 export default function GeneratePage() {
@@ -432,28 +447,105 @@ export default function GeneratePage() {
           })()
         : [];
 
-      const normalized: HeadlineItem[] = rawHeadlines.map((item: any) => ({
-        title: item.title ?? '',
-        source:
+      const normalized: HeadlineItem[] = rawHeadlines.map((item: any) => {
+        const source =
           typeof item.source === 'string'
             ? item.source
-            : item.source?.name ?? item.source?.title ?? '',
-        url: item.url ?? item.link ?? item.href ?? '',
-        publishedAt: item.publishedAt ?? item.published_at ?? '',
-        description: item.description ?? item.summary ?? '',
-        matchedQuery:
-          typeof item.queryUsed === 'string'
-            ? item.queryUsed
-            : typeof item.query === 'string'
-            ? item.query
-            : typeof item.generatedBy === 'string'
-            ? item.generatedBy
-            : typeof item.keyword === 'string'
-            ? item.keyword
-            : typeof item.searchQuery === 'string'
-            ? item.searchQuery
-            : undefined,
-      }));
+            : item.source?.name ?? item.source?.title ?? '';
+
+        const summary: HeadlineSummary | undefined = (() => {
+          if (!item || typeof item.summary !== 'object' || item.summary === null) {
+            return undefined;
+          }
+
+          const overview =
+            typeof item.summary.overview === 'string'
+              ? item.summary.overview.trim()
+              : '';
+          const bullets = Array.isArray(item.summary.bullets)
+            ? item.summary.bullets
+                .map((bullet: unknown) =>
+                  typeof bullet === 'string' ? bullet.trim() : ''
+                )
+                .filter((entry: string) => Boolean(entry))
+            : [];
+
+          if (!overview && bullets.length === 0) {
+            return undefined;
+          }
+
+          return {
+            overview,
+            bullets,
+          };
+        })();
+
+        const relatedArticles: RelatedArticle[] = Array.isArray(item?.relatedArticles)
+          ? item.relatedArticles
+              .map((related: any) => {
+                const relatedSource =
+                  typeof related?.source === 'string'
+                    ? related.source
+                    : related?.source?.name ?? related?.source?.title ?? '';
+
+                return {
+                  title: typeof related?.title === 'string' ? related.title : undefined,
+                  description:
+                    typeof related?.description === 'string'
+                      ? related.description
+                      : undefined,
+                  url: typeof related?.url === 'string' ? related.url : undefined,
+                  source: relatedSource || undefined,
+                  publishedAt:
+                    typeof related?.publishedAt === 'string'
+                      ? related.publishedAt
+                      : typeof related?.published_at === 'string'
+                      ? related.published_at
+                      : undefined,
+                };
+              })
+              .filter((related: RelatedArticle) =>
+                Boolean(
+                  related.title ||
+                    related.description ||
+                    related.url ||
+                    related.source ||
+                    related.publishedAt
+                )
+              )
+          : [];
+
+        const description =
+          typeof item.description === 'string'
+            ? item.description
+            : typeof item.snippet === 'string'
+            ? item.snippet
+            : typeof item.summary === 'string'
+            ? item.summary
+            : '';
+
+        return {
+          title: item.title ?? '',
+          source,
+          url: item.url ?? item.link ?? item.href ?? '',
+          publishedAt: item.publishedAt ?? item.published_at ?? '',
+          description,
+          matchedQuery:
+            typeof item.queryUsed === 'string'
+              ? item.queryUsed
+              : typeof item.query === 'string'
+              ? item.query
+              : typeof item.generatedBy === 'string'
+              ? item.generatedBy
+              : typeof item.keyword === 'string'
+              ? item.keyword
+              : typeof item.searchQuery === 'string'
+              ? item.searchQuery
+              : undefined,
+          summary,
+          relatedArticles: relatedArticles.length > 0 ? relatedArticles : undefined,
+        };
+      });
 
       setHeadlineResults(normalized);
       setHeadlineQueries(normalizedQueries);
@@ -1187,11 +1279,68 @@ export default function GeneratePage() {
                             {headline.publishedAt && <span>Published: {headline.publishedAt}</span>}
                           </p>
                         )}
-                        {headline.description && (
-                          <p className="text-sm text-gray-700 dark:text-gray-300 mt-2">
-                            {headline.description}
-                          </p>
+                        {headline.summary ? (
+                          <div className="mt-3 space-y-2">
+                            {headline.summary.overview && (
+                              <p className="text-sm text-gray-700 dark:text-gray-300">
+                                {headline.summary.overview}
+                              </p>
+                            )}
+                            {headline.summary.bullets.length > 0 && (
+                              <ul className="list-disc space-y-1 pl-5 text-sm text-gray-700 dark:text-gray-300">
+                                {headline.summary.bullets.map((bullet, bulletIndex) => (
+                                  <li key={bulletIndex}>{bullet}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        ) : (
+                          headline.description && (
+                            <p className="text-sm text-gray-700 dark:text-gray-300 mt-2">
+                              {headline.description}
+                            </p>
+                          )
                         )}
+                        {headline.relatedArticles?.length ? (
+                          <div className="mt-3 space-y-1">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                              Supporting sources
+                            </p>
+                            <ul className="space-y-1">
+                              {headline.relatedArticles.slice(0, 3).map((related, relatedIndex) => {
+                                const label = related.title || related.source || 'Related coverage';
+                                const key = related.url || `${relatedIndex}-${label}`;
+                                return (
+                                  <li key={key} className="text-xs text-gray-600 dark:text-gray-400">
+                                    {related.url ? (
+                                      <a
+                                        href={related.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                                      >
+                                        {label}
+                                      </a>
+                                    ) : (
+                                      <span className="font-medium">{label}</span>
+                                    )}
+                                    {related.source && (
+                                      <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">
+                                        ({related.source})
+                                      </span>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                              {headline.relatedArticles.length > 3 && (
+                                <li className="text-xs text-gray-500 dark:text-gray-400">
+                                  +{headline.relatedArticles.length - 3} more source
+                                  {headline.relatedArticles.length - 3 === 1 ? '' : 's'}
+                                </li>
+                              )}
+                            </ul>
+                          </div>
+                        ) : null}
                         {headline.matchedQuery && (
                           <p className="text-xs text-blue-700 dark:text-blue-300 mt-2">
                             Matched query: <span className="font-medium">{headline.matchedQuery}</span>

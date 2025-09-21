@@ -755,6 +755,19 @@ async function generateKeywordQueries(
   ];
 }
 
+type HeadlineSummary = {
+  overview: string;
+  bullets: string[];
+};
+
+type RelatedArticle = {
+  title: string;
+  description: string;
+  url: string;
+  source: string;
+  publishedAt: string;
+};
+
 type NormalizedHeadline = {
   title: string;
   description: string;
@@ -763,12 +776,18 @@ type NormalizedHeadline = {
   publishedAt: string;
 };
 
+type HeadlineResponseEntry = NormalizedHeadline & {
+  summary?: HeadlineSummary;
+  relatedArticles?: RelatedArticle[];
+};
+
 type HeadlineCandidate = {
   data: NormalizedHeadline;
   normalizedUrl: string;
   normalizedTitle: string;
   tokenSet: Set<string>;
   normalizedDescription: string;
+  related: RelatedArticle[];
 };
 
 const TOKEN_MIN_LENGTH = 3;
@@ -872,6 +891,7 @@ function createHeadlineCandidate(headline: NormalizedHeadline): HeadlineCandidat
     normalizedTitle: normalizeHeadlineText(headline.title),
     normalizedDescription: normalizeHeadlineText(headline.description),
     tokenSet: buildTokenSet(headline.title, headline.description),
+    related: [],
   };
 }
 
@@ -883,12 +903,236 @@ function addHeadlineIfUnique(
 
   for (const existing of aggregated) {
     if (areHeadlinesNearDuplicate(existing, enriched)) {
+      const normalizedCandidateUrl = normalizeUrlForComparison(candidate.url);
+      if (
+        normalizedCandidateUrl &&
+        (normalizedCandidateUrl === existing.normalizedUrl ||
+          existing.related.some(
+            (relatedArticle) =>
+              normalizeUrlForComparison(relatedArticle.url) === normalizedCandidateUrl
+          ))
+      ) {
+        return false;
+      }
+
+      if (
+        candidate.description &&
+        candidate.description.length > existing.data.description.length
+      ) {
+        existing.data.description = candidate.description;
+        existing.normalizedDescription = normalizeHeadlineText(candidate.description);
+      }
+
+      existing.related.push({
+        title: candidate.title,
+        description: candidate.description,
+        url: candidate.url,
+        source: candidate.source,
+        publishedAt: candidate.publishedAt,
+      });
+
+      for (const token of enriched.tokenSet) {
+        existing.tokenSet.add(token);
+      }
+
       return false;
     }
   }
 
   aggregated.push(enriched);
   return true;
+}
+
+function condenseText(value: string, maxLength = 400): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '';
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+type SummaryClusterArticle = {
+  title: string;
+  source: string;
+  publishedAt: string;
+  url: string;
+  summary: string;
+};
+
+type SummaryClusterInput = {
+  id: string;
+  headline: string;
+  articles: SummaryClusterArticle[];
+};
+
+async function generateClusterSummaries(
+  client: OpenAIClient,
+  clusters: HeadlineCandidate[],
+  log: Pick<typeof console, 'error'>
+): Promise<Record<string, HeadlineSummary>> {
+  if (clusters.length === 0) {
+    return {};
+  }
+
+  const inputs: SummaryClusterInput[] = clusters.map((cluster, index) => {
+    const id = `item-${index}`;
+    const collected: SummaryClusterArticle[] = [];
+    const sources: RelatedArticle[] = [
+      {
+        title: cluster.data.title,
+        description: cluster.data.description,
+        url: cluster.data.url,
+        source: cluster.data.source,
+        publishedAt: cluster.data.publishedAt,
+      },
+      ...cluster.related,
+    ];
+
+    for (const article of sources) {
+      const snippet = condenseText(article.description || article.title || '');
+      if (!snippet) {
+        continue;
+      }
+      collected.push({
+        title: article.title,
+        source: article.source,
+        publishedAt: article.publishedAt,
+        url: article.url,
+        summary: snippet,
+      });
+      if (collected.length >= 6) {
+        break;
+      }
+    }
+
+    if (collected.length === 0) {
+      const fallbackTitle = cluster.data.title.trim() || 'Untitled report';
+      collected.push({
+        title: fallbackTitle,
+        source: cluster.data.source,
+        publishedAt: cluster.data.publishedAt,
+        url: cluster.data.url,
+        summary:
+          condenseText(cluster.data.description) ||
+          condenseText(fallbackTitle) ||
+          fallbackTitle,
+      });
+    }
+
+    return {
+      id,
+      headline: cluster.data.title,
+      articles: collected,
+    };
+  });
+
+  const serialized = JSON.stringify(inputs, null, 2);
+
+  let content = '';
+  try {
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are a meticulous news editor. For each cluster of related articles, craft a 2-3 sentence overview capturing the key development and context. Also produce 3-5 concise factual bullet points highlighting distinct details. Only use the provided information. Return strict JSON with the shape {"<cluster-id>": {"overview": string, "bullets": string[]}} with no extra commentary.',
+        },
+        {
+          role: 'user',
+          content: `Summarize the following news clusters:\n${serialized}`,
+        },
+      ],
+      temperature: 0.2,
+      max_tokens: 600,
+    });
+
+    content = response.choices?.[0]?.message?.content?.trim() ?? '';
+  } catch (error) {
+    log.error('[api/headlines] summarization request failed', error);
+    return {};
+  }
+
+  if (!content) {
+    return {};
+  }
+
+  const cleaned = content.replace(/```json|```/g, '').trim();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (error) {
+    log.error('[api/headlines] failed to parse summarization response', error);
+    return {};
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {};
+  }
+
+  const result: Record<string, HeadlineSummary> = {};
+
+  for (const [id, value] of Object.entries(parsed as Record<string, any>)) {
+    if (!value || typeof value !== 'object') {
+      continue;
+    }
+
+    const overview = typeof value.overview === 'string' ? value.overview.trim() : '';
+    const bullets = Array.isArray(value.bullets)
+      ? value.bullets
+          .map((entry: unknown) =>
+            typeof entry === 'string' ? entry.trim() : entry ? String(entry).trim() : ''
+          )
+          .filter((entry: string) => Boolean(entry))
+          .slice(0, 5)
+      : [];
+
+    if (!overview && bullets.length === 0) {
+      continue;
+    }
+
+    result[id] = {
+      overview,
+      bullets,
+    };
+  }
+
+  return result;
+}
+
+async function buildHeadlineResponses(
+  aggregated: HeadlineCandidate[],
+  limit: number,
+  client: OpenAIClient,
+  log: Pick<typeof console, 'error'>
+): Promise<HeadlineResponseEntry[]> {
+  const limited = aggregated.slice(0, limit);
+  if (limited.length === 0) {
+    return [];
+  }
+
+  const summaries = await generateClusterSummaries(client, limited, log);
+
+  return limited.map((entry, index) => {
+    const summary = summaries[`item-${index}`];
+    const relatedArticles = entry.related.length > 0
+      ? entry.related.map((article) => ({ ...article }))
+      : undefined;
+
+    return {
+      title: entry.data.title,
+      description: entry.data.description,
+      url: entry.data.url,
+      source: entry.data.source,
+      publishedAt: entry.data.publishedAt,
+      summary,
+      relatedArticles,
+    };
+  });
 }
 
 function normalizeSerpResult(result: SerpApiResult): NormalizedHeadline | null {
@@ -956,7 +1200,7 @@ function createHeadlinesHandler(
 ) {
   const requester = fetchImpl ?? fetch;
   const aiClient = openaiClient ?? openai;
-  const log = logger ?? console;
+  const log = (logger ?? console) as Pick<typeof console, 'error'>;
 
   return async function handler(req: NextRequest) {
   let body: HeadlinesRequestBody;
@@ -1241,8 +1485,15 @@ function createHeadlinesHandler(
       queryWarnings.push('No headlines returned for the selected category feed.');
     }
 
+    const headlinesWithSummaries = await buildHeadlineResponses(
+      aggregatedHeadlines,
+      limit,
+      aiClient,
+      log
+    );
+
     const payload: Record<string, unknown> = {
-      headlines: aggregatedHeadlines.slice(0, limit).map((entry) => entry.data),
+      headlines: headlinesWithSummaries,
       totalResults: aggregatedHeadlines.length,
       queriesAttempted,
       successfulQueries: 1,
@@ -1538,8 +1789,15 @@ function createHeadlinesHandler(
     return NextResponse.json(errorPayload, { status: 502 });
   }
 
+  const headlinesWithSummaries = await buildHeadlineResponses(
+    aggregatedHeadlines,
+    limit,
+    aiClient,
+    log
+  );
+
   const payload: Record<string, unknown> = {
-    headlines: aggregatedHeadlines.slice(0, limit).map((entry) => entry.data),
+    headlines: headlinesWithSummaries,
     totalResults: aggregatedHeadlines.length,
     queriesAttempted,
     successfulQueries,
