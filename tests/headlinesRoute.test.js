@@ -641,3 +641,58 @@ test('surfaces expansion failures from OpenAI', async () => {
   assert.strictEqual(body.error, 'Failed to expand keyword searches');
   assert.strictEqual(fetchInvocations.length, 0);
 });
+
+test('falls back to SERP with a default time filter when NewsAPI has no results', async () => {
+  const originalSerpKey = process.env.SERPAPI_KEY;
+  process.env.SERPAPI_KEY = 'serp-test-key';
+
+  const serpCalls = [];
+
+  globalThis.__fetchImpl = async (input) => {
+    const url = new URL(input.toString());
+
+    assert.strictEqual(url.searchParams.get('from'), null);
+
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get(name) {
+          return name === 'content-type' ? 'application/json' : null;
+        },
+      },
+      async json() {
+        return { status: 'ok', articles: [] };
+      },
+      async text() {
+        return JSON.stringify({ status: 'ok', articles: [] });
+      },
+    };
+  };
+
+  globalThis.__serpapiSearch = async (options) => {
+    serpCalls.push(options);
+    return [];
+  };
+
+  try {
+    const handler = createHeadlinesHandler({ logger: { error() {} } });
+    const response = await handler(
+      createRequest({ query: 'breaking updates', limit: 3 })
+    );
+
+    assert.strictEqual(response.status, 200);
+    await response.json();
+
+    assert.strictEqual(serpCalls.length, 2);
+    for (const call of serpCalls) {
+      assert.strictEqual(call.extraParams?.tbs, 'qdr:d');
+    }
+  } finally {
+    if (originalSerpKey === undefined) {
+      delete process.env.SERPAPI_KEY;
+    } else {
+      process.env.SERPAPI_KEY = originalSerpKey;
+    }
+  }
+});
