@@ -192,7 +192,133 @@ test('aggregates deduplicated results for keyword expansions', async () => {
   );
   assert.deepStrictEqual(
     fetchCalls.map((call) => call.pageSize),
-    [3, 1]
+    [2, 1]
+  );
+});
+
+test('continues fetching additional keyword queries until the limit is satisfied', async () => {
+  globalThis.__openaiCreate = async () => {
+    return {
+      choices: [
+        {
+          message: {
+            content: '["biology breakthroughs","space exploration"]',
+          },
+        },
+      ],
+    };
+  };
+
+  const responses = new Map([
+    [
+      'innovation',
+      [
+        {
+          title: 'Innovation leaps ahead',
+          description: 'desc',
+          url: 'https://example.com/a',
+          source: { name: 'Source A' },
+          publishedAt: '2024-01-01T00:00:00Z',
+        },
+        {
+          title: 'Next-gen materials emerge',
+          description: 'desc',
+          url: 'https://example.com/b',
+          source: { name: 'Source B' },
+          publishedAt: '2024-01-02T00:00:00Z',
+        },
+      ],
+    ],
+    [
+      'biology breakthroughs',
+      [
+        {
+          title: 'Innovation leaps ahead',
+          description: 'desc',
+          url: 'https://example.com/a',
+          source: { name: 'Source A' },
+          publishedAt: '2024-01-01T00:00:00Z',
+        },
+        {
+          title: 'Genome editing milestones',
+          description: 'desc',
+          url: 'https://example.com/c',
+          source: { name: 'Source C' },
+          publishedAt: '2024-01-03T00:00:00Z',
+        },
+      ],
+    ],
+    [
+      'space exploration',
+      [
+        {
+          title: 'Mars mission update',
+          description: 'desc',
+          url: 'https://example.com/d',
+          source: { name: 'Source D' },
+          publishedAt: '2024-01-04T00:00:00Z',
+        },
+        {
+          title: 'Europa lander preparations',
+          description: 'desc',
+          url: 'https://example.com/e',
+          source: { name: 'Source E' },
+          publishedAt: '2024-01-05T00:00:00Z',
+        },
+      ],
+    ],
+  ]);
+
+  const fetchCalls = [];
+  globalThis.__fetchImpl = async (input) => {
+    const url = new URL(input.toString());
+    const query = url.searchParams.get('q') || '';
+    const pageSize = Number(url.searchParams.get('pageSize'));
+    fetchCalls.push({ query, pageSize });
+    const articles = responses.get(query) ?? [];
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get(name) {
+          return name === 'content-type' ? 'application/json' : null;
+        },
+      },
+      async json() {
+        return { status: 'ok', articles };
+      },
+      async text() {
+        return JSON.stringify({ status: 'ok', articles });
+      },
+    };
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(
+    createRequest({ query: 'innovation', keywords: ['biology', 'space'], limit: 4 })
+  );
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+  assert.deepStrictEqual(body.queriesAttempted, [
+    'innovation',
+    'biology breakthroughs',
+    'space exploration',
+  ]);
+  assert.deepStrictEqual(
+    fetchCalls.map((call) => call.pageSize),
+    [2, 2, 1]
+  );
+  assert.strictEqual(body.successfulQueries, 3);
+  assert.strictEqual(body.totalResults, 4);
+  assert.deepStrictEqual(
+    body.headlines.map((item) => item.title),
+    [
+      'Innovation leaps ahead',
+      'Next-gen materials emerge',
+      'Genome editing milestones',
+      'Mars mission update',
+    ]
   );
 });
 
