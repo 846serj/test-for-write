@@ -1388,6 +1388,9 @@ function computeSerpTimeFilter(from: string | null, to: string | null): string {
       if (diffHours <= 24 * 7) {
         return 'qdr:w';
       }
+      if (diffHours <= 24 * 14) {
+        return 'qdr:w2';
+      }
       if (diffHours <= 24 * 30) {
         return 'qdr:m';
       }
@@ -1396,7 +1399,7 @@ function computeSerpTimeFilter(from: string | null, to: string | null): string {
     }
   }
 
-  return 'qdr:d';
+  return 'qdr:w2';
 }
 
 function createHeadlinesHandler(
