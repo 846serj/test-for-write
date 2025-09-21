@@ -686,7 +686,7 @@ test('falls back to SERP with a default time filter when NewsAPI has no results'
 
     assert.strictEqual(serpCalls.length, 2);
     for (const call of serpCalls) {
-      assert.strictEqual(call.extraParams?.tbs, 'qdr:d');
+      assert.strictEqual(call.extraParams?.tbs, 'qdr:w2');
     }
   } finally {
     if (originalSerpKey === undefined) {
