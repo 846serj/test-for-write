@@ -779,6 +779,7 @@ type NormalizedHeadline = {
 type HeadlineResponseEntry = NormalizedHeadline & {
   summary?: HeadlineSummary;
   relatedArticles?: RelatedArticle[];
+  ranking?: HeadlineRankingMetadata;
 };
 
 type HeadlineCandidate = {
@@ -790,9 +791,34 @@ type HeadlineCandidate = {
   related: RelatedArticle[];
 };
 
+type HeadlineRankingComponents = {
+  recency: number;
+  sourceDiversity: number;
+  topicCoverage: number;
+};
+
+type HeadlineRankingMetadata = {
+  score: number;
+  components: HeadlineRankingComponents;
+  details: {
+    ageHours: number | null;
+    sourceOccurrences: number;
+    uniqueTokenRatio: number;
+  };
+  reasons: string[];
+};
+
+type RankedHeadlineCandidate = {
+  candidate: HeadlineCandidate;
+  ranking: HeadlineRankingMetadata;
+};
+
 const TOKEN_MIN_LENGTH = 3;
 const MAX_TOKEN_COUNT = 64;
 const TOKEN_OVERLAP_THRESHOLD = 0.7;
+const RANKING_RECENCY_WEIGHT = 0.5;
+const RANKING_SOURCE_WEIGHT = 0.25;
+const RANKING_TOPIC_WEIGHT = 0.25;
 
 function normalizeUrlForComparison(url: string): string {
   if (!url) {
@@ -941,6 +967,162 @@ function addHeadlineIfUnique(
 
   aggregated.push(enriched);
   return true;
+}
+
+function computeRecencyScore(publishedAt: string): {
+  score: number;
+  ageHours: number | null;
+} {
+  if (!publishedAt) {
+    return { score: 0, ageHours: null };
+  }
+
+  const parsed = Date.parse(publishedAt);
+  if (Number.isNaN(parsed)) {
+    return { score: 0, ageHours: null };
+  }
+
+  const now = Date.now();
+  const ageHours = Math.max(0, (now - parsed) / (1000 * 60 * 60));
+  const maxHours = 72;
+  const clamped = Math.min(ageHours, maxHours);
+  const score = Number.isFinite(clamped) ? 1 - clamped / maxHours : 0;
+  return { score, ageHours };
+}
+
+function computeSourceDiversityScore(
+  occurrences: number
+): { score: number } {
+  if (!Number.isFinite(occurrences) || occurrences <= 0) {
+    return { score: 0 };
+  }
+
+  const score = 1 / occurrences;
+  return { score };
+}
+
+function computeTopicCoverageScore(
+  tokenSet: Set<string>,
+  tokenFrequency: Map<string, number>
+): { score: number; ratio: number } {
+  if (tokenSet.size === 0) {
+    return { score: 0, ratio: 0 };
+  }
+
+  let uniqueTokens = 0;
+  tokenSet.forEach((token) => {
+    if ((tokenFrequency.get(token) ?? 0) <= 1) {
+      uniqueTokens += 1;
+    }
+  });
+
+  const ratio = uniqueTokens / Math.max(1, tokenSet.size);
+  return { score: ratio, ratio };
+}
+
+function buildRankingReasons(metadata: HeadlineRankingMetadata): string[] {
+  const reasons: string[] = [];
+
+  if (metadata.details.ageHours !== null) {
+    if (metadata.components.recency >= 0.75) {
+      reasons.push('Published within the last 18 hours');
+    } else if (metadata.components.recency >= 0.5) {
+      reasons.push('Published recently');
+    } else if (metadata.components.recency <= 0.1) {
+      reasons.push('Older coverage');
+    }
+  }
+
+  if (metadata.components.sourceDiversity >= 0.75) {
+    reasons.push('Unique source in this set');
+  } else if (metadata.components.sourceDiversity <= 0.25) {
+    reasons.push('Source appears multiple times');
+  }
+
+  if (metadata.components.topicCoverage >= 0.6) {
+    reasons.push('Adds distinct topic details');
+  } else if (metadata.components.topicCoverage <= 0.2) {
+    reasons.push('Overlaps heavily with other articles');
+  }
+
+  return reasons;
+}
+
+function rankHeadlineCandidates(
+  candidates: HeadlineCandidate[]
+): RankedHeadlineCandidate[] {
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const sourceFrequency = new Map<string, number>();
+  const tokenFrequency = new Map<string, number>();
+
+  candidates.forEach((candidate) => {
+    const sourceKey = candidate.data.source.trim().toLowerCase() || 'unknown';
+    sourceFrequency.set(sourceKey, (sourceFrequency.get(sourceKey) ?? 0) + 1);
+
+    candidate.tokenSet.forEach((token) => {
+      tokenFrequency.set(token, (tokenFrequency.get(token) ?? 0) + 1);
+    });
+  });
+
+  const scored = candidates.map((candidate, index) => {
+    const sourceKey = candidate.data.source.trim().toLowerCase() || 'unknown';
+    const sourceOccurrences = sourceFrequency.get(sourceKey) ?? 1;
+
+    const recency = computeRecencyScore(candidate.data.publishedAt);
+    const source = computeSourceDiversityScore(sourceOccurrences);
+    const topic = computeTopicCoverageScore(candidate.tokenSet, tokenFrequency);
+
+    const score =
+      recency.score * RANKING_RECENCY_WEIGHT +
+      source.score * RANKING_SOURCE_WEIGHT +
+      topic.score * RANKING_TOPIC_WEIGHT;
+
+    const metadata: HeadlineRankingMetadata = {
+      score,
+      components: {
+        recency: recency.score,
+        sourceDiversity: source.score,
+        topicCoverage: topic.score,
+      },
+      details: {
+        ageHours: recency.ageHours,
+        sourceOccurrences,
+        uniqueTokenRatio: topic.ratio,
+      },
+      reasons: [],
+    };
+
+    metadata.reasons = buildRankingReasons(metadata);
+
+    return {
+      candidate,
+      ranking: metadata,
+      index,
+    };
+  });
+
+  scored.sort((a, b) => {
+    if (b.ranking.score !== a.ranking.score) {
+      return b.ranking.score - a.ranking.score;
+    }
+
+    const aAge = a.ranking.details.ageHours;
+    const bAge = b.ranking.details.ageHours;
+    if (aAge !== null || bAge !== null) {
+      const normalizedAAge = aAge === null ? Number.POSITIVE_INFINITY : aAge;
+      const normalizedBAge = bAge === null ? Number.POSITIVE_INFINITY : bAge;
+      if (normalizedAAge !== normalizedBAge) {
+        return normalizedAAge - normalizedBAge;
+      }
+    }
+
+    return a.index - b.index;
+  });
+
+  return scored.map(({ index: _index, ...rest }) => rest);
 }
 
 function condenseText(value: string, maxLength = 400): string {
@@ -1105,32 +1287,33 @@ async function generateClusterSummaries(
 }
 
 async function buildHeadlineResponses(
-  aggregated: HeadlineCandidate[],
-  limit: number,
+  ranked: RankedHeadlineCandidate[],
   client: OpenAIClient,
   log: Pick<typeof console, 'error'>
 ): Promise<HeadlineResponseEntry[]> {
-  const limited = aggregated.slice(0, limit);
-  if (limited.length === 0) {
+  if (ranked.length === 0) {
     return [];
   }
 
-  const summaries = await generateClusterSummaries(client, limited, log);
+  const candidates = ranked.map((entry) => entry.candidate);
+  const summaries = await generateClusterSummaries(client, candidates, log);
 
-  return limited.map((entry, index) => {
+  return ranked.map((entry, index) => {
+    const { candidate, ranking } = entry;
     const summary = summaries[`item-${index}`];
-    const relatedArticles = entry.related.length > 0
-      ? entry.related.map((article) => ({ ...article }))
+    const relatedArticles = candidate.related.length > 0
+      ? candidate.related.map((article) => ({ ...article }))
       : undefined;
 
     return {
-      title: entry.data.title,
-      description: entry.data.description,
-      url: entry.data.url,
-      source: entry.data.source,
-      publishedAt: entry.data.publishedAt,
+      title: candidate.data.title,
+      description: candidate.data.description,
+      url: candidate.data.url,
+      source: candidate.data.source,
+      publishedAt: candidate.data.publishedAt,
       summary,
       relatedArticles,
+      ranking,
     };
   });
 }
@@ -1485,9 +1668,10 @@ function createHeadlinesHandler(
       queryWarnings.push('No headlines returned for the selected category feed.');
     }
 
+    const rankedCandidates = rankHeadlineCandidates(aggregatedHeadlines);
+    const topRanked = rankedCandidates.slice(0, limit);
     const headlinesWithSummaries = await buildHeadlineResponses(
-      aggregatedHeadlines,
-      limit,
+      topRanked,
       aiClient,
       log
     );
@@ -1498,6 +1682,17 @@ function createHeadlinesHandler(
       queriesAttempted,
       successfulQueries: 1,
     };
+
+    if (rankedCandidates.length > 0) {
+      payload.ranking = {
+        totalRanked: rankedCandidates.length,
+        weights: {
+          recency: RANKING_RECENCY_WEIGHT,
+          sourceDiversity: RANKING_SOURCE_WEIGHT,
+          topicCoverage: RANKING_TOPIC_WEIGHT,
+        },
+      };
+    }
 
     if (inferenceResult) {
       payload.inferredKeywords = inferenceResult.keywords;
@@ -1789,9 +1984,10 @@ function createHeadlinesHandler(
     return NextResponse.json(errorPayload, { status: 502 });
   }
 
+  const rankedCandidates = rankHeadlineCandidates(aggregatedHeadlines);
+  const topRanked = rankedCandidates.slice(0, limit);
   const headlinesWithSummaries = await buildHeadlineResponses(
-    aggregatedHeadlines,
-    limit,
+    topRanked,
     aiClient,
     log
   );
@@ -1802,6 +1998,17 @@ function createHeadlinesHandler(
     queriesAttempted,
     successfulQueries,
   };
+
+  if (rankedCandidates.length > 0) {
+    payload.ranking = {
+      totalRanked: rankedCandidates.length,
+      weights: {
+        recency: RANKING_RECENCY_WEIGHT,
+        sourceDiversity: RANKING_SOURCE_WEIGHT,
+        topicCoverage: RANKING_TOPIC_WEIGHT,
+      },
+    };
+  }
 
   if (inferenceResult) {
     payload.inferredKeywords = inferenceResult.keywords;
