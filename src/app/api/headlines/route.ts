@@ -528,10 +528,13 @@ function createHeadlinesHandler(
     );
   }
 
-  const buildUrl = (q: string, pageSize: number) => {
+  const buildUrl = (q: string, pageSize: number, page = 1) => {
     const requestUrl = new URL('https://newsapi.org/v2/everything');
     requestUrl.searchParams.set('q', q);
     requestUrl.searchParams.set('pageSize', String(Math.max(1, pageSize)));
+    const normalizedPage =
+      Number.isFinite(page) && page ? Math.max(1, Math.trunc(page)) : 1;
+    requestUrl.searchParams.set('page', String(normalizedPage));
     requestUrl.searchParams.set('sortBy', sortBy);
 
     if (language === undefined) {
@@ -589,83 +592,109 @@ function createHeadlinesHandler(
     }
 
     queriesAttempted.push(search);
-    const remaining = limit - aggregatedHeadlines.length;
-    const pageSize = Math.min(remaining, perQuery);
-    const requestUrl = buildUrl(search, pageSize);
+    let page = 1;
+    let querySucceeded = false;
 
-    let response: Response;
-    try {
-      response = await requester(requestUrl, {
-        method: 'GET',
-        headers: {
-          'X-Api-Key': apiKey,
-        },
-      });
-    } catch (error) {
-      log.error('[api/headlines] request failed', error);
-      queryWarnings.push(`Failed to reach NewsAPI for query: ${search}`);
-      continue;
-    }
+    while (aggregatedHeadlines.length < limit) {
+      const remaining = limit - aggregatedHeadlines.length;
+      const pageSize = Math.min(remaining, perQuery);
+      const requestUrl = buildUrl(search, pageSize, page);
 
-    let data: any = null;
-    try {
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        data = await response.json();
-      } else {
-        const text = await response.text();
-        data = text ? { message: text } : null;
+      let response: Response;
+      try {
+        response = await requester(requestUrl, {
+          method: 'GET',
+          headers: {
+            'X-Api-Key': apiKey,
+          },
+        });
+      } catch (error) {
+        log.error('[api/headlines] request failed', error);
+        queryWarnings.push(`Failed to reach NewsAPI for query: ${search}`);
+        break;
       }
-    } catch (error) {
-      log.error('[api/headlines] failed to parse response', error);
+
+      let data: any = null;
+      try {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          data = await response.json();
+        } else {
+          const text = await response.text();
+          data = text ? { message: text } : null;
+        }
+      } catch (error) {
+        log.error('[api/headlines] failed to parse response', error);
+        if (!response.ok) {
+          queryWarnings.push(
+            `NewsAPI request failed for query: ${search} (status ${response.status || 502})`
+          );
+          break;
+        }
+        queryWarnings.push(`Invalid response from NewsAPI for query: ${search}`);
+        break;
+      }
+
       if (!response.ok) {
-        queryWarnings.push(
-          `NewsAPI request failed for query: ${search} (status ${response.status || 502})`
-        );
-        continue;
-      }
-      queryWarnings.push(`Invalid response from NewsAPI for query: ${search}`);
-      continue;
-    }
-
-    if (!response.ok) {
-      const message =
-        (data && typeof data.message === 'string' && data.message) ||
-        'NewsAPI request failed';
-      queryWarnings.push(`NewsAPI error for query "${search}": ${message}`);
-      continue;
-    }
-
-    if (!data || data.status !== 'ok' || !Array.isArray(data.articles)) {
-      queryWarnings.push(`Unexpected response from NewsAPI for query: ${search}`);
-      continue;
-    }
-
-    successfulQueries += 1;
-
-    for (const article of data.articles) {
-      const normalized = {
-        title: article?.title ?? '',
-        description: article?.description ?? article?.content ?? '',
-        url: article?.url ?? '',
-        source: article?.source?.name ?? '',
-        publishedAt: article?.publishedAt ?? article?.published_at ?? '',
-      };
-
-      if (!normalized.title || !normalized.url) {
-        continue;
+        const message =
+          (data && typeof data.message === 'string' && data.message) ||
+          'NewsAPI request failed';
+        queryWarnings.push(`NewsAPI error for query "${search}": ${message}`);
+        break;
       }
 
-      if (seenUrls.has(normalized.url)) {
-        continue;
+      if (!data || data.status !== 'ok' || !Array.isArray(data.articles)) {
+        queryWarnings.push(`Unexpected response from NewsAPI for query: ${search}`);
+        break;
       }
 
-      seenUrls.add(normalized.url);
-      aggregatedHeadlines.push(normalized);
+      querySucceeded = true;
+
+      const beforeAdd = aggregatedHeadlines.length;
+
+      for (const article of data.articles) {
+        const normalized = {
+          title: article?.title ?? '',
+          description: article?.description ?? article?.content ?? '',
+          url: article?.url ?? '',
+          source: article?.source?.name ?? '',
+          publishedAt: article?.publishedAt ?? article?.published_at ?? '',
+        };
+
+        if (!normalized.title || !normalized.url) {
+          continue;
+        }
+
+        if (seenUrls.has(normalized.url)) {
+          continue;
+        }
+
+        seenUrls.add(normalized.url);
+        aggregatedHeadlines.push(normalized);
+
+        if (aggregatedHeadlines.length >= limit) {
+          break;
+        }
+      }
 
       if (aggregatedHeadlines.length >= limit) {
         break;
       }
+
+      const receivedCount = Array.isArray(data.articles)
+        ? data.articles.length
+        : 0;
+      const addedCount = aggregatedHeadlines.length - beforeAdd;
+
+      if (addedCount === 0 || receivedCount < pageSize) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    if (querySucceeded) {
+      successfulQueries += 1;
     }
   }
 
