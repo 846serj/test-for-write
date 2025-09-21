@@ -2,25 +2,10 @@
 import { NextResponse } from 'next/server';
 import { openai } from '../../../lib/openai';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
+import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
 export const runtime = 'edge';
 export const revalidate = 0;
-
-interface SerpApiNewsResult {
-  title?: string;
-  link?: string;
-  snippet?: string;
-  date?: string;
-  published_at?: string;
-  source?: string;
-}
-
-interface SerpApiResponse {
-  organic_results?: { link: string }[];
-  news_results?: SerpApiNewsResult[];
-  scholar_results?: { link: string }[];
-  error?: string;
-}
 
 type NewsFreshness = '1h' | '6h' | '24h';
 
@@ -93,47 +78,16 @@ function calcMaxTokens(
   return Math.min(tokens, limit);
 }
 
-async function serpapiSearch(
-  q: string,
-  engine: string,
-  extraParams: Record<string, string> = {}
-): Promise<string[]> {
-  if (!process.env.SERPAPI_KEY) return [];
-  try {
-    const params = new URLSearchParams({
-      q,
-      engine,
-      api_key: process.env.SERPAPI_KEY || '',
-    });
-    Object.entries(extraParams).forEach(([key, value]) => {
-      if (value) params.append(key, value);
-    });
-    const url = `https://serpapi.com/search.json?${params.toString()}`;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
-
-    const resp = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
-
-    if (!resp.ok) return [];
-    const data = (await resp.json()) as SerpApiResponse;
-    if (data.error) return [];
-    const hits =
-      data.organic_results || data.news_results || data.scholar_results || [];
-    return hits.map((h) => h.link).slice(0, 5);
-  } catch {
-    return [];
-  }
-}
-
 async function fetchSources(headline: string): Promise<string[]> {
   const [g, n, s] = await Promise.all([
-    serpapiSearch(headline, 'google'),
-    serpapiSearch(headline, 'google_news'),
-    serpapiSearch(headline, 'google_scholar'),
+    serpapiSearch({ query: headline, engine: 'google', limit: 5 }),
+    serpapiSearch({ query: headline, engine: 'google_news', limit: 5 }),
+    serpapiSearch({ query: headline, engine: 'google_scholar', limit: 5 }),
   ]);
-  const unique = Array.from(new Set([...g, ...n, ...s]));
+  const combinedLinks = [...g, ...n, ...s]
+    .map((result) => result.link)
+    .filter((link): link is string => Boolean(link));
+  const unique = Array.from(new Set(combinedLinks));
   // Shuffle the unique links
   for (let i = unique.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -208,19 +162,15 @@ async function fetchNewsArticles(
       : 'qdr:d';
 
   try {
-    const params = new URLSearchParams({
-      q: query,
+    const serpResults = await serpapiSearch({
+      query,
       engine: 'google_news',
-      api_key: process.env.SERPAPI_KEY || '',
-      tbs: freshnessParam,
+      extraParams: { tbs: freshnessParam },
+      limit: 8,
     });
-    const url = `https://serpapi.com/search.json?${params.toString()}`;
-    const resp = await fetch(url);
-    if (!resp.ok) return [];
-    const data = (await resp.json()) as SerpApiResponse;
-    const results = Array.isArray(data.news_results) ? data.news_results : [];
-    return results
-      .map((item) => ({
+
+    return serpResults
+      .map((item: SerpApiResult) => ({
         title: item.title || 'Untitled',
         url: item.link || '',
         summary: item.snippet || '',
