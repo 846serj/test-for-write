@@ -1,4 +1,4 @@
-import { CATEGORY_FEED_SET } from '../../constants/categoryFeeds';
+import { isCategoryFeedValue } from '../../constants/categoryFeeds';
 
 const MAX_LIST_ITEMS = 20;
 
@@ -142,7 +142,9 @@ export function buildHeadlineRequest(
   const trimmedCategory = category.trim();
   const normalizedCategory = trimmedCategory.toLowerCase();
   const normalizedCountry = country.trim().toLowerCase();
-  const useCategoryFeed = Boolean(normalizedCategory);
+  const categoryFeedValue = isCategoryFeedValue(normalizedCategory)
+    ? normalizedCategory
+    : null;
 
   const sanitizedSources = sanitizeListInput(sourcesInput);
   const sanitizedDomains = sanitizeListInput(domainsInput, { lowercase: true });
@@ -150,7 +152,7 @@ export function buildHeadlineRequest(
     lowercase: true,
   });
 
-  if (useCategoryFeed && !CATEGORY_FEED_SET.has(normalizedCategory)) {
+  if (normalizedCategory && categoryFeedValue === null) {
     return {
       ok: false,
       error: `Unsupported category feed: ${trimmedCategory || category}`,
@@ -216,7 +218,7 @@ export function buildHeadlineRequest(
     };
   }
 
-  if (!queryToUse && keywords.length === 0 && !useCategoryFeed) {
+  if (!queryToUse && keywords.length === 0 && categoryFeedValue === null) {
     return {
       ok: false,
       error:
@@ -236,8 +238,8 @@ export function buildHeadlineRequest(
     limit,
   };
 
-  if (useCategoryFeed) {
-    payload.category = normalizedCategory;
+  if (categoryFeedValue !== null) {
+    payload.category = categoryFeedValue;
     if (normalizedCountry) {
       payload.country = normalizedCountry;
     }
@@ -253,7 +255,7 @@ export function buildHeadlineRequest(
     payload.keywords = keywords;
   }
 
-  if (!useCategoryFeed) {
+  if (categoryFeedValue === null) {
     const normalizedLanguage = normalizeLanguage(language, profileLanguage);
     if (normalizedLanguage) {
       payload.language = normalizedLanguage;
