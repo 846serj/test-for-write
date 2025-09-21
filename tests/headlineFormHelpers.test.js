@@ -4,11 +4,19 @@ import * as ts from 'typescript';
 import { test } from 'node:test';
 
 const helpersPath = new URL('../src/app/generate/headlineFormHelpers.ts', import.meta.url);
+const categoryConfigPath = new URL('../src/constants/categoryFeeds.ts', import.meta.url);
 const tsSource = fs.readFileSync(helpersPath, 'utf8');
+const categorySource = fs.readFileSync(categoryConfigPath, 'utf8');
+
+const sanitizedHelpersSource = tsSource.replace(
+  "import { CATEGORY_FEED_SET } from '../../constants/categoryFeeds';\n\n",
+  ''
+);
 
 const snippet = `
-${tsSource}
-export { normalizeKeywordInput, buildHeadlineRequest };
+${categorySource}
+${sanitizedHelpersSource}
+export { normalizeKeywordInput, buildHeadlineRequest, CATEGORY_FEED_CONFIG, CATEGORY_FEED_VALUES };
 `;
 
 const jsCode = ts
@@ -19,7 +27,12 @@ const jsCode = ts
 
 const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString('base64');
 
-const { normalizeKeywordInput, buildHeadlineRequest } = await import(moduleUrl);
+const {
+  normalizeKeywordInput,
+  buildHeadlineRequest,
+  CATEGORY_FEED_CONFIG,
+  CATEGORY_FEED_VALUES,
+} = await import(moduleUrl);
 
 test('normalizeKeywordInput deduplicates mixed separators while preserving order', () => {
   const result = normalizeKeywordInput('AI, robotics\nAI, space exploration\nSpace Exploration');
@@ -41,12 +54,14 @@ test('buildHeadlineRequest enforces keywords or prompt', () => {
     sourcesInput: '',
     domainsInput: '',
     excludeDomainsInput: '',
+    category: '',
+    country: '',
   });
 
   assert.strictEqual(result.ok, false);
   assert.strictEqual(
     result.error,
-    'Provide at least one keyword or describe the article to fetch headlines.'
+    'Provide at least one keyword, choose a category feed, or describe the article to fetch headlines.'
   );
 });
 
@@ -69,6 +84,8 @@ test('buildHeadlineRequest creates keyword-only payloads', () => {
     sourcesInput: 'bbc-news, the-verge',
     domainsInput: '',
     excludeDomainsInput: '',
+    category: '',
+    country: '',
   });
 
   assert.strictEqual(result.ok, true);
@@ -96,6 +113,8 @@ test('buildHeadlineRequest prefers prompt language and surfaces conflicts', () =
     sourcesInput: 'bbc-news, bbc-news',
     domainsInput: 'example.com',
     excludeDomainsInput: '',
+    category: '',
+    country: '',
   });
 
   assert.strictEqual(conflict.ok, false);
@@ -120,10 +139,63 @@ test('buildHeadlineRequest prefers prompt language and surfaces conflicts', () =
     sourcesInput: '',
     domainsInput: '',
     excludeDomainsInput: '',
+    category: '',
+    country: '',
   });
 
   assert.strictEqual(success.ok, true);
   assert.strictEqual(success.payload.query, 'Tech policy updates');
   assert.strictEqual(success.payload.language, 'es');
   assert.strictEqual(success.resolvedPrompt, 'Tech policy updates');
+});
+
+test('buildHeadlineRequest accepts every configured category feed', () => {
+  for (const feed of CATEGORY_FEED_CONFIG) {
+    const result = buildHeadlineRequest({
+      prompt: '',
+      keywords: [],
+      profileQuery: '',
+      profileLanguage: null,
+      limit: 5,
+      sortBy: 'publishedAt',
+      language: 'all',
+      fromDate: '',
+      toDate: '',
+      searchIn: [],
+      sourcesInput: '',
+      domainsInput: '',
+      excludeDomainsInput: '',
+      category: feed.value,
+      country: '',
+    });
+
+    assert.strictEqual(result.ok, true, `Expected ${feed.value} to be accepted`);
+    assert.strictEqual(result.payload.category, feed.value);
+  }
+});
+
+test('buildHeadlineRequest rejects unsupported categories', () => {
+  const unsupported = 'not-real-category';
+  assert.ok(!CATEGORY_FEED_VALUES.includes(unsupported));
+
+  const result = buildHeadlineRequest({
+    prompt: '',
+    keywords: [],
+    profileQuery: '',
+    profileLanguage: null,
+    limit: 5,
+    sortBy: 'publishedAt',
+    language: 'all',
+    fromDate: '',
+    toDate: '',
+    searchIn: [],
+    sourcesInput: '',
+    domainsInput: '',
+    excludeDomainsInput: '',
+    category: unsupported,
+    country: '',
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.error, 'Unsupported category feed: not-real-category');
 });
