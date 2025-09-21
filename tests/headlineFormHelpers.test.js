@@ -8,10 +8,15 @@ const categoryConfigPath = new URL('../src/constants/categoryFeeds.ts', import.m
 const tsSource = fs.readFileSync(helpersPath, 'utf8');
 const categorySource = fs.readFileSync(categoryConfigPath, 'utf8');
 
-const sanitizedHelpersSource = tsSource.replace(
-  "import { CATEGORY_FEED_SET } from '../../constants/categoryFeeds';\n\n",
-  ''
-);
+const sanitizedHelpersSource = tsSource
+  .replace(
+    "import { CATEGORY_FEED_SET } from '../../constants/categoryFeeds';\n\n",
+    ''
+  )
+  .replace(
+    "import { isCategoryFeedValue } from '../../constants/categoryFeeds';\n\n",
+    ''
+  );
 
 const snippet = `
 ${categorySource}
@@ -144,9 +149,35 @@ test('buildHeadlineRequest prefers prompt language and surfaces conflicts', () =
   });
 
   assert.strictEqual(success.ok, true);
-  assert.strictEqual(success.payload.query, 'Tech policy updates');
+  assert.strictEqual(success.payload.description, 'Tech policy updates');
+  assert.ok(!('query' in success.payload));
   assert.strictEqual(success.payload.language, 'es');
   assert.strictEqual(success.resolvedPrompt, 'Tech policy updates');
+});
+
+test('buildHeadlineRequest falls back to profile query when no description is provided', () => {
+  const result = buildHeadlineRequest({
+    prompt: '   ',
+    keywords: [],
+    profileQuery: 'Space station maintenance',
+    profileLanguage: null,
+    limit: 6,
+    sortBy: 'publishedAt',
+    language: 'en',
+    fromDate: '',
+    toDate: '',
+    searchIn: [],
+    sourcesInput: '',
+    domainsInput: '',
+    excludeDomainsInput: '',
+    category: '',
+    country: '',
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.payload.query, 'Space station maintenance');
+  assert.ok(!('description' in result.payload));
+  assert.strictEqual(result.resolvedPrompt, 'Space station maintenance');
 });
 
 test('buildHeadlineRequest accepts every configured category feed', () => {
