@@ -25,6 +25,77 @@ const LANGUAGE_CODES = [
 type LanguageCode = (typeof LANGUAGE_CODES)[number];
 const LANGUAGE_SET = new Set<string>(LANGUAGE_CODES);
 
+const CATEGORY_VALUES = [
+  'business',
+  'entertainment',
+  'general',
+  'health',
+  'science',
+  'sports',
+  'technology',
+] as const;
+type CategoryValue = (typeof CATEGORY_VALUES)[number];
+const CATEGORY_SET = new Set<string>(CATEGORY_VALUES);
+
+const COUNTRY_CODES = [
+  'ae',
+  'ar',
+  'at',
+  'au',
+  'be',
+  'bg',
+  'br',
+  'ca',
+  'ch',
+  'cn',
+  'co',
+  'cu',
+  'cz',
+  'de',
+  'eg',
+  'fr',
+  'gb',
+  'gr',
+  'hk',
+  'hu',
+  'id',
+  'ie',
+  'il',
+  'in',
+  'it',
+  'jp',
+  'kr',
+  'lt',
+  'lv',
+  'ma',
+  'mx',
+  'my',
+  'ng',
+  'nl',
+  'no',
+  'nz',
+  'ph',
+  'pl',
+  'pt',
+  'ro',
+  'rs',
+  'ru',
+  'sa',
+  'se',
+  'sg',
+  'si',
+  'sk',
+  'th',
+  'tr',
+  'tw',
+  'ua',
+  'us',
+  've',
+  'za',
+] as const;
+type CountryCode = (typeof COUNTRY_CODES)[number];
+const COUNTRY_SET = new Set<string>(COUNTRY_CODES);
+
 const SORT_BY_VALUES = ['publishedAt', 'relevancy', 'popularity'] as const;
 type SortBy = (typeof SORT_BY_VALUES)[number];
 const SORT_BY_SET = new Set<string>(SORT_BY_VALUES);
@@ -145,6 +216,50 @@ function normalizeDate(raw: unknown, field: 'from' | 'to'): string | null {
   return isoValue;
 }
 
+function normalizeCategory(raw: unknown): CategoryValue | null {
+  if (raw === undefined || raw === null) {
+    return null;
+  }
+
+  if (typeof raw !== 'string') {
+    throw new Error('category must be a string value');
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const lowered = trimmed.toLowerCase();
+  if (!CATEGORY_SET.has(lowered)) {
+    throw new Error(`Unsupported category selection: ${trimmed}`);
+  }
+
+  return lowered as CategoryValue;
+}
+
+function normalizeCountry(raw: unknown): CountryCode | null {
+  if (raw === undefined || raw === null) {
+    return null;
+  }
+
+  if (typeof raw !== 'string') {
+    throw new Error('country must be a string value');
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const lowered = trimmed.toLowerCase();
+  if (!COUNTRY_SET.has(lowered)) {
+    throw new Error(`Unsupported country selection: ${trimmed}`);
+  }
+
+  return lowered as CountryCode;
+}
+
 function normalizeSearchIn(raw: unknown): SearchInValue[] {
   if (raw === undefined || raw === null) {
     return [];
@@ -253,6 +368,8 @@ type HeadlinesRequestBody = {
   sources?: unknown;
   domains?: unknown;
   excludeDomains?: unknown;
+  category?: unknown;
+  country?: unknown;
 };
 
 type OpenAIClient = {
@@ -425,7 +542,31 @@ function createHeadlinesHandler(
     );
   }
 
-  if (!query && keywords.length === 0) {
+  let category: CategoryValue | null;
+  try {
+    category = normalizeCategory(body.category);
+  } catch (error) {
+    return badRequest(
+      error instanceof Error ? error.message : 'Invalid category parameter'
+    );
+  }
+
+  let country: CountryCode | null;
+  try {
+    country = normalizeCountry(body.country);
+  } catch (error) {
+    return badRequest(
+      error instanceof Error ? error.message : 'Invalid country parameter'
+    );
+  }
+
+  if (country && !category) {
+    return badRequest('country can only be used when a category is selected');
+  }
+
+  const isCategoryRequest = category !== null;
+
+  if (!query && keywords.length === 0 && !isCategoryRequest) {
     return badRequest('Either query or keywords must be provided');
   }
 
@@ -497,6 +638,165 @@ function createHeadlinesHandler(
       { error: 'NEWSAPI_API_KEY is not configured' },
       { status: 500 }
     );
+  }
+
+  if (isCategoryRequest && sources.length > 0) {
+    return badRequest('Category feeds cannot be combined with specific sources');
+  }
+
+  if (isCategoryRequest) {
+    const requestUrl = new URL('https://newsapi.org/v2/top-headlines');
+    requestUrl.searchParams.set('category', category);
+    requestUrl.searchParams.set('pageSize', String(Math.max(1, limit)));
+    requestUrl.searchParams.set('page', '1');
+
+    if (country) {
+      requestUrl.searchParams.set('country', country);
+    }
+
+    if (query) {
+      requestUrl.searchParams.set('q', query);
+    }
+
+    const requestLabelParts = [`category:${category}`];
+    if (country) {
+      requestLabelParts.push(`country:${country}`);
+    }
+    if (query) {
+      requestLabelParts.push(`q:${query}`);
+    }
+    const requestLabel = requestLabelParts.join(' ');
+    const queriesAttempted = [requestLabel];
+
+    let response: Response;
+    try {
+      response = await requester(requestUrl, {
+        method: 'GET',
+        headers: {
+          'X-Api-Key': apiKey,
+        },
+      });
+    } catch (error) {
+      log.error('[api/headlines] category request failed', error);
+      return NextResponse.json(
+        {
+          error: 'Failed to reach NewsAPI for the requested category feed',
+          queryErrors: [`Failed to reach NewsAPI for request: ${requestLabel}`],
+          queriesAttempted,
+        },
+        { status: 502 }
+      );
+    }
+
+    let data: any = null;
+    try {
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        data = text ? { message: text } : null;
+      }
+    } catch (error) {
+      log.error('[api/headlines] failed to parse category response', error);
+      const queryErrors = [`Invalid response from NewsAPI for request: ${requestLabel}`];
+      if (!response.ok) {
+        return NextResponse.json(
+          {
+            error: `NewsAPI request failed for category feed: ${requestLabel}`,
+            queryErrors,
+            queriesAttempted,
+          },
+          { status: 502 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          error: 'Invalid response from NewsAPI for the requested category feed',
+          queryErrors,
+          queriesAttempted,
+        },
+        { status: 502 }
+      );
+    }
+
+    if (!response.ok) {
+      const message =
+        (data && typeof data.message === 'string' && data.message) ||
+        'NewsAPI request failed';
+      return NextResponse.json(
+        {
+          error: `NewsAPI error for category feed: ${message}`,
+          queryErrors: [`NewsAPI error for request: ${requestLabel}`],
+          queriesAttempted,
+        },
+        { status: 502 }
+      );
+    }
+
+    if (!data || data.status !== 'ok' || !Array.isArray(data.articles)) {
+      return NextResponse.json(
+        {
+          error: `Unexpected response from NewsAPI for request: ${requestLabel}`,
+          queryErrors: [`Unexpected response from NewsAPI for request: ${requestLabel}`],
+          queriesAttempted,
+        },
+        { status: 502 }
+      );
+    }
+
+    const seenUrls = new Set<string>();
+    const aggregatedHeadlines: {
+      title: string;
+      description: string;
+      url: string;
+      source: string;
+      publishedAt: string;
+    }[] = [];
+
+    for (const article of data.articles) {
+      const normalized = {
+        title: article?.title ?? '',
+        description: article?.description ?? article?.content ?? '',
+        url: article?.url ?? '',
+        source: article?.source?.name ?? '',
+        publishedAt: article?.publishedAt ?? article?.published_at ?? '',
+      };
+
+      if (!normalized.title || !normalized.url) {
+        continue;
+      }
+
+      if (seenUrls.has(normalized.url)) {
+        continue;
+      }
+
+      seenUrls.add(normalized.url);
+      aggregatedHeadlines.push(normalized);
+
+      if (aggregatedHeadlines.length >= limit) {
+        break;
+      }
+    }
+
+    const queryWarnings: string[] = [];
+    if (aggregatedHeadlines.length === 0) {
+      queryWarnings.push('No headlines returned for the selected category feed.');
+    }
+
+    const payload: Record<string, unknown> = {
+      headlines: aggregatedHeadlines.slice(0, limit),
+      totalResults: aggregatedHeadlines.length,
+      queriesAttempted,
+      successfulQueries: 1,
+    };
+
+    if (queryWarnings.length > 0) {
+      payload.warnings = queryWarnings;
+    }
+
+    return NextResponse.json(payload);
   }
 
   let keywordQueries: string[] = [];

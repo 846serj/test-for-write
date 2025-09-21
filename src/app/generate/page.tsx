@@ -57,6 +57,74 @@ const SEARCH_IN_OPTIONS = SEARCH_IN_ORDER.map((value) => ({
   label: SEARCH_IN_LABELS[value],
 }));
 
+const CATEGORY_FEED_OPTIONS = [
+  { value: 'business', label: 'Business' },
+  { value: 'entertainment', label: 'Entertainment' },
+  { value: 'general', label: 'General' },
+  { value: 'health', label: 'Health' },
+  { value: 'science', label: 'Science' },
+  { value: 'sports', label: 'Sports' },
+  { value: 'technology', label: 'Technology' },
+];
+
+const TOP_HEADLINE_COUNTRY_OPTIONS = [
+  { value: '', label: 'Any country (global)' },
+  { value: 'ae', label: 'United Arab Emirates' },
+  { value: 'ar', label: 'Argentina' },
+  { value: 'at', label: 'Austria' },
+  { value: 'au', label: 'Australia' },
+  { value: 'be', label: 'Belgium' },
+  { value: 'bg', label: 'Bulgaria' },
+  { value: 'br', label: 'Brazil' },
+  { value: 'ca', label: 'Canada' },
+  { value: 'ch', label: 'Switzerland' },
+  { value: 'cn', label: 'China' },
+  { value: 'co', label: 'Colombia' },
+  { value: 'cu', label: 'Cuba' },
+  { value: 'cz', label: 'Czech Republic' },
+  { value: 'de', label: 'Germany' },
+  { value: 'eg', label: 'Egypt' },
+  { value: 'fr', label: 'France' },
+  { value: 'gb', label: 'United Kingdom' },
+  { value: 'gr', label: 'Greece' },
+  { value: 'hk', label: 'Hong Kong' },
+  { value: 'hu', label: 'Hungary' },
+  { value: 'id', label: 'Indonesia' },
+  { value: 'ie', label: 'Ireland' },
+  { value: 'il', label: 'Israel' },
+  { value: 'in', label: 'India' },
+  { value: 'it', label: 'Italy' },
+  { value: 'jp', label: 'Japan' },
+  { value: 'kr', label: 'South Korea' },
+  { value: 'lt', label: 'Lithuania' },
+  { value: 'lv', label: 'Latvia' },
+  { value: 'ma', label: 'Morocco' },
+  { value: 'mx', label: 'Mexico' },
+  { value: 'my', label: 'Malaysia' },
+  { value: 'ng', label: 'Nigeria' },
+  { value: 'nl', label: 'Netherlands' },
+  { value: 'no', label: 'Norway' },
+  { value: 'nz', label: 'New Zealand' },
+  { value: 'ph', label: 'Philippines' },
+  { value: 'pl', label: 'Poland' },
+  { value: 'pt', label: 'Portugal' },
+  { value: 'ro', label: 'Romania' },
+  { value: 'rs', label: 'Serbia' },
+  { value: 'ru', label: 'Russia' },
+  { value: 'sa', label: 'Saudi Arabia' },
+  { value: 'se', label: 'Sweden' },
+  { value: 'sg', label: 'Singapore' },
+  { value: 'si', label: 'Slovenia' },
+  { value: 'sk', label: 'Slovakia' },
+  { value: 'th', label: 'Thailand' },
+  { value: 'tr', label: 'Turkey' },
+  { value: 'tw', label: 'Taiwan' },
+  { value: 'ua', label: 'Ukraine' },
+  { value: 'us', label: 'United States' },
+  { value: 've', label: 'Venezuela' },
+  { value: 'za', label: 'South Africa' },
+];
+
 type HeadlineItem = {
   title: string;
   source?: string;
@@ -141,6 +209,8 @@ export default function GeneratePage() {
   const [sourcesInput, setSourcesInput] = useState('');
   const [domainsInput, setDomainsInput] = useState('');
   const [excludeDomainsInput, setExcludeDomainsInput] = useState('');
+  const [headlineCategory, setHeadlineCategory] = useState('');
+  const [headlineCountry, setHeadlineCountry] = useState('');
 
   // YouTube link
   const [videoLink, setVideoLink] = useState('');
@@ -457,6 +527,8 @@ export default function GeneratePage() {
       sourcesInput,
       domainsInput,
       excludeDomainsInput,
+      category: headlineCategory,
+      country: headlineCountry,
     });
 
     setSourcesInput(buildResult.sanitizedSources.join(', '));
@@ -1079,7 +1151,8 @@ export default function GeneratePage() {
               />
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                 Enter up to 20 keywords separated by commas or new lines. We'll expand
-                these into detailed NewsAPI queries.
+                these into detailed NewsAPI queries when you run a keyword search, or
+                pick a category feed below to skip manual keywords entirely.
               </p>
               {keywords.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -1093,6 +1166,52 @@ export default function GeneratePage() {
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className={labelStyle}>Category feed (optional)</label>
+                <select
+                  className={inputStyle}
+                  value={headlineCategory}
+                  onChange={(event) => {
+                    const { value } = event.target;
+                    setHeadlineCategory(value);
+                    if (!value) {
+                      setHeadlineCountry('');
+                    }
+                  }}
+                >
+                  <option value="">Custom search (no category)</option>
+                  {CATEGORY_FEED_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Selecting a category fetches curated top headlines. Advanced filters
+                  below still apply to keyword searches only.
+                </p>
+              </div>
+              <div>
+                <label className={labelStyle}>Country (optional)</label>
+                <select
+                  className={inputStyle}
+                  value={headlineCountry}
+                  onChange={(event) => setHeadlineCountry(event.target.value)}
+                  disabled={!headlineCategory}
+                >
+                  {TOP_HEADLINE_COUNTRY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Only used when a category feed is selected.
+                </p>
+              </div>
             </div>
 
             <div>
@@ -1264,7 +1383,8 @@ export default function GeneratePage() {
                   headlineLoading ||
                   (!headlinePrompt.trim() &&
                     keywords.length === 0 &&
-                    !profileGeneratedQuery)
+                    !profileGeneratedQuery &&
+                    !headlineCategory.trim())
                 }
               >
                 {headlineLoading ? 'Fetching…' : 'Fetch Headlines'}
