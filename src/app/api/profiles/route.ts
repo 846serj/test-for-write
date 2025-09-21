@@ -152,8 +152,28 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) {
-    console.error('[profiles] failed to store profile', error);
-    return jsonError('Failed to store profile', 500);
+    const supabaseError = {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    };
+
+    console.error('[profiles] failed to store profile', {
+      context: {
+        userId,
+        siteUrl: normalizedSiteUrl,
+        rawTextLength: rawText.length,
+      },
+      supabaseError,
+    });
+
+    const errorBody: Record<string, unknown> = { error: 'Failed to store profile' };
+    if (process.env.NODE_ENV !== 'production') {
+      errorBody.supabase = supabaseError;
+    }
+
+    return NextResponse.json(errorBody, { status: 500 });
   }
 
   const normalizedProfile = normalizeProfile(data.profile);
