@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { openai } from '../../../lib/openai';
 
 const MIN_LIMIT = 1;
 const MAX_LIMIT = 50;
@@ -242,6 +243,7 @@ function normalizeDomains(
 
 type HeadlinesRequestBody = {
   query?: unknown;
+  keywords?: unknown;
   limit?: unknown;
   language?: unknown;
   sortBy?: unknown;
@@ -253,7 +255,158 @@ type HeadlinesRequestBody = {
   excludeDomains?: unknown;
 };
 
-export async function POST(req: NextRequest) {
+type OpenAIClient = {
+  chat: {
+    completions: {
+      create: (
+        options: {
+          model: string;
+          messages: { role: 'system' | 'user' | 'assistant'; content: string }[];
+          temperature?: number;
+          max_tokens?: number;
+        }
+      ) => Promise<{
+        choices?: Array<{
+          message?: {
+            content?: string | null;
+          } | null;
+        }>;
+      }>;
+    };
+  };
+};
+
+type HeadlinesHandlerDependencies = {
+  fetchImpl?: typeof fetch;
+  openaiClient?: OpenAIClient;
+  logger?: Pick<typeof console, 'error'>;
+};
+
+function normalizeKeywords(raw: unknown): string[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+
+  if (!Array.isArray(raw)) {
+    throw new Error('keywords must be provided as an array of strings');
+  }
+
+  const selection = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const entry of raw) {
+    if (typeof entry !== 'string') {
+      throw new Error('keywords must be provided as an array of strings');
+    }
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const lowered = trimmed.toLowerCase();
+    if (selection.has(lowered)) {
+      continue;
+    }
+    selection.add(lowered);
+    normalized.push(trimmed);
+    if (normalized.length >= MAX_FILTER_LIST_ITEMS) {
+      break;
+    }
+  }
+
+  return normalized;
+}
+
+function parseGeneratedQueries(raw: string): string[] {
+  if (!raw) {
+    return [];
+  }
+
+  const attemptParse = (text: string) => {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((value) => (typeof value === 'string' ? value.trim() : ''))
+          .filter(Boolean);
+      }
+    } catch {
+      // ignore parse failure
+    }
+    return [];
+  };
+
+  const direct = attemptParse(raw);
+  if (direct.length > 0) {
+    return direct;
+  }
+
+  const bracketMatch = raw.match(/\[[\s\S]*\]/);
+  if (bracketMatch) {
+    const nested = attemptParse(bracketMatch[0]);
+    if (nested.length > 0) {
+      return nested;
+    }
+  }
+
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^[\s*-•]+/, '').trim())
+    .filter(Boolean);
+}
+
+async function generateKeywordQueries(
+  client: OpenAIClient,
+  keywords: string[],
+  requestedLimit: number
+): Promise<string[]> {
+  const maxSuggestions = Math.min(5, Math.max(1, Math.ceil(requestedLimit / 3)));
+  const systemPrompt =
+    'You convert curated keyword lists into complementary NewsAPI search strings. Each query should be ready for the "q" parameter, make use of phrase quoting and Boolean operators, and encourage coverage from distinct angles.';
+  const userPrompt = `Convert the following keywords into ${maxSuggestions} or fewer NewsAPI search strings. ` +
+    'Create variations that explore breaking developments, analytical or research-heavy coverage, and human impact or business implications when they make sense. ' +
+    'Use operators like AND, OR, and parentheses to pair or contrast the provided ideas, and prefer double quotes around multi-word phrases. ' +
+    'Respond with a JSON array of strings only. Keywords:\n' +
+    keywords.map((keyword, index) => `${index + 1}. ${keyword}`).join('\n');
+
+  const response = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    temperature: 0.4,
+    max_tokens: 200,
+  });
+
+  const content =
+    response.choices?.[0]?.message?.content?.trim() ?? '';
+  const parsed = parseGeneratedQueries(content);
+
+  const unique = Array.from(new Set(parsed.map((value) => value.trim()).filter(Boolean)));
+
+  if (unique.length > 0) {
+    return unique.slice(0, 10);
+  }
+
+  if (keywords.length === 1) {
+    return [`"${keywords[0]}"`];
+  }
+
+  return [
+    keywords
+      .map((keyword) => (keyword.includes(' ') ? `"${keyword}"` : keyword))
+      .join(' AND '),
+  ];
+}
+
+export function createHeadlinesHandler(
+  { fetchImpl, openaiClient, logger }: HeadlinesHandlerDependencies = {}
+) {
+  const requester = fetchImpl ?? fetch;
+  const aiClient = openaiClient ?? openai;
+  const log = logger ?? console;
+
+  return async function handler(req: NextRequest) {
   let body: HeadlinesRequestBody;
   try {
     body = await req.json();
@@ -262,8 +415,18 @@ export async function POST(req: NextRequest) {
   }
 
   const query = typeof body.query === 'string' ? body.query.trim() : '';
-  if (!query) {
-    return badRequest('query is required');
+
+  let keywords: string[];
+  try {
+    keywords = normalizeKeywords(body.keywords);
+  } catch (error) {
+    return badRequest(
+      error instanceof Error ? error.message : 'Invalid keywords parameter'
+    );
+  }
+
+  if (!query && keywords.length === 0) {
+    return badRequest('Either query or keywords must be provided');
   }
 
   const limit = resolveLimit(body.limit);
@@ -336,107 +499,193 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const url = new URL('https://newsapi.org/v2/everything');
-  url.searchParams.set('q', query);
-  url.searchParams.set('pageSize', String(limit));
-  url.searchParams.set('sortBy', sortBy);
-
-  if (language === undefined) {
-    url.searchParams.set('language', 'en');
-  } else if (language !== null) {
-    url.searchParams.set('language', language);
-  }
-
-  if (from) {
-    url.searchParams.set('from', from);
-  }
-
-  if (to) {
-    url.searchParams.set('to', to);
-  }
-
-  if (searchInValues.length > 0) {
-    url.searchParams.set('searchIn', searchInValues.join(','));
-  }
-
-  if (sources.length > 0) {
-    url.searchParams.set('sources', sources.join(','));
-  }
-
-  if (domains.length > 0) {
-    url.searchParams.set('domains', domains.join(','));
-  }
-
-  if (excludeDomains.length > 0) {
-    url.searchParams.set('excludeDomains', excludeDomains.join(','));
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'X-Api-Key': apiKey,
-      },
-    });
-  } catch (error) {
-    console.error('[api/headlines] request failed', error);
-    return NextResponse.json(
-      { error: 'Failed to reach NewsAPI' },
-      { status: 502 }
-    );
-  }
-
-  let data: any = null;
-  try {
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      data = await response.json();
-    } else {
-      const text = await response.text();
-      data = text ? { message: text } : null;
-    }
-  } catch (error) {
-    console.error('[api/headlines] failed to parse response', error);
-    if (!response.ok) {
+  let keywordQueries: string[] = [];
+  if (keywords.length > 0) {
+    try {
+      keywordQueries = await generateKeywordQueries(aiClient, keywords, limit);
+    } catch (error) {
+      log.error('[api/headlines] keyword expansion failed', error);
       return NextResponse.json(
-        { error: 'NewsAPI request failed' },
-        { status: response.status || 502 }
+        { error: 'Failed to expand keyword searches' },
+        { status: 502 }
       );
     }
-    return NextResponse.json(
-      { error: 'Invalid response from NewsAPI' },
-      { status: 502 }
+  }
+
+  const searchQueries = Array.from(
+    new Set(
+      [query, ...keywordQueries]
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  if (searchQueries.length === 0) {
+    searchQueries.push(
+      keywords
+        .map((keyword) => (keyword.includes(' ') ? `"${keyword}"` : keyword))
+        .join(' AND ')
     );
   }
 
-  if (!response.ok) {
+  const buildUrl = (q: string, pageSize: number) => {
+    const requestUrl = new URL('https://newsapi.org/v2/everything');
+    requestUrl.searchParams.set('q', q);
+    requestUrl.searchParams.set('pageSize', String(Math.max(1, pageSize)));
+    requestUrl.searchParams.set('sortBy', sortBy);
+
+    if (language === undefined) {
+      requestUrl.searchParams.set('language', 'en');
+    } else if (language !== null) {
+      requestUrl.searchParams.set('language', language);
+    }
+
+    if (from) {
+      requestUrl.searchParams.set('from', from);
+    }
+
+    if (to) {
+      requestUrl.searchParams.set('to', to);
+    }
+
+    if (searchInValues.length > 0) {
+      requestUrl.searchParams.set('searchIn', searchInValues.join(','));
+    }
+
+    if (sources.length > 0) {
+      requestUrl.searchParams.set('sources', sources.join(','));
+    }
+
+    if (domains.length > 0) {
+      requestUrl.searchParams.set('domains', domains.join(','));
+    }
+
+    if (excludeDomains.length > 0) {
+      requestUrl.searchParams.set('excludeDomains', excludeDomains.join(','));
+    }
+
+    return requestUrl;
+  };
+
+  const seenUrls = new Set<string>();
+  const aggregatedHeadlines: {
+    title: string;
+    description: string;
+    url: string;
+    source: string;
+    publishedAt: string;
+  }[] = [];
+  const queriesAttempted: string[] = [];
+  const queryWarnings: string[] = [];
+  let successfulQueries = 0;
+
+  for (const search of searchQueries) {
+    if (aggregatedHeadlines.length >= limit) {
+      break;
+    }
+
+    queriesAttempted.push(search);
+    const remaining = limit - aggregatedHeadlines.length;
+    const requestUrl = buildUrl(search, remaining);
+
+    let response: Response;
+    try {
+      response = await requester(requestUrl, {
+        method: 'GET',
+        headers: {
+          'X-Api-Key': apiKey,
+        },
+      });
+    } catch (error) {
+      log.error('[api/headlines] request failed', error);
+      queryWarnings.push(`Failed to reach NewsAPI for query: ${search}`);
+      continue;
+    }
+
+    let data: any = null;
+    try {
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        data = text ? { message: text } : null;
+      }
+    } catch (error) {
+      log.error('[api/headlines] failed to parse response', error);
+      if (!response.ok) {
+        queryWarnings.push(
+          `NewsAPI request failed for query: ${search} (status ${response.status || 502})`
+        );
+        continue;
+      }
+      queryWarnings.push(`Invalid response from NewsAPI for query: ${search}`);
+      continue;
+    }
+
+    if (!response.ok) {
+      const message =
+        (data && typeof data.message === 'string' && data.message) ||
+        'NewsAPI request failed';
+      queryWarnings.push(`NewsAPI error for query "${search}": ${message}`);
+      continue;
+    }
+
+    if (!data || data.status !== 'ok' || !Array.isArray(data.articles)) {
+      queryWarnings.push(`Unexpected response from NewsAPI for query: ${search}`);
+      continue;
+    }
+
+    successfulQueries += 1;
+
+    for (const article of data.articles) {
+      const normalized = {
+        title: article?.title ?? '',
+        description: article?.description ?? article?.content ?? '',
+        url: article?.url ?? '',
+        source: article?.source?.name ?? '',
+        publishedAt: article?.publishedAt ?? article?.published_at ?? '',
+      };
+
+      if (!normalized.title || !normalized.url) {
+        continue;
+      }
+
+      if (seenUrls.has(normalized.url)) {
+        continue;
+      }
+
+      seenUrls.add(normalized.url);
+      aggregatedHeadlines.push(normalized);
+
+      if (aggregatedHeadlines.length >= limit) {
+        break;
+      }
+    }
+  }
+
+  if (successfulQueries === 0 && aggregatedHeadlines.length === 0) {
     const message =
-      (data && typeof data.message === 'string' && data.message) ||
-      'NewsAPI request failed';
+      queryWarnings[0] || 'NewsAPI request failed for all generated queries';
     return NextResponse.json(
-      { error: message },
-      { status: response.status || 502 }
-    );
-  }
-
-  if (!data || data.status !== 'ok' || !Array.isArray(data.articles)) {
-    return NextResponse.json(
-      { error: 'Unexpected response from NewsAPI' },
+      { error: message, queryErrors: queryWarnings, queriesAttempted },
       { status: 502 }
     );
   }
 
-  const headlines = data.articles
-    .map((article: any) => ({
-      title: article?.title ?? '',
-      description: article?.description ?? article?.content ?? '',
-      url: article?.url ?? '',
-      source: article?.source?.name ?? '',
-      publishedAt: article?.publishedAt ?? article?.published_at ?? '',
-    }))
-    .filter((article: any) => article.title && article.url)
-    .slice(0, limit);
+  const payload: Record<string, unknown> = {
+    headlines: aggregatedHeadlines.slice(0, limit),
+    totalResults: aggregatedHeadlines.length,
+    queriesAttempted,
+    successfulQueries,
+  };
 
-  return NextResponse.json({ headlines });
+  if (queryWarnings.length > 0) {
+    payload.warnings = queryWarnings;
+  }
+
+  return NextResponse.json(payload);
+  };
 }
+
+export const POST = createHeadlinesHandler();
