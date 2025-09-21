@@ -9,16 +9,17 @@ const tsCode = fs.readFileSync(routePath, 'utf8');
 const uuidMatch = tsCode.match(/const UUID_REGEX[\s\S]*?;/);
 const jsonErrorMatch = tsCode.match(/function jsonError[\s\S]*?\n}\n/);
 const mapErrorMatch = tsCode.match(/function mapSupabaseError[\s\S]*?\n}\n/);
+const getHandlerMatch = tsCode.match(/export async function GET[\s\S]*?\n}\n/);
 const handlerMatch = tsCode.match(
   /function createProfilesPostHandler[\s\S]*?\n}\n\nexport const POST = createProfilesPostHandler\(\);/
 );
 
-if (!uuidMatch || !jsonErrorMatch || !mapErrorMatch || !handlerMatch) {
+if (!uuidMatch || !jsonErrorMatch || !mapErrorMatch || !getHandlerMatch || !handlerMatch) {
   throw new Error('Failed to extract handler from route file');
 }
 
 const snippet = `
-const supabaseAdmin = undefined;
+let supabaseAdmin = undefined;
 const extractProfile = undefined;
 const normalizeSiteUrl = undefined;
 const normalizeProfile = undefined;
@@ -39,10 +40,14 @@ const NextResponse = {
 ${uuidMatch[0]}
 ${jsonErrorMatch[0]}
 ${mapErrorMatch[0]}
+${getHandlerMatch[0].replace('export async function', 'async function')}
 ${handlerMatch[0]
   .replace('export function', 'function')
   .replace(/\n\nexport const POST[\s\S]*/, '')}
-export { createProfilesPostHandler };
+export function __setSupabaseAdmin(value) {
+  supabaseAdmin = value;
+}
+export { createProfilesPostHandler, GET };
 `;
 
 const jsCode = ts.transpileModule(snippet, {
@@ -52,7 +57,7 @@ const jsCode = ts.transpileModule(snippet, {
 const moduleUrl =
   'data:text/javascript;base64,' + Buffer.from(jsCode).toString('base64');
 
-const { createProfilesPostHandler } = await import(moduleUrl);
+const { createProfilesPostHandler, GET, __setSupabaseAdmin } = await import(moduleUrl);
 
 function createRequest(body) {
   return {
@@ -61,6 +66,41 @@ function createRequest(body) {
     },
   };
 }
+
+test('GET rejects invalid userId format', async () => {
+  let supabaseCalls = 0;
+  __setSupabaseAdmin({
+    from() {
+      supabaseCalls += 1;
+      return {
+        select() {
+          return {
+            eq() {
+              return {
+                maybeSingle: async () => ({ data: null, error: null }),
+              };
+            },
+          };
+        },
+      };
+    },
+  });
+
+  try {
+    const response = await GET({
+      nextUrl: {
+        searchParams: new URLSearchParams([['userId', 'not-a-uuid']]),
+      },
+    });
+
+    assert.strictEqual(response.status, 400);
+    const body = await response.json();
+    assert.strictEqual(body.error, 'Invalid userId format');
+    assert.strictEqual(supabaseCalls, 0);
+  } finally {
+    __setSupabaseAdmin(undefined);
+  }
+});
 
 test('POST rejects invalid userId format', async () => {
   let getUserCalls = 0;

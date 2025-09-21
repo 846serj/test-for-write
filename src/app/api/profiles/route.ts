@@ -85,9 +85,12 @@ async function extractProfile(rawText: string): Promise<NormalizedSiteProfile> {
 }
 
 export async function GET(request: NextRequest) {
-  const userId = request.nextUrl.searchParams.get('userId');
+  const userId = request.nextUrl.searchParams.get('userId')?.trim();
   if (!userId) {
     return jsonError('Missing userId');
+  }
+  if (!UUID_REGEX.test(userId)) {
+    return jsonError('Invalid userId format');
   }
 
   const { data, error } = await supabaseAdmin
