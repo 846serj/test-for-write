@@ -153,6 +153,9 @@ test('infers keywords when only a description is provided', async () => {
   };
 
   const fetchCalls = [];
+  const descriptionQuery =
+    'Focus on technology-driven AI robotics transforming hospital care.';
+  const keywordQuery = 'AI robotics AND "health tech"';
   globalThis.__fetchImpl = async (input) => {
     const url = new URL(input.toString());
     fetchCalls.push({
@@ -161,7 +164,8 @@ test('infers keywords when only a description is provided', async () => {
       page: Number(url.searchParams.get('page')),
     });
 
-    const articles = [
+    const query = url.searchParams.get('q') || '';
+    const articles = query === descriptionQuery ? [] : [
       {
         title: 'AI robotics breakthrough',
         description: 'desc1',
@@ -220,11 +224,15 @@ test('infers keywords when only a description is provided', async () => {
     'transforming',
   ]);
   assert.deepStrictEqual(body.inferredCategories, ['technology']);
-  assert.deepStrictEqual(body.queriesAttempted, ['AI robotics AND "health tech"']);
-  assert.deepStrictEqual(fetchCalls, [
-    { query: 'AI robotics AND "health tech"', pageSize: 3, page: 1 },
+  assert.deepStrictEqual(body.queriesAttempted, [
+    descriptionQuery,
+    keywordQuery,
   ]);
-  assert.strictEqual(body.successfulQueries, 1);
+  assert.deepStrictEqual(fetchCalls, [
+    { query: descriptionQuery, pageSize: 2, page: 1 },
+    { query: keywordQuery, pageSize: 2, page: 1 },
+  ]);
+  assert.strictEqual(body.successfulQueries, 2);
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
 });
