@@ -152,7 +152,8 @@ test('aggregates deduplicated results for keyword expansions', async () => {
     const url = new URL(input.toString());
     const query = url.searchParams.get('q') || '';
     const pageSize = Number(url.searchParams.get('pageSize'));
-    fetchCalls.push({ query, pageSize });
+    const page = Number(url.searchParams.get('page'));
+    fetchCalls.push({ query, pageSize, page });
     const articles = responses.get(query) ?? [];
     return {
       ok: true,
@@ -190,10 +191,11 @@ test('aggregates deduplicated results for keyword expansions', async () => {
     body.headlines.map((item) => item.url),
     ['https://example.com/1', 'https://example.com/2', 'https://example.com/3']
   );
-  assert.deepStrictEqual(
-    fetchCalls.map((call) => call.pageSize),
-    [2, 1]
-  );
+  assert.deepStrictEqual(fetchCalls, [
+    { query: 'robotics AND "AI"', pageSize: 2, page: 1 },
+    { query: 'robotics AND "AI"', pageSize: 1, page: 2 },
+    { query: 'AI healthcare OR "medical robotics"', pageSize: 1, page: 1 },
+  ]);
 });
 
 test('continues fetching additional keyword queries until the limit is satisfied', async () => {
@@ -274,7 +276,8 @@ test('continues fetching additional keyword queries until the limit is satisfied
     const url = new URL(input.toString());
     const query = url.searchParams.get('q') || '';
     const pageSize = Number(url.searchParams.get('pageSize'));
-    fetchCalls.push({ query, pageSize });
+    const page = Number(url.searchParams.get('page'));
+    fetchCalls.push({ query, pageSize, page });
     const articles = responses.get(query) ?? [];
     return {
       ok: true,
@@ -305,10 +308,13 @@ test('continues fetching additional keyword queries until the limit is satisfied
     'biology breakthroughs',
     'space exploration',
   ]);
-  assert.deepStrictEqual(
-    fetchCalls.map((call) => call.pageSize),
-    [2, 2, 1]
-  );
+  assert.deepStrictEqual(fetchCalls, [
+    { query: 'innovation', pageSize: 2, page: 1 },
+    { query: 'innovation', pageSize: 2, page: 2 },
+    { query: 'biology breakthroughs', pageSize: 2, page: 1 },
+    { query: 'biology breakthroughs', pageSize: 1, page: 2 },
+    { query: 'space exploration', pageSize: 1, page: 1 },
+  ]);
   assert.strictEqual(body.successfulQueries, 3);
   assert.strictEqual(body.totalResults, 4);
   assert.deepStrictEqual(
@@ -320,6 +326,143 @@ test('continues fetching additional keyword queries until the limit is satisfied
       'Mars mission update',
     ]
   );
+});
+
+test('continues paging when earlier results include duplicates', async () => {
+  globalThis.__openaiCreate = async () => {
+    return {
+      choices: [
+        {
+          message: {
+            content: '["second focus"]',
+          },
+        },
+      ],
+    };
+  };
+
+  const responses = new Map([
+    [
+      'first spotlight|1',
+      [
+        {
+          title: 'Alpha insight',
+          description: 'desc',
+          url: 'https://example.com/a',
+          source: { name: 'Source A' },
+          publishedAt: '2024-02-01T00:00:00Z',
+        },
+        {
+          title: 'Beta developments',
+          description: 'desc',
+          url: 'https://example.com/b',
+          source: { name: 'Source B' },
+          publishedAt: '2024-02-02T00:00:00Z',
+        },
+      ],
+    ],
+    [
+      'first spotlight|2',
+      [
+        {
+          title: 'Alpha insight',
+          description: 'desc',
+          url: 'https://example.com/a',
+          source: { name: 'Source A' },
+          publishedAt: '2024-02-01T00:00:00Z',
+        },
+        {
+          title: 'Beta developments',
+          description: 'desc',
+          url: 'https://example.com/b',
+          source: { name: 'Source B' },
+          publishedAt: '2024-02-02T00:00:00Z',
+        },
+      ],
+    ],
+    [
+      'second focus|1',
+      [
+        {
+          title: 'Alpha insight',
+          description: 'desc',
+          url: 'https://example.com/a',
+          source: { name: 'Source A' },
+          publishedAt: '2024-02-01T00:00:00Z',
+        },
+        {
+          title: 'Gamma outlook',
+          description: 'desc',
+          url: 'https://example.com/c',
+          source: { name: 'Source C' },
+          publishedAt: '2024-02-03T00:00:00Z',
+        },
+      ],
+    ],
+    [
+      'second focus|2',
+      [
+        {
+          title: 'Delta forecast',
+          description: 'desc',
+          url: 'https://example.com/d',
+          source: { name: 'Source D' },
+          publishedAt: '2024-02-04T00:00:00Z',
+        },
+      ],
+    ],
+  ]);
+
+  const fetchCalls = [];
+  globalThis.__fetchImpl = async (input) => {
+    const url = new URL(input.toString());
+    const query = url.searchParams.get('q') || '';
+    const pageSize = Number(url.searchParams.get('pageSize'));
+    const page = Number(url.searchParams.get('page'));
+    fetchCalls.push({ query, pageSize, page });
+    const articles = responses.get(`${query}|${page}`) ?? [];
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get(name) {
+          return name === 'content-type' ? 'application/json' : null;
+        },
+      },
+      async json() {
+        return { status: 'ok', articles };
+      },
+      async text() {
+        return JSON.stringify({ status: 'ok', articles });
+      },
+    };
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(
+    createRequest({ query: 'first spotlight', keywords: ['second focus'], limit: 4 })
+  );
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+  assert.deepStrictEqual(body.queriesAttempted, ['first spotlight', 'second focus']);
+  assert.strictEqual(body.successfulQueries, 2);
+  assert.strictEqual(body.totalResults, 4);
+  assert.deepStrictEqual(
+    body.headlines.map((item) => item.url),
+    [
+      'https://example.com/a',
+      'https://example.com/b',
+      'https://example.com/c',
+      'https://example.com/d',
+    ]
+  );
+  assert.deepStrictEqual(fetchCalls, [
+    { query: 'first spotlight', pageSize: 2, page: 1 },
+    { query: 'first spotlight', pageSize: 2, page: 2 },
+    { query: 'second focus', pageSize: 2, page: 1 },
+    { query: 'second focus', pageSize: 1, page: 2 },
+  ]);
 });
 
 test('surfaces expansion failures from OpenAI', async () => {
