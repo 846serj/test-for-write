@@ -20,3 +20,9 @@ export const CATEGORY_FEED_SET: ReadonlySet<CategoryFeedValue> = new Set(
 );
 
 export const CATEGORY_FEED_OPTIONS = CATEGORY_FEED_CONFIG;
+
+export function isCategoryFeedValue(
+  value: string
+): value is CategoryFeedValue {
+  return CATEGORY_FEED_SET.has(value as CategoryFeedValue);
+}
