@@ -10,6 +10,7 @@ const MIN_LIMIT = 1;
 const MAX_LIMIT = 50;
 const DEFAULT_LIMIT = 5;
 const MAX_FILTER_LIST_ITEMS = 20;
+const MAX_DESCRIPTION_QUERY_LENGTH = 500;
 
 const LANGUAGE_CODES = [
   'ar',
@@ -638,6 +639,30 @@ function fallbackKeywordsFromDescription(
   }
 
   return normalized;
+}
+
+function sanitizeDescriptionQuery(description: string): string {
+  if (!description) {
+    return '';
+  }
+
+  const normalized = description.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.length <= MAX_DESCRIPTION_QUERY_LENGTH) {
+    return normalized;
+  }
+
+  const truncated = normalized.slice(0, MAX_DESCRIPTION_QUERY_LENGTH);
+  const lastSpace = truncated.lastIndexOf(' ');
+
+  if (lastSpace > MAX_DESCRIPTION_QUERY_LENGTH * 0.6) {
+    return truncated.slice(0, lastSpace).trim();
+  }
+
+  return truncated.trim();
 }
 
 async function inferKeywordsAndCategories(
@@ -1719,9 +1744,13 @@ function createHeadlinesHandler(
     }
   }
 
+  const descriptionQuery = !query && description
+    ? sanitizeDescriptionQuery(description)
+    : '';
+
   const searchQueries = Array.from(
     new Set(
-      [query, ...keywordQueries]
+      [query, descriptionQuery, ...keywordQueries]
         .map((value) => value?.trim())
         .filter((value): value is string => Boolean(value))
     )
