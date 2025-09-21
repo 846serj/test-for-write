@@ -578,6 +578,10 @@ function createHeadlinesHandler(
   const queriesAttempted: string[] = [];
   const queryWarnings: string[] = [];
   let successfulQueries = 0;
+  const perQuery = Math.max(
+    1,
+    Math.ceil(limit / Math.max(1, searchQueries.length))
+  );
 
   for (const search of searchQueries) {
     if (aggregatedHeadlines.length >= limit) {
@@ -586,7 +590,8 @@ function createHeadlinesHandler(
 
     queriesAttempted.push(search);
     const remaining = limit - aggregatedHeadlines.length;
-    const requestUrl = buildUrl(search, remaining);
+    const pageSize = Math.min(remaining, perQuery);
+    const requestUrl = buildUrl(search, pageSize);
 
     let response: Response;
     try {
