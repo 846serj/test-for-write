@@ -399,7 +399,7 @@ async function generateKeywordQueries(
   ];
 }
 
-export function createHeadlinesHandler(
+function createHeadlinesHandler(
   { fetchImpl, openaiClient, logger }: HeadlinesHandlerDependencies = {}
 ) {
   const requester = fetchImpl ?? fetch;
