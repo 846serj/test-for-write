@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  CATEGORY_FEED_SET,
+  CATEGORY_FEED_VALUES,
+  type CategoryFeedValue,
+} from '../../../constants/categoryFeeds';
 import { openai } from '../../../lib/openai';
 
 const MIN_LIMIT = 1;
@@ -25,17 +30,9 @@ const LANGUAGE_CODES = [
 type LanguageCode = (typeof LANGUAGE_CODES)[number];
 const LANGUAGE_SET = new Set<string>(LANGUAGE_CODES);
 
-const CATEGORY_VALUES = [
-  'business',
-  'entertainment',
-  'general',
-  'health',
-  'science',
-  'sports',
-  'technology',
-] as const;
-type CategoryValue = (typeof CATEGORY_VALUES)[number];
-const CATEGORY_SET = new Set<string>(CATEGORY_VALUES);
+const CATEGORY_VALUES = CATEGORY_FEED_VALUES;
+type CategoryValue = CategoryFeedValue;
+const CATEGORY_SET = CATEGORY_FEED_SET;
 
 const COUNTRY_CODES = [
   'ae',

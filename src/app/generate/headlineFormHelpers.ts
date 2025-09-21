@@ -1,3 +1,5 @@
+import { CATEGORY_FEED_SET } from '../../constants/categoryFeeds';
+
 const MAX_LIST_ITEMS = 20;
 
 export const SEARCH_IN_ORDER = ['title', 'description', 'content'] as const;
@@ -137,7 +139,8 @@ export function buildHeadlineRequest(
   const queryToUse = trimmedPrompt || trimmedProfileQuery;
   const resolvedPrompt = trimmedPrompt ? trimmedPrompt : trimmedProfileQuery;
 
-  const normalizedCategory = category.trim().toLowerCase();
+  const trimmedCategory = category.trim();
+  const normalizedCategory = trimmedCategory.toLowerCase();
   const normalizedCountry = country.trim().toLowerCase();
   const useCategoryFeed = Boolean(normalizedCategory);
 
@@ -146,6 +149,17 @@ export function buildHeadlineRequest(
   const sanitizedExcludeDomains = sanitizeListInput(excludeDomainsInput, {
     lowercase: true,
   });
+
+  if (useCategoryFeed && !CATEGORY_FEED_SET.has(normalizedCategory)) {
+    return {
+      ok: false,
+      error: `Unsupported category feed: ${trimmedCategory || category}`,
+      sanitizedSources,
+      sanitizedDomains,
+      sanitizedExcludeDomains,
+      resolvedPrompt,
+    };
+  }
 
   if (
     sanitizedSources.length > 0 &&

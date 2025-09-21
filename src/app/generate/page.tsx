@@ -5,6 +5,9 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
+import {
+  CATEGORY_FEED_OPTIONS,
+} from '../../constants/categoryFeeds';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../constants/lengthOptions';
 import { NormalizedSiteProfile } from '../../types/profile';
 import {
@@ -56,16 +59,6 @@ const SEARCH_IN_OPTIONS = SEARCH_IN_ORDER.map((value) => ({
   value,
   label: SEARCH_IN_LABELS[value],
 }));
-
-const CATEGORY_FEED_OPTIONS = [
-  { value: 'business', label: 'Business' },
-  { value: 'entertainment', label: 'Entertainment' },
-  { value: 'general', label: 'General' },
-  { value: 'health', label: 'Health' },
-  { value: 'science', label: 'Science' },
-  { value: 'sports', label: 'Sports' },
-  { value: 'technology', label: 'Technology' },
-];
 
 const TOP_HEADLINE_COUNTRY_OPTIONS = [
   { value: '', label: 'Any country (global)' },
