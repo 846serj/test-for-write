@@ -467,7 +467,7 @@ export default function GeneratePage() {
       setHeadlinePrompt(buildResult.resolvedPrompt);
     }
 
-    if (!buildResult.ok) {
+    if (buildResult.ok === false) {
       setHeadlineError(buildResult.error);
       setHeadlineQueries([]);
       return;
