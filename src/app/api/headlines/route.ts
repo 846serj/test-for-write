@@ -4,6 +4,7 @@ import {
   type CategoryFeedValue,
 } from '../../../constants/categoryFeeds';
 import { openai } from '../../../lib/openai';
+import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
 const MIN_LIMIT = 1;
 const MAX_LIMIT = 50;
@@ -754,6 +755,202 @@ async function generateKeywordQueries(
   ];
 }
 
+type NormalizedHeadline = {
+  title: string;
+  description: string;
+  url: string;
+  source: string;
+  publishedAt: string;
+};
+
+type HeadlineCandidate = {
+  data: NormalizedHeadline;
+  normalizedUrl: string;
+  normalizedTitle: string;
+  tokenSet: Set<string>;
+  normalizedDescription: string;
+};
+
+const TOKEN_MIN_LENGTH = 3;
+const MAX_TOKEN_COUNT = 64;
+const TOKEN_OVERLAP_THRESHOLD = 0.7;
+
+function normalizeUrlForComparison(url: string): string {
+  if (!url) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(url);
+    const normalizedPath = parsed.pathname.replace(/\/+$/g, '');
+    return `${parsed.protocol}//${parsed.hostname}${normalizedPath}`
+      .replace(/\/+$/g, '')
+      .toLowerCase();
+  } catch {
+    return url.trim().replace(/\/+$/g, '').toLowerCase();
+  }
+}
+
+function normalizeHeadlineText(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function buildTokenSet(title: string, description: string): Set<string> {
+  const combined = `${title} ${description}`;
+  const rawTokens = combined
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length >= TOKEN_MIN_LENGTH);
+
+  const tokenSet = new Set<string>();
+  for (const token of rawTokens) {
+    if (!token) {
+      continue;
+    }
+    tokenSet.add(token);
+    if (tokenSet.size >= MAX_TOKEN_COUNT) {
+      break;
+    }
+  }
+
+  return tokenSet;
+}
+
+function computeTokenOverlapRatio(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) {
+    return 0;
+  }
+
+  const smaller = a.size <= b.size ? a : b;
+  const larger = smaller === a ? b : a;
+
+  let intersection = 0;
+  smaller.forEach((token) => {
+    if (larger.has(token)) {
+      intersection += 1;
+    }
+  });
+
+  return intersection / Math.max(1, smaller.size);
+}
+
+function areHeadlinesNearDuplicate(a: HeadlineCandidate, b: HeadlineCandidate): boolean {
+  if (a.normalizedUrl && b.normalizedUrl && a.normalizedUrl === b.normalizedUrl) {
+    return true;
+  }
+
+  if (
+    a.normalizedTitle &&
+    b.normalizedTitle &&
+    a.normalizedTitle === b.normalizedTitle
+  ) {
+    return true;
+  }
+
+  if (
+    a.normalizedDescription &&
+    b.normalizedDescription &&
+    a.normalizedDescription === b.normalizedDescription
+  ) {
+    return true;
+  }
+
+  const overlap = computeTokenOverlapRatio(a.tokenSet, b.tokenSet);
+  if (overlap >= TOKEN_OVERLAP_THRESHOLD) {
+    return true;
+  }
+
+  return false;
+}
+
+function createHeadlineCandidate(headline: NormalizedHeadline): HeadlineCandidate {
+  return {
+    data: headline,
+    normalizedUrl: normalizeUrlForComparison(headline.url),
+    normalizedTitle: normalizeHeadlineText(headline.title),
+    normalizedDescription: normalizeHeadlineText(headline.description),
+    tokenSet: buildTokenSet(headline.title, headline.description),
+  };
+}
+
+function addHeadlineIfUnique(
+  aggregated: HeadlineCandidate[],
+  candidate: NormalizedHeadline
+): boolean {
+  const enriched = createHeadlineCandidate(candidate);
+
+  for (const existing of aggregated) {
+    if (areHeadlinesNearDuplicate(existing, enriched)) {
+      return false;
+    }
+  }
+
+  aggregated.push(enriched);
+  return true;
+}
+
+function normalizeSerpResult(result: SerpApiResult): NormalizedHeadline | null {
+  const title = (result?.title ?? '').trim();
+  const url = (result?.link ?? '').trim();
+
+  if (!title || !url) {
+    return null;
+  }
+
+  const description = (result?.snippet ?? '').trim();
+  const source = (result?.source ?? '').trim();
+  const publishedAt = (result?.date ?? result?.published_at ?? '').trim();
+
+  return {
+    title,
+    description,
+    url,
+    source,
+    publishedAt,
+  };
+}
+
+function computeSerpTimeFilter(
+  from: string | null,
+  to: string | null
+): string | undefined {
+  if (!from) {
+    return undefined;
+  }
+
+  const fromDate = new Date(from);
+  if (Number.isNaN(fromDate.getTime())) {
+    return undefined;
+  }
+
+  const now = to ? new Date(to) : new Date();
+  if (Number.isNaN(now.getTime())) {
+    return undefined;
+  }
+
+  const diffHours = Math.max(0, (now.getTime() - fromDate.getTime()) / (1000 * 60 * 60));
+
+  if (diffHours <= 1) {
+    return 'qdr:h';
+  }
+  if (diffHours <= 6) {
+    return 'qdr:h6';
+  }
+  if (diffHours <= 24) {
+    return 'qdr:d';
+  }
+  if (diffHours <= 24 * 7) {
+    return 'qdr:w';
+  }
+  if (diffHours <= 24 * 30) {
+    return 'qdr:m';
+  }
+
+  return 'qdr:y';
+}
+
 function createHeadlinesHandler(
   { fetchImpl, openaiClient, logger }: HeadlinesHandlerDependencies = {}
 ) {
@@ -1017,17 +1214,10 @@ function createHeadlinesHandler(
       );
     }
 
-    const seenUrls = new Set<string>();
-    const aggregatedHeadlines: {
-      title: string;
-      description: string;
-      url: string;
-      source: string;
-      publishedAt: string;
-    }[] = [];
+    const aggregatedHeadlines: HeadlineCandidate[] = [];
 
     for (const article of data.articles) {
-      const normalized = {
+      const normalized: NormalizedHeadline = {
         title: article?.title ?? '',
         description: article?.description ?? article?.content ?? '',
         url: article?.url ?? '',
@@ -1039,12 +1229,7 @@ function createHeadlinesHandler(
         continue;
       }
 
-      if (seenUrls.has(normalized.url)) {
-        continue;
-      }
-
-      seenUrls.add(normalized.url);
-      aggregatedHeadlines.push(normalized);
+      addHeadlineIfUnique(aggregatedHeadlines, normalized);
 
       if (aggregatedHeadlines.length >= limit) {
         break;
@@ -1057,7 +1242,7 @@ function createHeadlinesHandler(
     }
 
     const payload: Record<string, unknown> = {
-      headlines: aggregatedHeadlines.slice(0, limit),
+      headlines: aggregatedHeadlines.slice(0, limit).map((entry) => entry.data),
       totalResults: aggregatedHeadlines.length,
       queriesAttempted,
       successfulQueries: 1,
@@ -1146,14 +1331,7 @@ function createHeadlinesHandler(
     return requestUrl;
   };
 
-  const seenUrls = new Set<string>();
-  const aggregatedHeadlines: {
-    title: string;
-    description: string;
-    url: string;
-    source: string;
-    publishedAt: string;
-  }[] = [];
+  const aggregatedHeadlines: HeadlineCandidate[] = [];
   const queriesAttempted: string[] = [];
   const queryWarnings: string[] = [];
   let successfulQueries = 0;
@@ -1161,6 +1339,8 @@ function createHeadlinesHandler(
     1,
     Math.ceil(limit / Math.max(1, searchQueries.length))
   );
+  const serpApiConfigured = Boolean(process.env.SERPAPI_KEY);
+  const serpTimeFilter = computeSerpTimeFilter(from, to);
 
   for (const search of searchQueries) {
     if (aggregatedHeadlines.length >= limit) {
@@ -1229,7 +1409,7 @@ function createHeadlinesHandler(
       const beforeAdd = aggregatedHeadlines.length;
 
       for (const article of data.articles) {
-        const normalized = {
+        const normalized: NormalizedHeadline = {
           title: article?.title ?? '',
           description: article?.description ?? article?.content ?? '',
           url: article?.url ?? '',
@@ -1241,12 +1421,7 @@ function createHeadlinesHandler(
           continue;
         }
 
-        if (seenUrls.has(normalized.url)) {
-          continue;
-        }
-
-        seenUrls.add(normalized.url);
-        aggregatedHeadlines.push(normalized);
+        addHeadlineIfUnique(aggregatedHeadlines, normalized);
 
         if (aggregatedHeadlines.length >= limit) {
           break;
@@ -1269,8 +1444,80 @@ function createHeadlinesHandler(
       page += 1;
     }
 
+    if (serpApiConfigured && aggregatedHeadlines.length < limit) {
+      const baseParams: Record<string, string> = {};
+
+      if (language && language !== null) {
+        baseParams.hl = language;
+      }
+
+      if (country) {
+        baseParams.gl = country;
+      }
+
+      if (serpTimeFilter) {
+        baseParams.tbs = serpTimeFilter;
+      }
+
+      const serpEngines: Array<{
+        engine: string;
+        limit: number;
+        params: Record<string, string>;
+      }> = [
+        {
+          engine: 'google_news',
+          limit: Math.max(6, perQuery * 2),
+          params: {
+            ...baseParams,
+            num: String(Math.max(6, perQuery * 2)),
+          },
+        },
+      ];
+
+      if (aggregatedHeadlines.length < limit) {
+        serpEngines.push({
+          engine: 'google',
+          limit: Math.max(5, perQuery),
+          params: {
+            ...baseParams,
+            num: String(Math.max(5, perQuery)),
+          },
+        });
+      }
+
+      for (const { engine, limit: serpLimit, params } of serpEngines) {
+        if (aggregatedHeadlines.length >= limit) {
+          break;
+        }
+
+        const serpResults = await serpapiSearch({
+          query: search,
+          engine,
+          extraParams: params,
+          limit: serpLimit,
+        });
+
+        for (const result of serpResults) {
+          if (aggregatedHeadlines.length >= limit) {
+            break;
+          }
+
+          const normalized = normalizeSerpResult(result);
+          if (!normalized) {
+            continue;
+          }
+
+          addHeadlineIfUnique(aggregatedHeadlines, normalized);
+        }
+      }
+    }
+
     if (querySucceeded) {
       successfulQueries += 1;
+    }
+
+    if (aggregatedHeadlines.length >= limit) {
+      break;
     }
   }
 
@@ -1292,7 +1539,7 @@ function createHeadlinesHandler(
   }
 
   const payload: Record<string, unknown> = {
-    headlines: aggregatedHeadlines.slice(0, limit),
+    headlines: aggregatedHeadlines.slice(0, limit).map((entry) => entry.data),
     totalResults: aggregatedHeadlines.length,
     queriesAttempted,
     successfulQueries,
