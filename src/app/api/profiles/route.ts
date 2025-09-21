@@ -131,7 +131,7 @@ type ProfilesDependencies = {
   getProfileQuotaTotal: typeof getProfileQuotaTotal;
 };
 
-export function createProfilesPostHandler(
+function createProfilesPostHandler(
   overrides: Partial<ProfilesDependencies> = {}
 ) {
   const {
