@@ -18,6 +18,8 @@ export type BuildHeadlineRequestArgs = {
   sourcesInput: string;
   domainsInput: string;
   excludeDomainsInput: string;
+  category: string;
+  country: string;
 };
 
 export type BuildHeadlineRequestBaseResult = {
@@ -126,12 +128,18 @@ export function buildHeadlineRequest(
     sourcesInput,
     domainsInput,
     excludeDomainsInput,
+    category,
+    country,
   } = args;
 
   const trimmedPrompt = prompt.trim();
   const trimmedProfileQuery = profileQuery.trim();
   const queryToUse = trimmedPrompt || trimmedProfileQuery;
   const resolvedPrompt = trimmedPrompt ? trimmedPrompt : trimmedProfileQuery;
+
+  const normalizedCategory = category.trim().toLowerCase();
+  const normalizedCountry = country.trim().toLowerCase();
+  const useCategoryFeed = Boolean(normalizedCategory);
 
   const sanitizedSources = sanitizeListInput(sourcesInput);
   const sanitizedDomains = sanitizeListInput(domainsInput, { lowercase: true });
@@ -194,11 +202,11 @@ export function buildHeadlineRequest(
     };
   }
 
-  if (!queryToUse && keywords.length === 0) {
+  if (!queryToUse && keywords.length === 0 && !useCategoryFeed) {
     return {
       ok: false,
       error:
-        'Provide at least one keyword or describe the article to fetch headlines.',
+        'Provide at least one keyword, choose a category feed, or describe the article to fetch headlines.',
       sanitizedSources,
       sanitizedDomains,
       sanitizedExcludeDomains,
@@ -212,8 +220,16 @@ export function buildHeadlineRequest(
 
   const payload: Record<string, unknown> = {
     limit,
-    sortBy,
   };
+
+  if (useCategoryFeed) {
+    payload.category = normalizedCategory;
+    if (normalizedCountry) {
+      payload.country = normalizedCountry;
+    }
+  } else {
+    payload.sortBy = sortBy;
+  }
 
   if (queryToUse) {
     payload.query = queryToUse;
@@ -223,33 +239,35 @@ export function buildHeadlineRequest(
     payload.keywords = keywords;
   }
 
-  const normalizedLanguage = normalizeLanguage(language, profileLanguage);
-  if (normalizedLanguage) {
-    payload.language = normalizedLanguage;
-  }
+  if (!useCategoryFeed) {
+    const normalizedLanguage = normalizeLanguage(language, profileLanguage);
+    if (normalizedLanguage) {
+      payload.language = normalizedLanguage;
+    }
 
-  if (fromValue) {
-    payload.from = fromValue;
-  }
+    if (fromValue) {
+      payload.from = fromValue;
+    }
 
-  if (toValue) {
-    payload.to = toValue;
-  }
+    if (toValue) {
+      payload.to = toValue;
+    }
 
-  if (orderedSearchIn.length > 0) {
-    payload.searchIn = orderedSearchIn;
-  }
+    if (orderedSearchIn.length > 0) {
+      payload.searchIn = orderedSearchIn;
+    }
 
-  if (sanitizedSources.length > 0) {
-    payload.sources = sanitizedSources;
-  }
+    if (sanitizedSources.length > 0) {
+      payload.sources = sanitizedSources;
+    }
 
-  if (sanitizedDomains.length > 0) {
-    payload.domains = sanitizedDomains;
-  }
+    if (sanitizedDomains.length > 0) {
+      payload.domains = sanitizedDomains;
+    }
 
-  if (sanitizedExcludeDomains.length > 0) {
-    payload.excludeDomains = sanitizedExcludeDomains;
+    if (sanitizedExcludeDomains.length > 0) {
+      payload.excludeDomains = sanitizedExcludeDomains;
+    }
   }
 
   return {
