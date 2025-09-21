@@ -1,7 +1,7 @@
 // page.tsx
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
@@ -9,12 +9,6 @@ import {
   CATEGORY_FEED_OPTIONS,
 } from '../../constants/categoryFeeds';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../constants/lengthOptions';
-import { NormalizedSiteProfile } from '../../types/profile';
-import {
-  buildProfileHeadlineQuery,
-  extractHostname,
-  getProfileQuotaTotal,
-} from '../../utils/profile';
 import {
   buildHeadlineRequest,
   normalizeKeywordInput,
@@ -38,10 +32,6 @@ const LANGUAGE_OPTIONS = [
   { value: 'ud', label: 'Undetermined (ud)' },
   { value: 'zh', label: 'Chinese' },
 ];
-
-const LANGUAGE_OPTION_VALUES = new Set(
-  LANGUAGE_OPTIONS.map((option) => option.value)
-);
 
 const SORT_BY_OPTIONS = [
   { value: 'publishedAt' as const, label: 'Newest first' },
@@ -127,17 +117,10 @@ type HeadlineItem = {
   matchedQuery?: string;
 };
 
-type ProfileStatus = { type: 'info' | 'error' | 'success'; message: string } | null;
-
 export default function GeneratePage() {
   const router = useRouter();
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [activeTab, setActiveTab] = useState<'writing' | 'headlines'>('writing');
-  const [siteProfile, setSiteProfile] = useState<NormalizedSiteProfile | null>(null);
-  const [profileSiteUrl, setProfileSiteUrl] = useState('');
-  const [profileText, setProfileText] = useState('');
-  const [profileStatus, setProfileStatus] = useState<ProfileStatus>(null);
-  const [profileSaving, setProfileSaving] = useState(false);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
@@ -257,148 +240,12 @@ export default function GeneratePage() {
     }
   }, [activeTab]);
 
-  const profileGeneratedQuery = useMemo(() => {
-    if (!siteProfile) {
-      return '';
-    }
-    try {
-      return buildProfileHeadlineQuery(siteProfile) || '';
-    } catch (error) {
-      console.error('[profiles] failed to build profile query', error);
-      return '';
-    }
-  }, [siteProfile]);
-
   const toggleSearchIn = (value: string) => {
     setSearchIn((current) =>
       current.includes(value)
         ? current.filter((item) => item !== value)
         : [...current, value]
     );
-  };
-
-  const applyProfileToFilters = (
-    profileData: NormalizedSiteProfile | null = siteProfile,
-    siteUrlValue: string | null = profileSiteUrl
-  ) => {
-    if (!profileData) {
-      return;
-    }
-
-    const query = buildProfileHeadlineQuery(profileData);
-    if (query) {
-      setHeadlinePrompt(query);
-      setHeadlineError(null);
-    }
-
-    const normalizedLanguage = profileData.language?.toLowerCase();
-    if (normalizedLanguage && LANGUAGE_OPTION_VALUES.has(normalizedLanguage)) {
-      setLanguage(normalizedLanguage);
-    }
-
-    const quotaTotal = getProfileQuotaTotal(profileData);
-    if (quotaTotal > 0) {
-      setHeadlineLimit(Math.min(50, Math.max(1, quotaTotal)));
-    }
-
-    const host = siteUrlValue ? extractHostname(siteUrlValue) : null;
-    if (host) {
-      setDomainsInput((current) => (current ? current : host));
-    }
-
-    setSearchIn(['title', 'description']);
-  };
-
-  const handleApplyProfile = () => {
-    if (!siteProfile) {
-      setProfileStatus({
-        type: 'error',
-        message:
-          'Normalize a profile for this session before applying it to the filters.',
-      });
-      return;
-    }
-
-    applyProfileToFilters(siteProfile, profileSiteUrl);
-    setProfileStatus({
-      type: 'success',
-      message: 'Profile applied to headline filters.',
-    });
-  };
-
-  const handleSaveProfile = async () => {
-    if (!profileSiteUrl.trim()) {
-      setProfileStatus({
-        type: 'error',
-        message: 'Enter your site URL before normalizing a profile.',
-      });
-      return;
-    }
-
-    if (!profileText.trim()) {
-      setProfileStatus({
-        type: 'error',
-        message: 'Paste some site details so we can build a session profile.',
-      });
-      return;
-    }
-
-    setProfileSaving(true);
-    setProfileStatus({
-      type: 'info',
-      message: 'Normalizing your session profile…',
-    });
-
-    try {
-      const response = await fetch('/api/profiles/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          siteUrl: profileSiteUrl,
-          rawText: profileText,
-        }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data?.error || 'Failed to normalize profile');
-      }
-
-      const normalizedProfile: NormalizedSiteProfile | null = data?.profile || null;
-      const normalizedSiteUrl: string = data?.siteUrl || profileSiteUrl;
-      const statusFromResponse =
-        data?.status &&
-        typeof data.status === 'object' &&
-        typeof data.status.message === 'string' &&
-        (data.status.type === 'info' ||
-          data.status.type === 'error' ||
-          data.status.type === 'success')
-          ? { type: data.status.type, message: data.status.message }
-          : null;
-
-      setSiteProfile(normalizedProfile);
-      setProfileSiteUrl(normalizedSiteUrl);
-      setProfileStatus(
-        statusFromResponse ?? {
-          type: 'success',
-          message: 'Session profile ready to use for this visit.',
-        }
-      );
-
-      if (normalizedProfile) {
-        applyProfileToFilters(normalizedProfile, normalizedSiteUrl);
-      }
-    } catch (error) {
-      console.error('[profiles] normalization failed', error);
-      setProfileStatus({
-        type: 'error',
-        message:
-          error instanceof Error
-            ? error.message
-            : 'Failed to normalize profile. Try again.',
-      });
-    } finally {
-      setProfileSaving(false);
-    }
   };
 
   const handleGenerate = async () => {
@@ -509,8 +356,8 @@ export default function GeneratePage() {
     const buildResult = buildHeadlineRequest({
       prompt: headlinePrompt,
       keywords,
-      profileQuery: profileGeneratedQuery,
-      profileLanguage: siteProfile?.language ?? undefined,
+      profileQuery: '',
+      profileLanguage: null,
       limit: headlineLimit,
       sortBy,
       language,
@@ -1017,113 +864,13 @@ export default function GeneratePage() {
           </div>
           </div>
         ) : (
-          <div className="space-y-6 bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
-            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900">
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                    Site profile
-                  </h2>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Paste anything about your publication. We will normalize it into a
-                    session-only profile so you can pull niche headlines with one click
-                    before it resets.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleApplyProfile}
-                  disabled={!siteProfile || profileSaving}
-                  className={clsx(
-                    'self-start rounded-md px-4 py-2 text-sm font-medium transition-colors',
-                    siteProfile && !profileSaving
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : 'bg-gray-300 text-gray-600 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
-                  )}
-                >
-                  Apply session profile to filters
-                </button>
-              </div>
-
-              <div className="mt-4 space-y-4">
-                <div>
-                  <label className={labelStyle}>Site URL</label>
-                  <input
-                    type="url"
-                    className={inputStyle}
-                    placeholder="https://example.com"
-                    value={profileSiteUrl}
-                    onChange={(e) => setProfileSiteUrl(e.target.value)}
-                  />
-                </div>
-
-                <div>
-                  <label className={labelStyle}>Site details</label>
-                  <textarea
-                    className={inputStyle}
-                    rows={6}
-                    placeholder="Paste your about page, categories, audience, tone, competitors, and anything else."
-                    value={profileText}
-                    onChange={(e) => setProfileText(e.target.value)}
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    We send this text to the LLM with a structured extraction prompt and
-                    keep the normalized JSON in memory for this session only.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={handleSaveProfile}
-                    disabled={profileSaving}
-                    className={clsx(
-                      'rounded-md px-4 py-2 text-sm font-medium transition-colors',
-                      profileSaving
-                        ? 'bg-gray-300 text-gray-600 cursor-wait dark:bg-gray-700 dark:text-gray-400'
-                        : 'bg-blue-600 text-white hover:bg-blue-700'
-                    )}
-                  >
-                    {profileSaving
-                      ? 'Normalizing session profile…'
-                      : 'Normalize profile for this session'}
-                  </button>
-                </div>
-
-                {profileStatus && (
-                  <p
-                    className={clsx(
-                      'text-sm',
-                      profileStatus.type === 'success'
-                        ? 'text-green-600 dark:text-green-400'
-                        : profileStatus.type === 'error'
-                        ? 'text-red-500'
-                        : 'text-blue-600 dark:text-blue-400'
-                    )}
-                  >
-                    {profileStatus.message}
-                  </p>
-                )}
-
-                {siteProfile && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                      Normalized profile JSON
-                    </h3>
-                    <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-gray-100 p-3 text-xs text-gray-800 dark:bg-gray-950 dark:text-gray-200">
-                      {JSON.stringify(siteProfile, null, 2)}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            </div>
-
+            <div className="space-y-6 bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
             <div>
               <label className={labelStyle}>Article Description</label>
               <textarea
                 className={inputStyle}
                 rows={4}
-                placeholder="Describe the article to fetch relevant headlines (leave blank to use your session profile)"
+                placeholder="Describe the article to fetch relevant headlines"
                 value={headlinePrompt}
                 onChange={(e) => setHeadlinePrompt(e.target.value)}
               />
@@ -1376,7 +1123,6 @@ export default function GeneratePage() {
                   headlineLoading ||
                   (!headlinePrompt.trim() &&
                     keywords.length === 0 &&
-                    !profileGeneratedQuery &&
                     !headlineCategory.trim())
                 }
               >
