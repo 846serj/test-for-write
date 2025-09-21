@@ -134,10 +134,11 @@ export function buildHeadlineRequest(
     country,
   } = args;
 
-  const trimmedPrompt = prompt.trim();
+  const trimmedDescription = prompt.trim();
   const trimmedProfileQuery = profileQuery.trim();
-  const queryToUse = trimmedPrompt || trimmedProfileQuery;
-  const resolvedPrompt = trimmedPrompt ? trimmedPrompt : trimmedProfileQuery;
+  const hasDescription = Boolean(trimmedDescription);
+  const hasProfileQuery = Boolean(trimmedProfileQuery);
+  const resolvedPrompt = hasDescription ? trimmedDescription : trimmedProfileQuery;
 
   const trimmedCategory = category.trim();
   const normalizedCategory = trimmedCategory.toLowerCase();
@@ -218,7 +219,12 @@ export function buildHeadlineRequest(
     };
   }
 
-  if (!queryToUse && keywords.length === 0 && categoryFeedValue === null) {
+  if (
+    !hasDescription &&
+    !hasProfileQuery &&
+    keywords.length === 0 &&
+    categoryFeedValue === null
+  ) {
     return {
       ok: false,
       error:
@@ -247,8 +253,10 @@ export function buildHeadlineRequest(
     payload.sortBy = sortBy;
   }
 
-  if (queryToUse) {
-    payload.query = queryToUse;
+  if (hasDescription) {
+    payload.description = trimmedDescription;
+  } else if (hasProfileQuery) {
+    payload.query = trimmedProfileQuery;
   }
 
   if (keywords.length > 0) {

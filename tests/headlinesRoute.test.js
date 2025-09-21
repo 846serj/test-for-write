@@ -4,16 +4,29 @@ import * as ts from 'typescript';
 import { beforeEach, test } from 'node:test';
 
 const routePath = new URL('../src/app/api/headlines/route.ts', import.meta.url);
+const categoryConfigPath = new URL('../src/constants/categoryFeeds.ts', import.meta.url);
 const tsSource = fs.readFileSync(routePath, 'utf8');
+const categorySource = fs.readFileSync(categoryConfigPath, 'utf8');
 
 const sanitizedSource = tsSource
   .replace("import { NextRequest, NextResponse } from 'next/server';", '')
-  .replace("import { openai } from '../../../lib/openai';", '');
+  .replace("import { openai } from '../../../lib/openai';", '')
+  .replace(
+    "import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';",
+    ''
+  )
+  .replace(
+    "import {\n  CATEGORY_FEED_SET,\n  type CategoryFeedValue,\n} from '../../../constants/categoryFeeds';\n",
+    ''
+  );
 
 const snippet = `
+${categorySource}
 const NextResponse = globalThis.__nextResponse;
 const openai = globalThis.__openai;
 const fetch = globalThis.__fetch;
+const serpapiSearch = (...args) => globalThis.__serpapiSearch(...args);
+type SerpApiResult = any;
 type NextRequest = any;
 ${sanitizedSource}
 export { createHeadlinesHandler };
@@ -47,6 +60,10 @@ globalThis.__fetchImpl = async () => {
 
 globalThis.__fetch = (...args) => globalThis.__fetchImpl(...args);
 
+globalThis.__serpapiSearch = async () => {
+  throw new Error('serpapi not stubbed');
+};
+
 globalThis.__openaiCreate = async () => {
   throw new Error('openai not stubbed');
 };
@@ -77,6 +94,9 @@ beforeEach(() => {
   globalThis.__openaiCreate = async () => {
     throw new Error('openai not stubbed');
   };
+  globalThis.__serpapiSearch = async () => {
+    throw new Error('serpapi not stubbed');
+  };
 });
 
 test('rejects requests without query or keywords', async () => {
@@ -87,7 +107,126 @@ test('rejects requests without query or keywords', async () => {
   const response = await handler(createRequest({ limit: 5 }));
   assert.strictEqual(response.status, 400);
   const body = await response.json();
-  assert.strictEqual(body.error, 'Either query or keywords must be provided');
+  assert.strictEqual(
+    body.error,
+    'Either query, keywords, or description must be provided'
+  );
+});
+
+test('infers keywords when only a description is provided', async () => {
+  const openaiCalls = [];
+  globalThis.__openaiCreate = async (options) => {
+    openaiCalls.push(options);
+    if (openaiCalls.length === 1) {
+      return {
+        choices: [
+          {
+            message: {
+              content: '{}',
+            },
+          },
+        ],
+      };
+    }
+
+    if (openaiCalls.length === 2) {
+      return {
+        choices: [
+          {
+            message: {
+              content: '["AI robotics AND \\\"health tech\\\""]',
+            },
+          },
+        ],
+      };
+    }
+
+    return {
+      choices: [
+        {
+          message: {
+            content: '{}',
+          },
+        },
+      ],
+    };
+  };
+
+  const fetchCalls = [];
+  globalThis.__fetchImpl = async (input) => {
+    const url = new URL(input.toString());
+    fetchCalls.push({
+      query: url.searchParams.get('q') || '',
+      pageSize: Number(url.searchParams.get('pageSize')),
+      page: Number(url.searchParams.get('page')),
+    });
+
+    const articles = [
+      {
+        title: 'AI robotics breakthrough',
+        description: 'desc1',
+        url: 'https://example.com/1',
+        source: { name: 'Source A' },
+        publishedAt: '2024-03-01T00:00:00Z',
+      },
+      {
+        title: 'Healthcare automation',
+        description: 'desc2',
+        url: 'https://example.com/2',
+        source: { name: 'Source B' },
+        publishedAt: '2024-03-02T00:00:00Z',
+      },
+      {
+        title: 'Robot nurses on the rise',
+        description: 'desc3',
+        url: 'https://example.com/3',
+        source: { name: 'Source C' },
+        publishedAt: '2024-03-03T00:00:00Z',
+      },
+    ];
+
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get(name) {
+          return name === 'content-type' ? 'application/json' : null;
+        },
+      },
+      async json() {
+        return { status: 'ok', articles };
+      },
+      async text() {
+        return JSON.stringify({ status: 'ok', articles });
+      },
+    };
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const description =
+    'Focus on technology-driven AI robotics transforming hospital care.';
+  const response = await handler(createRequest({ description, limit: 3 }));
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+
+  assert.strictEqual(openaiCalls.length, 3);
+  assert.ok(openaiCalls[0].messages?.[1]?.content.includes(description));
+  assert.deepStrictEqual(body.inferredKeywords, [
+    'Focus',
+    'technology',
+    'driven',
+    'robotics',
+    'transforming',
+  ]);
+  assert.deepStrictEqual(body.inferredCategories, ['technology']);
+  assert.deepStrictEqual(body.queriesAttempted, ['AI robotics AND "health tech"']);
+  assert.deepStrictEqual(fetchCalls, [
+    { query: 'AI robotics AND "health tech"', pageSize: 3, page: 1 },
+  ]);
+  assert.strictEqual(body.successfulQueries, 1);
+  assert.strictEqual(body.totalResults, 3);
+  assert.strictEqual(body.headlines.length, 3);
 });
 
 test('aggregates deduplicated results for keyword expansions', async () => {
@@ -112,14 +251,14 @@ test('aggregates deduplicated results for keyword expansions', async () => {
       [
         {
           title: 'Robotic surgeons',
-          description: 'desc',
+          description: 'Robotic surgeons assist in operations',
           url: 'https://example.com/1',
           source: { name: 'Source A' },
           publishedAt: '2024-01-01T00:00:00Z',
         },
         {
           title: 'AI in hospitals',
-          description: 'desc',
+          description: 'Hospitals adopt AI for patient care',
           url: 'https://example.com/2',
           source: { name: 'Source B' },
           publishedAt: '2024-01-02T00:00:00Z',
@@ -131,14 +270,14 @@ test('aggregates deduplicated results for keyword expansions', async () => {
       [
         {
           title: 'AI in hospitals',
-          description: 'desc',
+          description: 'Hospitals adopt AI for patient care',
           url: 'https://example.com/2',
           source: { name: 'Source B' },
           publishedAt: '2024-01-02T00:00:00Z',
         },
         {
           title: 'Care robots expand',
-          description: 'desc',
+          description: 'Care robots enter more clinics',
           url: 'https://example.com/3',
           source: { name: 'Source C' },
           publishedAt: '2024-01-03T00:00:00Z',
@@ -179,7 +318,10 @@ test('aggregates deduplicated results for keyword expansions', async () => {
 
   assert.strictEqual(response.status, 200);
   const body = await response.json();
-  assert.strictEqual(openaiCalls.length, 1);
+  const expansionCalls = openaiCalls.filter((options) =>
+    options?.messages?.[1]?.content?.includes('Convert the following keywords')
+  );
+  assert.strictEqual(expansionCalls.length, 1);
   assert.deepStrictEqual(
     body.queriesAttempted,
     ['robotics AND "AI"', 'AI healthcare OR "medical robotics"']
@@ -188,8 +330,11 @@ test('aggregates deduplicated results for keyword expansions', async () => {
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
   assert.deepStrictEqual(
-    body.headlines.map((item) => item.url),
+    body.headlines
+      .map((item) => item.url)
+      .sort(),
     ['https://example.com/1', 'https://example.com/2', 'https://example.com/3']
+      .sort()
   );
   assert.deepStrictEqual(fetchCalls, [
     { query: 'robotics AND "AI"', pageSize: 2, page: 1 },
@@ -217,14 +362,14 @@ test('continues fetching additional keyword queries until the limit is satisfied
       [
         {
           title: 'Innovation leaps ahead',
-          description: 'desc',
+          description: 'Innovation leaps ahead globally',
           url: 'https://example.com/a',
           source: { name: 'Source A' },
           publishedAt: '2024-01-01T00:00:00Z',
         },
         {
           title: 'Next-gen materials emerge',
-          description: 'desc',
+          description: 'New materials support breakthroughs',
           url: 'https://example.com/b',
           source: { name: 'Source B' },
           publishedAt: '2024-01-02T00:00:00Z',
@@ -236,14 +381,14 @@ test('continues fetching additional keyword queries until the limit is satisfied
       [
         {
           title: 'Innovation leaps ahead',
-          description: 'desc',
+          description: 'Innovation leaps ahead globally',
           url: 'https://example.com/a',
           source: { name: 'Source A' },
           publishedAt: '2024-01-01T00:00:00Z',
         },
         {
           title: 'Genome editing milestones',
-          description: 'desc',
+          description: 'Genome editing reaches new milestones',
           url: 'https://example.com/c',
           source: { name: 'Source C' },
           publishedAt: '2024-01-03T00:00:00Z',
@@ -255,14 +400,14 @@ test('continues fetching additional keyword queries until the limit is satisfied
       [
         {
           title: 'Mars mission update',
-          description: 'desc',
+          description: 'Mars mission update released',
           url: 'https://example.com/d',
           source: { name: 'Source D' },
           publishedAt: '2024-01-04T00:00:00Z',
         },
         {
           title: 'Europa lander preparations',
-          description: 'desc',
+          description: 'Europa lander preparations advance',
           url: 'https://example.com/e',
           source: { name: 'Source E' },
           publishedAt: '2024-01-05T00:00:00Z',
@@ -318,13 +463,15 @@ test('continues fetching additional keyword queries until the limit is satisfied
   assert.strictEqual(body.successfulQueries, 3);
   assert.strictEqual(body.totalResults, 4);
   assert.deepStrictEqual(
-    body.headlines.map((item) => item.title),
+    body.headlines
+      .map((item) => item.title)
+      .sort(),
     [
       'Innovation leaps ahead',
       'Next-gen materials emerge',
       'Genome editing milestones',
       'Mars mission update',
-    ]
+    ].sort()
   );
 });
 
@@ -347,14 +494,14 @@ test('continues paging when earlier results include duplicates', async () => {
       [
         {
           title: 'Alpha insight',
-          description: 'desc',
+          description: 'Alpha insight analysis',
           url: 'https://example.com/a',
           source: { name: 'Source A' },
           publishedAt: '2024-02-01T00:00:00Z',
         },
         {
           title: 'Beta developments',
-          description: 'desc',
+          description: 'Beta developments update',
           url: 'https://example.com/b',
           source: { name: 'Source B' },
           publishedAt: '2024-02-02T00:00:00Z',
@@ -366,14 +513,14 @@ test('continues paging when earlier results include duplicates', async () => {
       [
         {
           title: 'Alpha insight',
-          description: 'desc',
+          description: 'Alpha insight analysis',
           url: 'https://example.com/a',
           source: { name: 'Source A' },
           publishedAt: '2024-02-01T00:00:00Z',
         },
         {
           title: 'Beta developments',
-          description: 'desc',
+          description: 'Beta developments update',
           url: 'https://example.com/b',
           source: { name: 'Source B' },
           publishedAt: '2024-02-02T00:00:00Z',
@@ -385,14 +532,14 @@ test('continues paging when earlier results include duplicates', async () => {
       [
         {
           title: 'Alpha insight',
-          description: 'desc',
+          description: 'Alpha insight analysis',
           url: 'https://example.com/a',
           source: { name: 'Source A' },
           publishedAt: '2024-02-01T00:00:00Z',
         },
         {
           title: 'Gamma outlook',
-          description: 'desc',
+          description: 'Gamma outlook overview',
           url: 'https://example.com/c',
           source: { name: 'Source C' },
           publishedAt: '2024-02-03T00:00:00Z',
@@ -404,7 +551,7 @@ test('continues paging when earlier results include duplicates', async () => {
       [
         {
           title: 'Delta forecast',
-          description: 'desc',
+          description: 'Delta forecast briefing',
           url: 'https://example.com/d',
           source: { name: 'Source D' },
           publishedAt: '2024-02-04T00:00:00Z',
@@ -449,13 +596,15 @@ test('continues paging when earlier results include duplicates', async () => {
   assert.strictEqual(body.successfulQueries, 2);
   assert.strictEqual(body.totalResults, 4);
   assert.deepStrictEqual(
-    body.headlines.map((item) => item.url),
+    body.headlines
+      .map((item) => item.url)
+      .sort(),
     [
       'https://example.com/a',
       'https://example.com/b',
       'https://example.com/c',
       'https://example.com/d',
-    ]
+    ].sort()
   );
   assert.deepStrictEqual(fetchCalls, [
     { query: 'first spotlight', pageSize: 2, page: 1 },
