@@ -10,7 +10,7 @@ const uuidMatch = tsCode.match(/const UUID_REGEX[\s\S]*?;/);
 const jsonErrorMatch = tsCode.match(/function jsonError[\s\S]*?\n}\n/);
 const mapErrorMatch = tsCode.match(/function mapSupabaseError[\s\S]*?\n}\n/);
 const handlerMatch = tsCode.match(
-  /export function createProfilesPostHandler[\s\S]*?\n}\n\nexport const POST = createProfilesPostHandler\(\);/
+  /function createProfilesPostHandler[\s\S]*?\n}\n\nexport const POST = createProfilesPostHandler\(\);/
 );
 
 if (!uuidMatch || !jsonErrorMatch || !mapErrorMatch || !handlerMatch) {
