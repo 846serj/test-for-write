@@ -20,8 +20,35 @@ type PostBody = {
   rawText?: string;
 };
 
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
+}
+
+function mapSupabaseError(code: string | undefined) {
+  switch (code) {
+    case '23503':
+      return { status: 404, message: 'User account not found' } as const;
+    case '23505':
+      return {
+        status: 409,
+        message: 'A profile already exists for this user',
+      } as const;
+    case '42P01':
+      return {
+        status: 424,
+        message: 'Profile storage is not available',
+      } as const;
+    case '42501':
+      return {
+        status: 403,
+        message: 'Service is not authorized to store profiles',
+      } as const;
+    default:
+      return null;
+  }
 }
 
 async function extractProfile(rawText: string): Promise<NormalizedSiteProfile> {
@@ -95,94 +122,143 @@ export async function GET(request: NextRequest) {
   });
 }
 
-export async function POST(request: NextRequest) {
-  let body: PostBody;
-  try {
-    body = await request.json();
-  } catch {
-    return jsonError('Invalid JSON body');
-  }
+type ProfilesDependencies = {
+  supabaseAdmin: typeof supabaseAdmin;
+  extractProfile: typeof extractProfile;
+  normalizeSiteUrl: typeof normalizeSiteUrl;
+  normalizeProfile: typeof normalizeProfile;
+  buildProfileHeadlineQuery: typeof buildProfileHeadlineQuery;
+  getProfileQuotaTotal: typeof getProfileQuotaTotal;
+};
 
-  const userId = body.userId?.trim();
-  const siteUrlRaw = body.siteUrl?.trim();
-  const rawText = body.rawText?.trim();
+export function createProfilesPostHandler(
+  overrides: Partial<ProfilesDependencies> = {}
+) {
+  const {
+    supabaseAdmin: supabaseClient = supabaseAdmin,
+    extractProfile: profileExtractor = extractProfile,
+    normalizeSiteUrl: siteUrlNormalizer = normalizeSiteUrl,
+    normalizeProfile: profileNormalizer = normalizeProfile,
+    buildProfileHeadlineQuery: headlineQueryBuilder = buildProfileHeadlineQuery,
+    getProfileQuotaTotal: quotaCalculator = getProfileQuotaTotal,
+  } = overrides;
 
-  if (!userId) {
-    return jsonError('Missing userId');
-  }
-  if (!siteUrlRaw) {
-    return jsonError('Missing siteUrl');
-  }
-  if (!rawText) {
-    return jsonError('Missing profile text');
-  }
-
-  let normalizedSiteUrl: string;
-  try {
-    normalizedSiteUrl = normalizeSiteUrl(siteUrlRaw);
-  } catch (error) {
-    return jsonError(
-      error instanceof Error ? error.message : 'Invalid site URL provided'
-    );
-  }
-
-  let profile: NormalizedSiteProfile;
-  try {
-    profile = await extractProfile(rawText);
-  } catch (error) {
-    console.error('[profiles] extraction failed', error);
-    return jsonError(
-      error instanceof Error ? error.message : 'Failed to normalize profile',
-      502
-    );
-  }
-
-  const payload = {
-    user_id: userId,
-    site_url: normalizedSiteUrl,
-    raw_text: rawText,
-    profile,
-    updated_at: new Date().toISOString(),
-  };
-
-  const { data, error } = await supabaseAdmin
-    .from('site_profiles')
-    .upsert(payload, { onConflict: 'user_id' })
-    .select('site_url, raw_text, profile')
-    .single();
-
-  if (error) {
-    const supabaseError = {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
-    };
-
-    console.error('[profiles] failed to store profile', {
-      context: {
-        userId,
-        siteUrl: normalizedSiteUrl,
-        rawTextLength: rawText.length,
-      },
-      supabaseError,
-    });
-
-    const errorBody: Record<string, unknown> = { error: 'Failed to store profile' };
-    if (process.env.NODE_ENV !== 'production') {
-      errorBody.supabase = supabaseError;
+  return async function POST(request: NextRequest) {
+    let body: PostBody;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonError('Invalid JSON body');
     }
 
-    return NextResponse.json(errorBody, { status: 500 });
-  }
+    const userId = body.userId?.trim();
+    const siteUrlRaw = body.siteUrl?.trim();
+    const rawText = body.rawText?.trim();
 
-  const normalizedProfile = normalizeProfile(data.profile);
+    if (!userId) {
+      return jsonError('Missing userId');
+    }
+    if (!UUID_REGEX.test(userId)) {
+      return jsonError('Invalid userId format');
+    }
+    if (!siteUrlRaw) {
+      return jsonError('Missing siteUrl');
+    }
+    if (!rawText) {
+      return jsonError('Missing profile text');
+    }
 
-  return NextResponse.json({
-    profile: normalizedProfile,
-    siteUrl: data.site_url,
-    rawText: data.raw_text,
-    headlineQuery: buildProfileHeadlineQuery(normalizedProfile),
-    quotaTotal: getProfileQuotaTotal(normalizedProfile),
-  });
+    const {
+      data: userRecord,
+      error: userLookupError,
+    } = await supabaseClient.auth.admin.getUserById(userId);
+
+    if (userLookupError) {
+      console.error('[profiles] failed to load user', userLookupError);
+      return jsonError('Failed to verify user account', 502);
+    }
+
+    const user =
+      (userRecord && 'user' in userRecord ? userRecord.user : userRecord) ??
+      null;
+
+    if (!user) {
+      return jsonError('User account not found', 404);
+    }
+
+    let normalizedSiteUrl: string;
+    try {
+      normalizedSiteUrl = siteUrlNormalizer(siteUrlRaw);
+    } catch (error) {
+      return jsonError(
+        error instanceof Error ? error.message : 'Invalid site URL provided'
+      );
+    }
+
+    let profile: NormalizedSiteProfile;
+    try {
+      profile = await profileExtractor(rawText);
+    } catch (error) {
+      console.error('[profiles] extraction failed', error);
+      return jsonError(
+        error instanceof Error ? error.message : 'Failed to normalize profile',
+        502
+      );
+    }
+
+    const payload = {
+      user_id: userId,
+      site_url: normalizedSiteUrl,
+      raw_text: rawText,
+      profile,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabaseClient
+      .from('site_profiles')
+      .upsert(payload, { onConflict: 'user_id' })
+      .select('site_url, raw_text, profile')
+      .single();
+
+    if (error) {
+      const supabaseError = {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      };
+
+      console.error('[profiles] failed to store profile', {
+        context: {
+          userId,
+          siteUrl: normalizedSiteUrl,
+          rawTextLength: rawText.length,
+        },
+        supabaseError,
+      });
+
+      const mapped = mapSupabaseError(error.code);
+      const status = mapped?.status ?? 500;
+      const message = mapped?.message ?? 'Failed to store profile';
+
+      const errorBody: Record<string, unknown> = { error: message };
+      if (process.env.NODE_ENV !== 'production') {
+        errorBody.supabase = supabaseError;
+      }
+
+      return NextResponse.json(errorBody, { status });
+    }
+
+    const normalizedProfile = profileNormalizer(data.profile);
+
+    return NextResponse.json({
+      profile: normalizedProfile,
+      siteUrl: data.site_url,
+      rawText: data.raw_text,
+      headlineQuery: headlineQueryBuilder(normalizedProfile),
+      quotaTotal: quotaCalculator(normalizedProfile),
+    });
+  };
 }
+
+export const POST = createProfilesPostHandler();
