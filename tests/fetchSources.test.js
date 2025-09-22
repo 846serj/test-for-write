@@ -11,23 +11,31 @@ const resolveFreshnessMatch = tsCode.match(/function resolveFreshness[\s\S]*?\n\
 const mapFreshnessMatch = tsCode.match(/function mapFreshnessToSerpTbs[\s\S]*?\n\}/);
 const funcMatch = tsCode.match(/async function fetchSources[\s\S]*?\n\}/);
 const normalizePublisherMatch = tsCode.match(/function normalizePublisher[\s\S]*?\n\}/);
+const normalizeTitleMatch = tsCode.match(/function normalizeTitleValue[\s\S]*?\n\}/);
+const freshnessHoursMatch = tsCode.match(/const FRESHNESS_TO_HOURS[\s\S]*?\n\};/);
+const computeFreshnessMatch = tsCode.match(/function computeFreshnessIso[\s\S]*?\n\}/);
+const fetchNewsArticlesMatch = tsCode.match(/async function fetchNewsArticles[\s\S]*?\n\}/);
 
 const snippet = `
 ${typeMatch[0]}
+${freshnessHoursMatch ? freshnessHoursMatch[0] : ''}
 const serpCalls = [];
 let serpResults = [];
 function setSerpResults(results) { serpResults = results; }
 async function serpapiSearch(params) { serpCalls.push(params); return serpResults; }
+${normalizeTitleMatch ? normalizeTitleMatch[0] : ''}
 ${resolveFreshnessMatch[0]}
 ${mapFreshnessMatch[0]}
 ${funcMatch[0]}
 ${normalizePublisherMatch ? normalizePublisherMatch[0] : ''}
-export { fetchSources, serpCalls, setSerpResults };
+${computeFreshnessMatch ? computeFreshnessMatch[0] : ''}
+${fetchNewsArticlesMatch ? fetchNewsArticlesMatch[0] : ''}
+export { fetchSources, serpCalls, setSerpResults, fetchNewsArticles };
 `;
 
 const jsCode = ts.transpileModule(snippet, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
 const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString('base64');
-const { fetchSources, serpCalls, setSerpResults } = await import(moduleUrl);
+const { fetchSources, serpCalls, setSerpResults, fetchNewsArticles } = await import(moduleUrl);
 
 test('fetchSources requests google_news with freshness filter and preserves order', async () => {
   serpCalls.length = 0;
@@ -113,4 +121,78 @@ test('fetchSources limits to five unique publishers while preserving order', asy
     'https://d.com/1',
     'https://e.com/1',
   ]);
+});
+
+test('fetchSources skips duplicate headlines even from different publishers', async () => {
+  serpCalls.length = 0;
+  setSerpResults([
+    {
+      link: 'https://unique.com/story',
+      source: 'Publisher One',
+      title: 'Breaking News Flash',
+    },
+    {
+      link: 'https://duplicate.com/another',
+      source: 'Publisher Two',
+      title: '  breaking   news   flash  ',
+    },
+    {
+      link: 'https://another.com/story',
+      source: 'Publisher Three',
+      title: 'Different Headline',
+    },
+  ]);
+
+  const sources = await fetchSources('duplicate titles');
+  assert.deepStrictEqual(sources, [
+    'https://unique.com/story',
+    'https://another.com/story',
+  ]);
+});
+
+test('fetchNewsArticles serp fallback dedupes repeated SERP headlines', async () => {
+  const originalNewsKey = process.env.NEWS_API_KEY;
+  const originalSerpKey = process.env.SERPAPI_KEY;
+  const originalFetch = globalThis.fetch;
+
+  try {
+    process.env.NEWS_API_KEY = '';
+    process.env.SERPAPI_KEY = 'test-serp-key';
+    globalThis.fetch = async () => {
+      throw new Error('fetch should not be called in fallback test');
+    };
+
+    serpCalls.length = 0;
+    setSerpResults([
+      {
+        title: 'Market Rally Today',
+        link: 'https://site-a.com/story',
+        snippet: 'Summary A',
+        date: '2024-01-01',
+      },
+      {
+        title: 'market   rally   today',
+        link: 'https://site-b.com/story',
+        snippet: 'Summary B',
+        published_at: '2024-01-01',
+      },
+      {
+        title: 'Different Story',
+        link: 'https://site-c.com/story',
+        snippet: 'Summary C',
+        date: '2024-01-02',
+      },
+    ]);
+
+    const articles = await fetchNewsArticles('markets', '6h', true);
+    assert.strictEqual(articles.length, 2);
+    assert.deepStrictEqual(
+      articles.map((item) => item.url),
+      ['https://site-a.com/story', 'https://site-c.com/story']
+    );
+  } finally {
+    process.env.NEWS_API_KEY = originalNewsKey;
+    process.env.SERPAPI_KEY = originalSerpKey;
+    globalThis.fetch = originalFetch;
+  }
 });
