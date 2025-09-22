@@ -37,6 +37,58 @@ const sectionRanges: Record<string, [number, number]> = {
   longer: [6, 8],
 };
 
+function linksClusteredNearEnd(content: string): boolean {
+  if (!content) {
+    return false;
+  }
+
+  const anchorRegex = /<a\s+href\b[^>]*>/gi;
+  const linkPositions: number[] = [];
+  let anchorMatch: RegExpExecArray | null;
+  while ((anchorMatch = anchorRegex.exec(content)) !== null) {
+    linkPositions.push(anchorMatch.index);
+  }
+
+  if (linkPositions.length === 0) {
+    return false;
+  }
+
+  const blockRegex = /<(p|h2)\b[^>]*>/gi;
+  const blockStarts: number[] = [];
+  let blockMatch: RegExpExecArray | null;
+  while ((blockMatch = blockRegex.exec(content)) !== null) {
+    blockStarts.push(blockMatch.index);
+  }
+
+  if (blockStarts.length >= 2) {
+    const blockBoundaries = blockStarts.map((start, idx) => ({
+      start,
+      end: idx + 1 < blockStarts.length ? blockStarts[idx + 1] : content.length,
+    }));
+    const lastBlockIndex = blockBoundaries.length - 1;
+    const allInLastBlock = linkPositions.every((pos) => {
+      for (let i = blockBoundaries.length - 1; i >= 0; i -= 1) {
+        const boundary = blockBoundaries[i];
+        if (pos >= boundary.start) {
+          return i === lastBlockIndex;
+        }
+      }
+      return false;
+    });
+
+    if (allInLastBlock) {
+      return true;
+    }
+  }
+
+  const threshold = Math.floor(content.length * 0.75);
+  if (threshold <= 0) {
+    return false;
+  }
+
+  return linkPositions.every((pos) => pos >= threshold);
+}
+
 function normalizeTitleValue(title: string | undefined | null): string {
   const holder = normalizeTitleValue as unknown as {
     _publisherData?: {
@@ -648,7 +700,7 @@ async function generateWithLinks(
     if (missingSources.length > 0) {
       const retryPrompt = `${prompt}\n\nYou failed to cite the following required sources:\n${missingSources
         .map((url) => `- ${url}`)
-        .join('\n')}\nAdd a clickable HTML link for each listed URL using <a href="URL" target="_blank">text</a> exactly once, and retain the other citations you already provided.`;
+        .join('\n')}\nAdd a clickable HTML link for each listed URL using <a href="URL" target="_blank">text</a> exactly once, weave it into the paragraph that references that source, retain the other citations you already provided, and do not append a standalone list of links at the end.`;
       const retryRes = await openai.chat.completions.create({
         model,
         messages: buildMessages(retryPrompt),
@@ -670,7 +722,7 @@ async function generateWithLinks(
   let linkCount = content.match(/<a\s+href=/gi)?.length || 0;
 
   if (linkCount < minLinks && sources.length > 0) {
-    const retryPrompt = `${prompt}\n\nYou forgot to include at least ${minLinks} links. Integrate clickable HTML links for every provided source using <a href="URL" target="_blank">text</a>.`;
+    const retryPrompt = `${prompt}\n\nYou forgot to include at least ${minLinks} links. Integrate clickable HTML links for every provided source using <a href="URL" target="_blank">text</a> inside the relevant paragraphs, and do not append a final list of links.`;
     const retryRes = await openai.chat.completions.create({
       model,
       messages: buildMessages(retryPrompt),
@@ -691,12 +743,42 @@ async function generateWithLinks(
     }
   }
 
+  if (sources.length > 0 && linksClusteredNearEnd(content)) {
+    const retryPrompt = `${prompt}\n\nYour previous draft clustered the citations at the end. Rewrite the article so each listed source URL is woven into the paragraph or section that discusses it. Keep every <a href> citation inline with the relevant content and do not append a final list of links.`;
+    const retryRes = await openai.chat.completions.create({
+      model,
+      messages: buildMessages(retryPrompt),
+      temperature: 0.7,
+      max_tokens: tokens,
+    });
+    content = cleanModelOutput(
+      retryRes.choices[0]?.message?.content || content
+    );
+    const missingSources = findMissingSources(content, sources);
+    if (missingSources.length > 0) {
+      throw new Error(
+        `Model failed to cite required sources: ${missingSources.join(', ')}`
+      );
+    }
+    linkCount = content.match(/<a\s+href=/gi)?.length || 0;
+    if (linkCount < minLinks) {
+      throw new Error(
+        `Model failed to include at least ${minLinks} links after redistributing citations.`
+      );
+    }
+    if (linksClusteredNearEnd(content)) {
+      throw new Error(
+        'Model continued to cluster citations at the end after correction.'
+      );
+    }
+  }
+
   if (minWords > 0) {
     const textOnly = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     const wordCount = textOnly ? textOnly.split(/\s+/).length : 0;
     if (wordCount < minWords && tokens < limit) {
       tokens = Math.min(tokens * 2, limit);
-      const expandPrompt = `${prompt}\n\nYour previous response was only ${wordCount} words. Expand it to at least ${minWords} words while keeping the same structure and links.`;
+      const expandPrompt = `${prompt}\n\nYour previous response was only ${wordCount} words. Expand it to at least ${minWords} words while keeping the same structure and links. Ensure every citation remains inline with its relevant paragraph and do not append a final list of links.`;
       const retryRes = await openai.chat.completions.create({
         model,
         messages: buildMessages(expandPrompt),
