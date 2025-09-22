@@ -12,6 +12,7 @@ import { DEFAULT_WORDS, WORD_RANGES } from '../../constants/lengthOptions';
 import {
   buildHeadlineRequest,
   normalizeKeywordInput,
+  normalizeSummaryBullets,
   SEARCH_IN_ORDER,
 } from './headlineFormHelpers';
 
@@ -450,37 +451,9 @@ export default function GeneratePage() {
             ? item.source
             : item.source?.name ?? item.source?.title ?? '';
 
-        const summary: HeadlineSummary | undefined = (() => {
-          if (!item) {
-            return undefined;
-          }
-
-          const bulletSource = Array.isArray(item.summary)
-            ? item.summary
-            : item.summary && typeof item.summary === 'object' && Array.isArray(item.summary.bullets)
-            ? item.summary.bullets
-            : [];
-
-          if (!Array.isArray(bulletSource)) {
-            return undefined;
-          }
-
-          const normalized = bulletSource
-            .map((bullet: unknown) => {
-              if (typeof bullet === 'string') {
-                return bullet;
-              }
-              if (bullet === null || bullet === undefined) {
-                return '';
-              }
-              return String(bullet);
-            })
-            .map((bullet: string) => bullet.replace(/\s+/g, ' ').trim())
-            .filter((bullet: string) => Boolean(bullet))
-            .slice(0, 5);
-
-          return normalized.length > 0 ? normalized : undefined;
-        })();
+        const summaryBullets = normalizeSummaryBullets(item?.summary);
+        const summary: HeadlineSummary | undefined =
+          summaryBullets.length > 0 ? summaryBullets : undefined;
 
         const relatedArticles: RelatedArticle[] = Array.isArray(item?.relatedArticles)
           ? item.relatedArticles
@@ -1297,8 +1270,7 @@ export default function GeneratePage() {
                               .map((bullet) => `• ${bullet}`)
                               .join('\n')
                           : '';
-                        const resolvedSummary =
-                          bulletText || headline.description?.trim() || '';
+                        const resolvedSummary = bulletText;
 
                         return (
                           <tr

@@ -714,6 +714,93 @@ test('retains later valid summary bullets after filtering oversized entries', as
   }
 });
 
+test('builds structured fallback bullets when llm output is insufficient', async () => {
+  globalThis.__fetchImpl = async (input) => {
+    const url = new URL(input.toString());
+    assert.strictEqual(url.searchParams.get('q'), 'community funding');
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get(name) {
+          return name === 'content-type' ? 'application/json' : null;
+        },
+      },
+      async json() {
+        return {
+          status: 'ok',
+          articles: [
+            {
+              title: 'Community center funding approved',
+              description:
+                'Local council approves community center funding after months of debate.',
+              url: 'https://example.com/community',
+              source: { name: 'City Herald' },
+              publishedAt: '2024-06-11T00:00:00Z',
+            },
+          ],
+        };
+      },
+      async text() {
+        return JSON.stringify({
+          status: 'ok',
+          articles: [
+            {
+              title: 'Community center funding approved',
+              description:
+                'Local council approves community center funding after months of debate.',
+              url: 'https://example.com/community',
+              source: { name: 'City Herald' },
+              publishedAt: '2024-06-11T00:00:00Z',
+            },
+          ],
+        });
+      },
+    };
+  };
+
+  let openaiCalls = 0;
+  globalThis.__openaiCreate = async (options) => {
+    openaiCalls += 1;
+    const userContent = options?.messages?.[1]?.content ?? '';
+    assert.ok(
+      typeof userContent === 'string' &&
+        userContent.includes('Summarize each news cluster strictly as JSON'),
+      'expected summarization request'
+    );
+
+    return {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              'item-0': ['Single bullet provided by llm.'],
+            }),
+          },
+        },
+      ],
+    };
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(createRequest({ query: 'community funding', limit: 1 }));
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+  assert.strictEqual(openaiCalls, 1);
+  assert.strictEqual(body.headlines.length, 1);
+  const summary = body.headlines[0].summary;
+  assert.deepStrictEqual(summary, [
+    'Local council approves community center funding after months of debate.',
+    'Community center funding approved',
+    'Detail not provided in source.',
+  ]);
+  for (const bullet of summary) {
+    const words = bullet.split(/\s+/).filter(Boolean);
+    assert.ok(words.length > 0 && words.length <= 30);
+  }
+});
+
 test('surfaces expansion failures from OpenAI', async () => {
   globalThis.__openaiCreate = async () => {
     throw new Error('boom');
