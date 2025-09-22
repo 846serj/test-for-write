@@ -90,18 +90,50 @@ async function fetchSources(
     limit: 8,
   });
 
-  const seen = new Set<string>();
+  const seenLinks = new Set<string>();
+  const seenPublishers = new Set<string>();
   const orderedLinks: string[] = [];
 
   for (const result of results) {
     const link = result.link;
-    if (link && !seen.has(link)) {
-      seen.add(link);
-      orderedLinks.push(link);
+    if (!link || seenLinks.has(link)) {
+      continue;
+    }
+
+    const publisherId = normalizePublisher(result);
+    if (!publisherId || seenPublishers.has(publisherId)) {
+      continue;
+    }
+
+    seenLinks.add(link);
+    seenPublishers.add(publisherId);
+    orderedLinks.push(link);
+
+    if (orderedLinks.length >= 5) {
+      break;
     }
   }
 
-  return orderedLinks.slice(0, 5);
+  return orderedLinks;
+}
+
+function normalizePublisher(result: SerpApiResult): string | null {
+  const rawSource = typeof result.source === 'string' ? result.source : '';
+  const normalizedSource = rawSource.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (normalizedSource) {
+    return normalizedSource;
+  }
+
+  const link = result.link;
+  if (!link) return null;
+
+  try {
+    const hostname = new URL(link).hostname.toLowerCase();
+    if (!hostname) return null;
+    return hostname.replace(/^www\./, '');
+  } catch {
+    return null;
+  }
 }
 
 function resolveFreshness(freshness: NewsFreshness | undefined): NewsFreshness {
