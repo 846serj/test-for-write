@@ -7,7 +7,7 @@ import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 export const runtime = 'edge';
 export const revalidate = 0;
 
-type NewsFreshness = '1h' | '6h' | '24h';
+type NewsFreshness = '1h' | '6h' | '7d';
 
 interface NewsArticle {
   title: string;
@@ -19,7 +19,7 @@ interface NewsArticle {
 const FRESHNESS_TO_HOURS: Record<NewsFreshness, number> = {
   '1h': 1,
   '6h': 6,
-  '24h': 24,
+  '7d': 24 * 7,
 };
 
 const sectionRanges: Record<string, [number, number]> = {
@@ -112,7 +112,7 @@ function resolveFreshness(freshness: NewsFreshness | undefined): NewsFreshness {
 function mapFreshnessToSerpTbs(freshness: NewsFreshness): string {
   if (freshness === '1h') return 'qdr:h';
   if (freshness === '6h') return 'qdr:h6';
-  return 'qdr:d';
+  return 'qdr:w';
 }
 
 function computeFreshnessIso(freshness: NewsFreshness): string {
