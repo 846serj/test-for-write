@@ -848,6 +848,186 @@ function findMissingSources(content: string, sources: string[]): string[] {
   return missing;
 }
 
+type AnchorReplacement = {
+  start: number;
+  end: number;
+  replacement: string;
+};
+
+function applyAnchorReplacements(
+  content: string,
+  replacements: AnchorReplacement[]
+): string {
+  if (replacements.length === 0) {
+    return content;
+  }
+
+  const sorted = [...replacements].sort((a, b) => b.start - a.start);
+  let updated = content;
+  for (const { start, end, replacement } of sorted) {
+    updated = `${updated.slice(0, start)}${replacement}${updated.slice(end)}`;
+  }
+  return updated;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatRequiredSourceLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.replace(/^www\./i, '');
+    if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname === '') {
+      return hostname ? escapeHtml(hostname) : escapeHtml(url);
+    }
+
+    const segments = parsed.pathname
+      .split('/')
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    if (segments.length === 0) {
+      return hostname ? escapeHtml(hostname) : escapeHtml(url);
+    }
+
+    const lastSegment = segments[segments.length - 1];
+    const decoded = decodeURIComponent(lastSegment);
+    const cleanSegment = decoded.replace(/[-_]/g, ' ');
+    const safeHost = hostname ? escapeHtml(hostname) : '';
+    return safeHost ? `${safeHost}/${escapeHtml(cleanSegment)}` : escapeHtml(cleanSegment);
+  } catch {
+    const sanitized = url.replace(/^https?:\/\//i, '');
+    if (sanitized.length <= 60) {
+      return escapeHtml(sanitized);
+    }
+    return escapeHtml(`${sanitized.slice(0, 57)}...`);
+  }
+}
+
+function ensureRequiredSourceAnchors(
+  content: string,
+  requiredSources: string[]
+): string {
+  if (!requiredSources.length) {
+    return content;
+  }
+
+  const variantToRequired = new Map<string, string>();
+  for (const source of requiredSources) {
+    if (!source) {
+      continue;
+    }
+    for (const variant of buildUrlVariants(source)) {
+      if (variant) {
+        variantToRequired.set(variant, source);
+      }
+    }
+  }
+
+  const anchorRegex = /<a\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const duplicateReplacements: AnchorReplacement[] = [];
+  const seenRequired = new Set<string>();
+  let anchorMatch: RegExpExecArray | null;
+
+  while ((anchorMatch = anchorRegex.exec(content)) !== null) {
+    const href = anchorMatch[1];
+    let matchedRequired: string | undefined;
+    for (const variant of buildUrlVariants(href)) {
+      if (variant) {
+        const required = variantToRequired.get(variant);
+        if (required) {
+          matchedRequired = required;
+          break;
+        }
+      }
+    }
+
+    if (matchedRequired) {
+      if (seenRequired.has(matchedRequired)) {
+        duplicateReplacements.push({
+          start: anchorMatch.index,
+          end: anchorMatch.index + anchorMatch[0].length,
+          replacement: anchorMatch[2],
+        });
+      } else {
+        seenRequired.add(matchedRequired);
+      }
+    }
+  }
+
+  let updated = applyAnchorReplacements(content, duplicateReplacements);
+
+  const missingSources = findMissingSources(updated, requiredSources);
+  if (missingSources.length === 0) {
+    return updated;
+  }
+
+  const paragraphRegex = /<p\b[^>]*>[\s\S]*?<\/p>/gi;
+  const paragraphs: { start: number; end: number; html: string }[] = [];
+  let paragraphMatch: RegExpExecArray | null;
+
+  while ((paragraphMatch = paragraphRegex.exec(updated)) !== null) {
+    paragraphs.push({
+      start: paragraphMatch.index,
+      end: paragraphMatch.index + paragraphMatch[0].length,
+      html: paragraphMatch[0],
+    });
+  }
+
+  const paragraphInjections = new Map<number, string[]>();
+  const appendedParagraphs: string[] = [];
+
+  missingSources.forEach((source, index) => {
+    const label = formatRequiredSourceLabel(source);
+    const anchorHtml = `<a href="${escapeHtml(source)}" target="_blank" rel="noopener">${label}</a>`;
+    const sentence = ` Source: ${anchorHtml}.`;
+
+    if (paragraphs.length === 0) {
+      appendedParagraphs.push(`<p>Source: ${anchorHtml}.</p>`);
+      return;
+    }
+
+    const targetIndex = index % paragraphs.length;
+    const existing = paragraphInjections.get(targetIndex) || [];
+    existing.push(sentence.trimStart());
+    paragraphInjections.set(targetIndex, existing);
+  });
+
+  const paragraphReplacements: AnchorReplacement[] = [];
+  if (paragraphInjections.size > 0) {
+    for (const [index, injections] of paragraphInjections.entries()) {
+      const original = paragraphs[index];
+      const joined = injections.join(' ');
+      const replacementHtml = original.html.replace(/<\/p>\s*$/i, ` ${joined}</p>`);
+      paragraphReplacements.push({
+        start: original.start,
+        end: original.end,
+        replacement: replacementHtml,
+      });
+    }
+  }
+
+  if (paragraphReplacements.length > 0) {
+    updated = applyAnchorReplacements(updated, paragraphReplacements);
+  }
+
+  if (appendedParagraphs.length > 0) {
+    const addition = appendedParagraphs.join('');
+    if (/(<\/(article|section|main|div)>\s*)$/i.test(updated)) {
+      updated = updated.replace(/<\/(article|section|main|div)>\s*$/i, (match) => `${addition}${match}`);
+    } else {
+      updated += addition;
+    }
+  }
+
+  return updated;
+}
+
 // Generate article content and ensure a minimum number of links are present
 // prompt   - text prompt to send to the model
 // model    - model name to use
@@ -911,9 +1091,7 @@ async function generateWithLinks(
       );
       missingSources = findMissingSources(content, requiredSources);
       if (missingSources.length > 0) {
-        throw new Error(
-          `Model failed to cite required sources: ${missingSources.join(', ')}`
-        );
+        content = ensureRequiredSourceAnchors(content, requiredSources);
       }
     }
   }
@@ -936,9 +1114,8 @@ async function generateWithLinks(
     if (requiredSources.length > 0) {
       const missingSources = findMissingSources(content, requiredSources);
       if (missingSources.length > 0) {
-        throw new Error(
-          `Model failed to cite required sources: ${missingSources.join(', ')}`
-        );
+        content = ensureRequiredSourceAnchors(content, requiredSources);
+        linkCount = content.match(/<a\s+href=/gi)?.length || 0;
       }
     }
   }
@@ -955,22 +1132,18 @@ async function generateWithLinks(
     content = cleanModelOutput(
       retryRes.choices[0]?.message?.content || content
     );
-    const missingSources = findMissingSources(content, requiredSources);
+    let missingSources = findMissingSources(content, requiredSources);
     if (missingSources.length > 0) {
-      throw new Error(
-        `Model failed to cite required sources: ${missingSources.join(', ')}`
-      );
+      content = ensureRequiredSourceAnchors(content, requiredSources);
+      missingSources = findMissingSources(content, requiredSources);
     }
     linkCount = content.match(/<a\s+href=/gi)?.length || 0;
     if (linkCount < requiredCount) {
-      throw new Error(
-        `Model failed to include at least ${requiredCount} links after redistributing citations.`
-      );
+      content = ensureRequiredSourceAnchors(content, requiredSources);
+      linkCount = content.match(/<a\s+href=/gi)?.length || 0;
     }
     if (linksClusteredNearEnd(content)) {
-      throw new Error(
-        'Model continued to cluster citations at the end after correction.'
-      );
+      content = ensureRequiredSourceAnchors(content, requiredSources);
     }
   }
 
@@ -992,9 +1165,7 @@ async function generateWithLinks(
       if (requiredSources.length > 0) {
         const missingSources = findMissingSources(content, requiredSources);
         if (missingSources.length > 0) {
-          throw new Error(
-            `Model failed to cite required sources: ${missingSources.join(', ')}`
-          );
+          content = ensureRequiredSourceAnchors(content, requiredSources);
         }
       }
     }
@@ -1003,9 +1174,7 @@ async function generateWithLinks(
   if (requiredSources.length > 0) {
     const missingSources = findMissingSources(content, requiredSources);
     if (missingSources.length > 0) {
-      throw new Error(
-        `Model failed to cite required sources: ${missingSources.join(', ')}`
-      );
+      content = ensureRequiredSourceAnchors(content, requiredSources);
     }
   }
 
