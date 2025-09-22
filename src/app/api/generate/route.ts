@@ -37,58 +37,6 @@ const sectionRanges: Record<string, [number, number]> = {
   longer: [6, 8],
 };
 
-function linksClusteredNearEnd(content: string): boolean {
-  if (!content) {
-    return false;
-  }
-
-  const anchorRegex = /<a\s+href\b[^>]*>/gi;
-  const linkPositions: number[] = [];
-  let anchorMatch: RegExpExecArray | null;
-  while ((anchorMatch = anchorRegex.exec(content)) !== null) {
-    linkPositions.push(anchorMatch.index);
-  }
-
-  if (linkPositions.length === 0) {
-    return false;
-  }
-
-  const blockRegex = /<(p|h2)\b[^>]*>/gi;
-  const blockStarts: number[] = [];
-  let blockMatch: RegExpExecArray | null;
-  while ((blockMatch = blockRegex.exec(content)) !== null) {
-    blockStarts.push(blockMatch.index);
-  }
-
-  if (blockStarts.length >= 2) {
-    const blockBoundaries = blockStarts.map((start, idx) => ({
-      start,
-      end: idx + 1 < blockStarts.length ? blockStarts[idx + 1] : content.length,
-    }));
-    const lastBlockIndex = blockBoundaries.length - 1;
-    const allInLastBlock = linkPositions.every((pos) => {
-      for (let i = blockBoundaries.length - 1; i >= 0; i -= 1) {
-        const boundary = blockBoundaries[i];
-        if (pos >= boundary.start) {
-          return i === lastBlockIndex;
-        }
-      }
-      return false;
-    });
-
-    if (allInLastBlock) {
-      return true;
-    }
-  }
-
-  const threshold = Math.floor(content.length * 0.75);
-  if (threshold <= 0) {
-    return false;
-  }
-
-  return linkPositions.every((pos) => pos >= threshold);
-}
-
 function normalizeTitleValue(title: string | undefined | null): string {
   const holder = normalizeTitleValue as unknown as {
     _publisherData?: {
@@ -848,28 +796,6 @@ function findMissingSources(content: string, sources: string[]): string[] {
   return missing;
 }
 
-type AnchorReplacement = {
-  start: number;
-  end: number;
-  replacement: string;
-};
-
-function applyAnchorReplacements(
-  content: string,
-  replacements: AnchorReplacement[]
-): string {
-  if (replacements.length === 0) {
-    return content;
-  }
-
-  const sorted = [...replacements].sort((a, b) => b.start - a.start);
-  let updated = content;
-  for (const { start, end, replacement } of sorted) {
-    updated = `${updated.slice(0, start)}${replacement}${updated.slice(end)}`;
-  }
-  return updated;
-}
-
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -877,155 +803,6 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-function formatRequiredSourceLabel(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const hostname = parsed.hostname.replace(/^www\./i, '');
-    if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname === '') {
-      return hostname ? escapeHtml(hostname) : escapeHtml(url);
-    }
-
-    const segments = parsed.pathname
-      .split('/')
-      .map((segment) => segment.trim())
-      .filter(Boolean);
-    if (segments.length === 0) {
-      return hostname ? escapeHtml(hostname) : escapeHtml(url);
-    }
-
-    const lastSegment = segments[segments.length - 1];
-    const decoded = decodeURIComponent(lastSegment);
-    const cleanSegment = decoded.replace(/[-_]/g, ' ');
-    const safeHost = hostname ? escapeHtml(hostname) : '';
-    return safeHost ? `${safeHost}/${escapeHtml(cleanSegment)}` : escapeHtml(cleanSegment);
-  } catch {
-    const sanitized = url.replace(/^https?:\/\//i, '');
-    if (sanitized.length <= 60) {
-      return escapeHtml(sanitized);
-    }
-    return escapeHtml(`${sanitized.slice(0, 57)}...`);
-  }
-}
-
-function ensureRequiredSourceAnchors(
-  content: string,
-  requiredSources: string[]
-): string {
-  if (!requiredSources.length) {
-    return content;
-  }
-
-  const variantToRequired = new Map<string, string>();
-  for (const source of requiredSources) {
-    if (!source) {
-      continue;
-    }
-    for (const variant of buildUrlVariants(source)) {
-      if (variant) {
-        variantToRequired.set(variant, source);
-      }
-    }
-  }
-
-  const anchorRegex = /<a\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  const duplicateReplacements: AnchorReplacement[] = [];
-  const seenRequired = new Set<string>();
-  let anchorMatch: RegExpExecArray | null;
-
-  while ((anchorMatch = anchorRegex.exec(content)) !== null) {
-    const href = anchorMatch[1];
-    let matchedRequired: string | undefined;
-    for (const variant of buildUrlVariants(href)) {
-      if (variant) {
-        const required = variantToRequired.get(variant);
-        if (required) {
-          matchedRequired = required;
-          break;
-        }
-      }
-    }
-
-    if (matchedRequired) {
-      if (seenRequired.has(matchedRequired)) {
-        duplicateReplacements.push({
-          start: anchorMatch.index,
-          end: anchorMatch.index + anchorMatch[0].length,
-          replacement: anchorMatch[2],
-        });
-      } else {
-        seenRequired.add(matchedRequired);
-      }
-    }
-  }
-
-  let updated = applyAnchorReplacements(content, duplicateReplacements);
-
-  const missingSources = findMissingSources(updated, requiredSources);
-  if (missingSources.length === 0) {
-    return updated;
-  }
-
-  const paragraphRegex = /<p\b[^>]*>[\s\S]*?<\/p>/gi;
-  const paragraphs: { start: number; end: number; html: string }[] = [];
-  let paragraphMatch: RegExpExecArray | null;
-
-  while ((paragraphMatch = paragraphRegex.exec(updated)) !== null) {
-    paragraphs.push({
-      start: paragraphMatch.index,
-      end: paragraphMatch.index + paragraphMatch[0].length,
-      html: paragraphMatch[0],
-    });
-  }
-
-  const paragraphInjections = new Map<number, string[]>();
-  const appendedParagraphs: string[] = [];
-
-  missingSources.forEach((source, index) => {
-    const label = formatRequiredSourceLabel(source);
-    const anchorHtml = `<a href="${escapeHtml(source)}" target="_blank" rel="noopener">${label}</a>`;
-    const sentence = ` Source: ${anchorHtml}.`;
-
-    if (paragraphs.length === 0) {
-      appendedParagraphs.push(`<p>Source: ${anchorHtml}.</p>`);
-      return;
-    }
-
-    const targetIndex = index % paragraphs.length;
-    const existing = paragraphInjections.get(targetIndex) || [];
-    existing.push(sentence.trimStart());
-    paragraphInjections.set(targetIndex, existing);
-  });
-
-  const paragraphReplacements: AnchorReplacement[] = [];
-  if (paragraphInjections.size > 0) {
-    for (const [index, injections] of paragraphInjections.entries()) {
-      const original = paragraphs[index];
-      const joined = injections.join(' ');
-      const replacementHtml = original.html.replace(/<\/p>\s*$/i, ` ${joined}</p>`);
-      paragraphReplacements.push({
-        start: original.start,
-        end: original.end,
-        replacement: replacementHtml,
-      });
-    }
-  }
-
-  if (paragraphReplacements.length > 0) {
-    updated = applyAnchorReplacements(updated, paragraphReplacements);
-  }
-
-  if (appendedParagraphs.length > 0) {
-    const addition = appendedParagraphs.join('');
-    if (/(<\/(article|section|main|div)>\s*)$/i.test(updated)) {
-      updated = updated.replace(/<\/(article|section|main|div)>\s*$/i, (match) => `${addition}${match}`);
-    } else {
-      updated += addition;
-    }
-  }
-
-  return updated;
 }
 
 // Generate article content and ensure a minimum number of links are present
@@ -1074,107 +851,26 @@ async function generateWithLinks(
 
   let content = cleanModelOutput(baseRes.choices[0]?.message?.content);
 
-  if (requiredSources.length > 0) {
-    let missingSources = findMissingSources(content, requiredSources);
-    if (missingSources.length > 0) {
-      const retryPrompt = `${prompt}\n\nYou failed to cite the following required sources:\n${missingSources
-        .map((url) => `- ${url}`)
-        .join('\n')}\nAdd a clickable HTML link for each listed URL using <a href="URL" target="_blank">text</a> exactly once, weave it into the paragraph that references that source, retain the other citations you already provided, and do not append a standalone list of links at the end.`;
-      const retryRes = await openai.chat.completions.create({
-        model,
-        messages: buildMessages(retryPrompt),
-        temperature: FACTUAL_TEMPERATURE,
-        max_tokens: tokens,
-      });
-      content = cleanModelOutput(
-        retryRes.choices[0]?.message?.content || content
-      );
-      missingSources = findMissingSources(content, requiredSources);
-      if (missingSources.length > 0) {
-        content = ensureRequiredSourceAnchors(content, requiredSources);
-      }
-    }
-  }
-
   let linkCount = content.match(/<a\s+href=/gi)?.length || 0;
 
-  if (requiredCount > 0 && linkCount < requiredCount) {
-    const requiredList = requiredSources.map((url) => `- ${url}`).join('\n');
-    const retryPrompt = `${prompt}\n\nYou forgot to include at least ${requiredCount} links. Each required source needs a clickable HTML citation exactly once:\n${requiredList}\nIntegrate clickable HTML links using <a href="URL" target="_blank">text</a> inside the relevant paragraphs, retain the other citations you already provided, and do not append a final list of links.`;
-    const retryRes = await openai.chat.completions.create({
-      model,
-      messages: buildMessages(retryPrompt),
-      temperature: FACTUAL_TEMPERATURE,
-      max_tokens: tokens,
-    });
-    content = cleanModelOutput(
-      retryRes.choices[0]?.message?.content || content
-    );
-    linkCount = content.match(/<a\s+href=/gi)?.length || 0;
-    if (requiredSources.length > 0) {
-      const missingSources = findMissingSources(content, requiredSources);
-      if (missingSources.length > 0) {
-        content = ensureRequiredSourceAnchors(content, requiredSources);
-        linkCount = content.match(/<a\s+href=/gi)?.length || 0;
-      }
-    }
-  }
-
-  if (requiredCount > 0 && linksClusteredNearEnd(content)) {
-    const requiredList = requiredSources.map((url) => `- ${url}`).join('\n');
-    const retryPrompt = `${prompt}\n\nYour previous draft clustered the citations at the end. Rewrite the article so each required source URL is woven into the paragraph or section that discusses it. Required sources:\n${requiredList}\nKeep every <a href> citation inline with the relevant content, retain the citations you already placed, and do not append a final list of links.`;
-    const retryRes = await openai.chat.completions.create({
-      model,
-      messages: buildMessages(retryPrompt),
-      temperature: FACTUAL_TEMPERATURE,
-      max_tokens: tokens,
-    });
-    content = cleanModelOutput(
-      retryRes.choices[0]?.message?.content || content
-    );
-    let missingSources = findMissingSources(content, requiredSources);
-    if (missingSources.length > 0) {
-      content = ensureRequiredSourceAnchors(content, requiredSources);
-      missingSources = findMissingSources(content, requiredSources);
-    }
-    linkCount = content.match(/<a\s+href=/gi)?.length || 0;
-    if (linkCount < requiredCount) {
-      content = ensureRequiredSourceAnchors(content, requiredSources);
-      linkCount = content.match(/<a\s+href=/gi)?.length || 0;
-    }
-    if (linksClusteredNearEnd(content)) {
-      content = ensureRequiredSourceAnchors(content, requiredSources);
-    }
-  }
-
-  if (minWords > 0) {
-    const textOnly = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    const wordCount = textOnly ? textOnly.split(/\s+/).length : 0;
-    if (wordCount < minWords && tokens < limit) {
-      tokens = Math.min(tokens * 2, limit);
-      const expandPrompt = `${prompt}\n\nYour previous response was only ${wordCount} words. Expand it to at least ${minWords} words while keeping the same structure and links. Ensure every citation remains inline with its relevant paragraph and do not append a final list of links.`;
-      const retryRes = await openai.chat.completions.create({
-        model,
-        messages: buildMessages(expandPrompt),
-        temperature: FACTUAL_TEMPERATURE,
-        max_tokens: tokens,
-      });
-      content = cleanModelOutput(
-        retryRes.choices[0]?.message?.content || content
-      );
-      if (requiredSources.length > 0) {
-        const missingSources = findMissingSources(content, requiredSources);
-        if (missingSources.length > 0) {
-          content = ensureRequiredSourceAnchors(content, requiredSources);
-        }
-      }
-    }
-  }
-
   if (requiredSources.length > 0) {
-    const missingSources = findMissingSources(content, requiredSources);
-    if (missingSources.length > 0) {
-      content = ensureRequiredSourceAnchors(content, requiredSources);
+    const missingSources = new Set(findMissingSources(content, requiredSources));
+    const MAX_LINKS = 7;
+
+    for (const source of requiredSources) {
+      if (!missingSources.has(source)) {
+        continue;
+      }
+      if (linkCount >= MAX_LINKS) {
+        break;
+      }
+      const safeUrl = escapeHtml(source);
+      content += `<p>Source: <a href="${safeUrl}" target="_blank" rel="noopener">${safeUrl}</a></p>`;
+      linkCount += 1;
+      missingSources.delete(source);
+      if (linkCount >= MAX_LINKS) {
+        break;
+      }
     }
   }
 
