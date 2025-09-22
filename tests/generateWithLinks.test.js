@@ -40,7 +40,7 @@ const jsCode = ts.transpileModule(snippet, {
 const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString('base64');
 const { generateWithLinks, MIN_LINKS, responses, calls, findMissingSources } = await import(moduleUrl);
 
-test('generateWithLinks appends missing required sources once', async () => {
+test('generateWithLinks appends missing required sources up to the cap', async () => {
   calls.length = 0;
   responses.length = 0;
   responses.push({
@@ -57,15 +57,20 @@ test('generateWithLinks appends missing required sources once', async () => {
   const content = await generateWithLinks(
     'prompt',
     'model',
-    ['a', 'b', 'c', 'd'],
+    ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
     systemPrompt,
     MIN_LINKS,
     100
   );
   assert(content.includes('href="a"'));
-  assert(content.includes('<p>Source: <a href="b" target="_blank" rel="noopener">b</a></p>'));
-  assert(content.includes('<p>Source: <a href="c" target="_blank" rel="noopener">c</a></p>'));
-  assert(!content.includes('href="d" target="_blank" rel="noopener"'));
+  for (const url of ['b', 'c', 'd', 'e', 'f', 'g']) {
+    assert(
+      content.includes(
+        `<p>Source: <a href="${url}" target="_blank" rel="noopener">${url}</a></p>`
+      )
+    );
+  }
+  assert(!content.includes('<p>Source: <a href="h" target="_blank" rel="noopener">h</a></p>'));
   assert.strictEqual(responses.length, 0);
   assert.strictEqual(calls.length, 1);
   const { messages } = calls[0];
@@ -78,12 +83,12 @@ test('generateWithLinks leaves content unchanged when all required cited', async
   calls.length = 0;
   responses.length = 0;
   const baseContent =
-    '<p>Intro.</p><p><a href="a">One</a><a href="b">Two</a><a href="c">Three</a></p>';
+    '<p>Intro.</p><p><a href="a">One</a><a href="b">Two</a><a href="c">Three</a><a href="d">Four</a><a href="e">Five</a><a href="f">Six</a><a href="g">Seven</a></p>';
   responses.push({ choices: [{ message: { content: baseContent } }] });
   const content = await generateWithLinks(
     'prompt',
     'model',
-    ['a', 'b', 'c', 'd'],
+    ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
     undefined,
     MIN_LINKS,
     100
