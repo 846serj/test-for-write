@@ -40,7 +40,7 @@ const jsCode = ts.transpileModule(snippet, {
 const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString('base64');
 const { generateWithLinks, MIN_LINKS, responses, calls, findMissingSources } = await import(moduleUrl);
 
-test('generateWithLinks appends missing required sources up to the cap', async () => {
+test('generateWithLinks distributes missing sources into existing containers', async () => {
   calls.length = 0;
   responses.length = 0;
   responses.push({
@@ -63,14 +63,19 @@ test('generateWithLinks appends missing required sources up to the cap', async (
     100
   );
   assert(content.includes('href="a"'));
-  for (const url of ['b', 'c', 'd', 'e', 'f', 'g']) {
-    assert(
-      content.includes(
-        `<p>Source: <a href="${url}" target="_blank" rel="noopener">${url}</a></p>`
-      )
-    );
-  }
-  assert(!content.includes('<p>Source: <a href="h" target="_blank" rel="noopener">h</a></p>'));
+  assert(
+    content.includes(
+      '<p>Intro paragraph. (<a href="b" target="_blank" rel="noopener">Source</a>) (<a href="d" target="_blank" rel="noopener">Source</a>) (<a href="f" target="_blank" rel="noopener">Source</a>)</p>'
+    )
+  );
+  assert(
+    content.includes(
+      '<p>Details with <a href="a">first</a> citation. (<a href="c" target="_blank" rel="noopener">Source</a>) (<a href="e" target="_blank" rel="noopener">Source</a>) (<a href="g" target="_blank" rel="noopener">Source</a>)</p>'
+    )
+  );
+  assert(!content.includes('<p>Source: '));
+  const linkCount = (content.match(/<a\s+href=/g) ?? []).length;
+  assert.strictEqual(linkCount, 7);
   assert.strictEqual(responses.length, 0);
   assert.strictEqual(calls.length, 1);
   const { messages } = calls[0];
@@ -96,6 +101,25 @@ test('generateWithLinks leaves content unchanged when all required cited', async
   assert.strictEqual(content, baseContent);
   assert.strictEqual(responses.length, 0);
   assert.strictEqual(calls.length, 1);
+});
+
+test('generateWithLinks appends sources when no containers exist', async () => {
+  calls.length = 0;
+  responses.length = 0;
+  responses.push({ choices: [{ message: { content: '<div>Intro only.</div>' } }] });
+  const content = await generateWithLinks(
+    'prompt',
+    'model',
+    ['https://example.com/story'],
+    undefined,
+    MIN_LINKS,
+    100
+  );
+  assert(
+    content.includes(
+      '<p>Source: <a href="https://example.com/story" target="_blank" rel="noopener">https://example.com/story</a></p>'
+    )
+  );
 });
 
 test('generateWithLinks retries when response is truncated', async () => {
