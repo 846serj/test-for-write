@@ -857,19 +857,91 @@ async function generateWithLinks(
     const missingSources = new Set(findMissingSources(content, requiredSources));
     const MAX_LINKS = 7;
 
-    for (const source of requiredSources) {
-      if (!missingSources.has(source)) {
-        continue;
+    if (missingSources.size > 0) {
+      const containerRegex = /<(p|li)(\b[^>]*)>([\s\S]*?)<\/\1>/gi;
+      const containers: {
+        start: number;
+        end: number;
+        tag: string;
+        attrs: string;
+        inner: string;
+      }[] = [];
+
+      let match: RegExpExecArray | null;
+      while ((match = containerRegex.exec(content)) !== null) {
+        containers.push({
+          start: match.index,
+          end: match.index + match[0].length,
+          tag: match[1],
+          attrs: match[2] ?? '',
+          inner: match[3] ?? '',
+        });
       }
-      if (linkCount >= MAX_LINKS) {
-        break;
-      }
-      const safeUrl = escapeHtml(source);
-      content += `<p>Source: <a href="${safeUrl}" target="_blank" rel="noopener">${safeUrl}</a></p>`;
-      linkCount += 1;
-      missingSources.delete(source);
-      if (linkCount >= MAX_LINKS) {
-        break;
+
+      const appendLinkToInner = (inner: string, safeUrl: string): string => {
+        const trailingWhitespaceMatch = inner.match(/(\s*)$/);
+        const trailingWhitespace = trailingWhitespaceMatch ? trailingWhitespaceMatch[1] : '';
+        const innerWithoutTrailing = trailingWhitespace
+          ? inner.slice(0, inner.length - trailingWhitespace.length)
+          : inner;
+        const needsSpace =
+          innerWithoutTrailing.length > 0 && !/\s$/.test(innerWithoutTrailing);
+        const anchorHtml = `<a href="${safeUrl}" target="_blank" rel="noopener">Source</a>`;
+        const addition = `${needsSpace ? ' ' : ''}(${anchorHtml})`;
+        return `${innerWithoutTrailing}${addition}${trailingWhitespace}`;
+      };
+
+      if (containers.length > 0) {
+        const missingQueue = requiredSources.filter((source) => missingSources.has(source));
+        let containerIndex = 0;
+        let modified = false;
+
+        for (const source of missingQueue) {
+          if (!missingSources.has(source)) {
+            continue;
+          }
+          if (linkCount >= MAX_LINKS) {
+            break;
+          }
+          const safeUrl = escapeHtml(source);
+          const container = containers[containerIndex % containers.length];
+          containerIndex += 1;
+          container.inner = appendLinkToInner(container.inner, safeUrl);
+          missingSources.delete(source);
+          linkCount += 1;
+          modified = true;
+          if (linkCount >= MAX_LINKS) {
+            break;
+          }
+        }
+
+        if (modified) {
+          let rebuilt = '';
+          let lastIndex = 0;
+          for (const container of containers) {
+            rebuilt += content.slice(lastIndex, container.start);
+            rebuilt += `<${container.tag}${container.attrs}>${container.inner}</${container.tag}>`;
+            lastIndex = container.end;
+          }
+          rebuilt += content.slice(lastIndex);
+          content = rebuilt;
+        }
+      } else {
+        for (const source of requiredSources) {
+          if (!missingSources.has(source)) {
+            continue;
+          }
+          if (linkCount >= MAX_LINKS) {
+            break;
+          }
+          const safeUrl = escapeHtml(source);
+          content += `<p>Source: <a href="${safeUrl}" target="_blank" rel="noopener">${safeUrl}</a></p>`;
+          linkCount += 1;
+          missingSources.delete(source);
+          if (linkCount >= MAX_LINKS) {
+            break;
+          }
+        }
       }
     }
   }
