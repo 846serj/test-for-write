@@ -51,12 +51,13 @@ test('generateWithLinks names missing sources when retrying', async () => {
   const content = await generateWithLinks(
     'prompt',
     'model',
-    ['a', 'b', 'c'],
+    ['a', 'b', 'c', 'd'],
     systemPrompt,
     MIN_LINKS,
     100
   );
   assert(content.includes('href="c"'));
+  assert(!content.includes('href="d"'));
   assert.strictEqual(responses.length, 0);
   assert.strictEqual(calls.length, 2);
   for (const call of calls) {
@@ -69,8 +70,38 @@ test('generateWithLinks names missing sources when retrying', async () => {
   }
   const retryMessage = calls[1].messages[calls[1].messages.length - 1].content;
   assert(/You failed to cite/.test(retryMessage));
-  assert(retryMessage.includes('b'));
-  assert(retryMessage.includes('c'));
+  const missingLines = retryMessage
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('- '));
+  assert.deepStrictEqual(missingLines, ['- b', '- c']);
+});
+
+test('generateWithLinks succeeds when optional sources are uncited', async () => {
+  calls.length = 0;
+  responses.length = 0;
+  responses.push({
+    choices: [
+      {
+        message: {
+          content: '<a href="a">1</a><a href="b">2</a><a href="c">3</a>',
+        },
+      },
+    ],
+  });
+  const content = await generateWithLinks(
+    'prompt',
+    'model',
+    ['a', 'b', 'c', 'd', 'e'],
+    undefined,
+    MIN_LINKS,
+    100
+  );
+  assert(content.includes('href="a"'));
+  assert(!content.includes('href="d"'));
+  assert(!content.includes('href="e"'));
+  assert.strictEqual(responses.length, 0);
+  assert.strictEqual(calls.length, 1);
 });
 
 test('generateWithLinks retries when response is truncated', async () => {
@@ -116,8 +147,19 @@ test('generateWithLinks throws when sources remain uncited', async () => {
   );
   await assert.rejects(
     () =>
-      generateWithLinks('prompt', 'model', ['a', 'b'], undefined, MIN_LINKS, 100),
-    /failed to cite required sources/i
+      generateWithLinks('prompt', 'model', ['a', 'b', 'c', 'd'], undefined, MIN_LINKS, 100),
+    (err) => {
+      assert(/failed to cite required sources/i.test(err.message));
+      const parts = err.message.split(': ');
+      const missingPart = parts.length > 1 ? parts[parts.length - 1] : '';
+      assert(missingPart, 'Missing sources list not found in error message');
+      const missingList = missingPart
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+      assert.deepStrictEqual(missingList, ['b', 'c']);
+      return true;
+    }
   );
   assert.strictEqual(calls.length, 2);
 });
