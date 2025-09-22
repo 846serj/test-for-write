@@ -16,6 +16,9 @@ const buildVariantsMatch = tsCode.match(
 );
 const cleanOutputMatch = tsCode.match(/function cleanModelOutput[\s\S]*?\n\}/);
 const findMissingMatch = tsCode.match(/function findMissingSources[\s\S]*?\n\}/);
+const anchorHelperMatch = tsCode.match(
+  /type AnchorReplacement[\s\S]*?function ensureRequiredSourceAnchors[\s\S]*?return updated;\n\}/
+);
 const funcMatch = tsCode.match(/async function generateWithLinks[\s\S]*?\n\}/);
 
 const snippet = `
@@ -27,6 +30,7 @@ ${linksClusteredMatch[0]}
 ${buildVariantsMatch[0]}
 ${cleanOutputMatch[0]}
 ${findMissingMatch[0]}
+${anchorHelperMatch[0]}
 let responses = [];
 let calls = [];
 const openai = { chat: { completions: { create: async (opts) => { calls.push(opts); return responses.shift(); } } } };
@@ -138,29 +142,34 @@ test('generateWithLinks retries when output too short', async () => {
   }
 });
 
-test('generateWithLinks throws when sources remain uncited', async () => {
+test('generateWithLinks injects missing required sources instead of throwing', async () => {
   calls.length = 0;
   responses.length = 0;
   responses.push(
     { choices: [{ message: { content: '<a href="a">1</a>' } }] },
-    { choices: [{ message: { content: '<a href="a">1</a>' } }] }
+    { choices: [{ message: { content: '<p>Paragraph one.</p><p>Paragraph two.</p>' } }] }
   );
-  await assert.rejects(
-    () =>
-      generateWithLinks('prompt', 'model', ['a', 'b', 'c', 'd'], undefined, MIN_LINKS, 100),
-    (err) => {
-      assert(/failed to cite required sources/i.test(err.message));
-      const parts = err.message.split(': ');
-      const missingPart = parts.length > 1 ? parts[parts.length - 1] : '';
-      assert(missingPart, 'Missing sources list not found in error message');
-      const missingList = missingPart
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
-      assert.deepStrictEqual(missingList, ['b', 'c']);
-      return true;
-    }
+  const content = await generateWithLinks(
+    'prompt',
+    'model',
+    ['a', 'b', 'c', 'd'],
+    undefined,
+    MIN_LINKS,
+    100
   );
+  assert(content.includes('href="a"'));
+  assert(content.includes('href="b" target="_blank" rel="noopener"'));
+  assert(content.includes('href="c" target="_blank" rel="noopener"'));
+  assert(!content.includes('href="d" target="_blank" rel="noopener"'));
+  const sourceMatches = content.match(/href="[^"]+"/g) || [];
+  const occurrences = sourceMatches.reduce((acc, match) => {
+    const href = match.slice('href="'.length, -1);
+    acc[href] = (acc[href] || 0) + 1;
+    return acc;
+  }, {});
+  assert.strictEqual(occurrences.a, 1);
+  assert.strictEqual(occurrences.b, 1);
+  assert.strictEqual(occurrences.c, 1);
   assert.strictEqual(calls.length, 2);
 });
 
