@@ -1312,12 +1312,14 @@ Rules:
         return String(entry);
       })
       .map((entry: string) => entry.replace(/\s+/g, ' ').trim())
-      .filter((entry: string) => Boolean(entry))
-      .slice(0, 5)
       .filter((entry: string) => {
+        if (!entry) {
+          return false;
+        }
         const words = entry.split(/\s+/).filter(Boolean);
         return words.length > 0 && words.length <= 30;
-      });
+      })
+      .slice(0, 5);
 
     if (normalizedBullets.length < 3) {
       continue;
