@@ -150,6 +150,38 @@ test('fetchSources skips duplicate headlines even from different publishers', as
   ]);
 });
 
+test('fetchSources dedupes titles that only differ by trailing publisher separators', async () => {
+  serpCalls.length = 0;
+  setSerpResults([
+    {
+      link: 'https://site-a.com/story',
+      source: 'Publisher One',
+      title: 'AI Breakthrough - The Verge',
+    },
+    {
+      link: 'https://site-b.com/story',
+      source: 'Publisher Two',
+      title: 'AI Breakthrough | Wired',
+    },
+    {
+      link: 'https://site-c.com/story',
+      source: 'Publisher Three',
+      title: 'AI Breakthrough — CNN',
+    },
+    {
+      link: 'https://site-d.com/unique',
+      source: 'Publisher Four',
+      title: 'Different Story - NPR',
+    },
+  ]);
+
+  const sources = await fetchSources('separator dedupe');
+  assert.deepStrictEqual(sources, [
+    'https://site-a.com/story',
+    'https://site-d.com/unique',
+  ]);
+});
+
 test('fetchNewsArticles serp fallback dedupes repeated SERP headlines', async () => {
   const originalNewsKey = process.env.NEWS_API_KEY;
   const originalSerpKey = process.env.SERPAPI_KEY;

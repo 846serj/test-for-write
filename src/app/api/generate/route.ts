@@ -31,7 +31,166 @@ const sectionRanges: Record<string, [number, number]> = {
 };
 
 function normalizeTitleValue(title: string | undefined | null): string {
-  return (title ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const holder = normalizeTitleValue as unknown as {
+    _publisherData?: {
+      knownWords: Set<string>;
+      knownExact: Set<string>;
+    };
+  };
+
+  if (!holder._publisherData) {
+    holder._publisherData = {
+      knownWords: new Set([
+        'news',
+        'times',
+        'post',
+        'journal',
+        'tribune',
+        'guardian',
+        'gazette',
+        'review',
+        'report',
+        'chronicle',
+        'daily',
+        'herald',
+        'press',
+        'today',
+        'insider',
+        'bloomberg',
+        'reuters',
+        'axios',
+        'politico',
+        'verge',
+        'engadget',
+        'techcrunch',
+        'wired',
+        'cnbc',
+        'cnn',
+        'bbc',
+        'cbs',
+        'abc',
+        'fox',
+        'fortune',
+        'forbes',
+        'npr',
+        'yahoo',
+        'ap',
+        'barron',
+        "barron's",
+        'wsj',
+        'telegraph',
+        'independent',
+        'register',
+        'observer',
+        'courier',
+        'star',
+        'globe',
+        'sun',
+        'mirror',
+        'economist',
+        'financial',
+      ]),
+      knownExact: new Set([
+        'new york times',
+        'washington post',
+        'wall street journal',
+        'associated press',
+        'financial times',
+        'usa today',
+        'los angeles times',
+        'la times',
+        'business insider',
+        'the verge',
+        'the guardian',
+        'the atlantic',
+        'the economist',
+        'sky news',
+        'cnet',
+        'buzzfeed news',
+      ]),
+    };
+  }
+
+  const { knownWords, knownExact } = holder._publisherData;
+
+  function isLikelyPublisherSegment(segment: string): boolean {
+    const trimmed = segment.trim();
+    if (!trimmed) return false;
+
+    const stripped = trimmed.replace(/^[\p{P}\s]+|[\p{P}\s]+$/gu, '');
+    if (!stripped) return false;
+
+    const lowered = stripped.toLowerCase();
+    if (knownExact.has(lowered)) {
+      return true;
+    }
+
+    if (lowered.includes('.com') || lowered.includes('.net') || lowered.includes('.org')) {
+      return true;
+    }
+
+    const loweredWords = lowered.split(/\s+/);
+    if (loweredWords.length === 0 || loweredWords.length > 6) {
+      return false;
+    }
+
+    if (loweredWords.some((word) => knownWords.has(word))) {
+      return true;
+    }
+
+    const originalWords = trimmed.split(/\s+/);
+    let alphaWordCount = 0;
+    let titleCasedCount = 0;
+
+    for (const word of originalWords) {
+      if (!/[A-Za-z]/.test(word)) {
+        continue;
+      }
+      alphaWordCount += 1;
+
+      if (word === word.toUpperCase()) {
+        titleCasedCount += 1;
+        continue;
+      }
+
+      const first = word.charAt(0);
+      const rest = word.slice(1);
+      if (first === first.toUpperCase() && rest === rest.toLowerCase()) {
+        titleCasedCount += 1;
+      }
+    }
+
+    if (alphaWordCount > 0 && titleCasedCount >= alphaWordCount - 1) {
+      return true;
+    }
+
+    return false;
+  }
+
+  let normalized = (title ?? '').trim();
+  const trailingSeparatorRegex = /\s*[\-–—|]\s*([^\-–—|]+)$/;
+
+  while (true) {
+    const match = normalized.match(trailingSeparatorRegex);
+    if (!match) {
+      break;
+    }
+
+    const segment = match[1]?.trim() ?? '';
+    if (!segment) {
+      break;
+    }
+
+    if (!isLikelyPublisherSegment(segment)) {
+      break;
+    }
+
+    normalized = normalized.slice(0, normalized.length - match[0].length).trimEnd();
+  }
+
+  normalized = normalized.replace(/[\s]*[\-–—|:;,]+$/g, '').trim();
+
+  return normalized.toLowerCase().replace(/\s+/g, ' ');
 }
 
 function getWordBounds(
