@@ -1264,24 +1264,24 @@ export default function GeneratePage() {
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">Headlines</h2>
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                  <table className="min-w-full table-fixed divide-y divide-gray-200 dark:divide-gray-700">
                     <thead className="bg-gray-100 dark:bg-gray-800">
                       <tr>
                         <th
                           scope="col"
-                          className="px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
+                          className="w-1/3 min-w-[12rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
                         >
                           Headline
                         </th>
                         <th
                           scope="col"
-                          className="px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
+                          className="w-1/4 min-w-[10rem] max-w-[14rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
                         >
                           Original Link
                         </th>
                         <th
                           scope="col"
-                          className="px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
+                          className="w-5/12 min-w-[16rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
                         >
                           Summary
                         </th>
@@ -1305,7 +1305,7 @@ export default function GeneratePage() {
                             key={headlineUrl || index}
                             className="odd:bg-white even:bg-gray-50 dark:odd:bg-gray-900 dark:even:bg-gray-800"
                           >
-                            <td className="align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
+                            <td className="w-1/3 min-w-[12rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
                               <div className="font-semibold">
                                 {headline.title || 'Untitled headline'}
                               </div>
@@ -1377,13 +1377,13 @@ export default function GeneratePage() {
                                 </div>
                               ) : null}
                             </td>
-                            <td className="align-top px-4 py-3 text-sm">
+                            <td className="w-1/4 min-w-[10rem] max-w-[14rem] align-top break-words px-4 py-3 text-sm">
                               {headlineUrl ? (
                                 <a
                                   href={headlineUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-blue-600 hover:underline dark:text-blue-400"
+                                  className="break-words text-blue-600 hover:underline dark:text-blue-400"
                                 >
                                   {headlineUrl}
                                 </a>
@@ -1393,7 +1393,7 @@ export default function GeneratePage() {
                                 </span>
                               )}
                             </td>
-                            <td className="align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-line">
+                            <td className="w-5/12 min-w-[16rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-line">
                               {resolvedSummary || (
                                 <span className="text-gray-500 dark:text-gray-400">
                                   No summary available
