@@ -820,7 +820,7 @@ async function generateWithLinks(
   minWords = 0
 ): Promise<string> {
   const limit = MODEL_CONTEXT_LIMITS[model] || 8000;
-  const requiredCount = Math.min(minLinks, sources.length);
+  const requiredCount = Math.min(Math.max(MIN_LINKS, sources.length), 7);
   const requiredSources = sources.slice(0, requiredCount);
   let tokens = Math.min(maxTokens, limit);
   const buildMessages = (content: string) =>
@@ -948,11 +948,14 @@ export async function POST(request: Request) {
         new Set(articles.map((item) => item.url).filter(Boolean))
       );
       const linkSources = includeLinks ? newsSources : [];
-      const minLinks = includeLinks
-        ? Math.min(MIN_LINKS, linkSources.length)
-        : 0;
-      const requiredLinks = linkSources.slice(0, minLinks);
-      const optionalLinks = linkSources.slice(minLinks);
+      const requiredLinks = includeLinks
+        ? linkSources.slice(
+            0,
+            Math.min(Math.max(MIN_LINKS, linkSources.length), 7)
+          )
+        : [];
+      const minLinks = includeLinks ? requiredLinks.length : 0;
+      const optionalLinks = linkSources.slice(requiredLinks.length);
       const optionalInstruction = optionalLinks.length
         ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
             .map((u) => `    - ${u}`)
@@ -1068,9 +1071,12 @@ List only the headings (no descriptions).
       const customInstructionBlock = customInstruction
         ? `- ${customInstruction}\n`
         : '';
-      const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
-      const requiredLinks = linkSources.slice(0, minLinks);
-      const optionalLinks = linkSources.slice(minLinks);
+      const requiredLinks = linkSources.slice(
+        0,
+        Math.min(Math.max(MIN_LINKS, linkSources.length), 7)
+      );
+      const minLinks = requiredLinks.length; // how many links to require
+      const optionalLinks = linkSources.slice(requiredLinks.length);
       const optionalInstruction = optionalLinks.length
         ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
             .map((u) => `    - ${u}`)
@@ -1146,9 +1152,12 @@ Write the full article in valid HTML below:
       const customInstructionBlock = customInstruction
         ? `- ${customInstruction}\n`
         : '';
-      const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
-      const requiredLinks = linkSources.slice(0, minLinks);
-      const optionalLinks = linkSources.slice(minLinks);
+      const requiredLinks = linkSources.slice(
+        0,
+        Math.min(Math.max(MIN_LINKS, linkSources.length), 7)
+      );
+      const minLinks = requiredLinks.length; // how many links to require
+      const optionalLinks = linkSources.slice(requiredLinks.length);
       const optionalInstruction = optionalLinks.length
         ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
             .map((u) => `    - ${u}`)
@@ -1208,9 +1217,12 @@ Write the full article in valid HTML below:
       const customInstructionBlock = customInstruction
         ? `- ${customInstruction}\n`
         : '';
-      const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
-      const requiredLinks = linkSources.slice(0, minLinks);
-      const optionalLinks = linkSources.slice(minLinks);
+      const requiredLinks = linkSources.slice(
+        0,
+        Math.min(Math.max(MIN_LINKS, linkSources.length), 7)
+      );
+      const minLinks = requiredLinks.length; // how many links to require
+      const optionalLinks = linkSources.slice(requiredLinks.length);
       const optionalInstruction = optionalLinks.length
         ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
             .map((u) => `    - ${u}`)
@@ -1345,9 +1357,12 @@ ${references}
         '- Aim for around 9 sections (~1,900 words total, ~220 words per section), but feel free to adjust based on the topic.\n';
     }
 
-    const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
-    const requiredLinks = linkSources.slice(0, minLinks);
-    const optionalLinks = linkSources.slice(minLinks);
+    const requiredLinks = linkSources.slice(
+      0,
+      Math.min(Math.max(MIN_LINKS, linkSources.length), 7)
+    );
+    const minLinks = requiredLinks.length; // how many links to require
+    const optionalLinks = linkSources.slice(requiredLinks.length);
     const optionalInstruction = optionalLinks.length
       ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
           .map((u) => `    - ${u}`)
