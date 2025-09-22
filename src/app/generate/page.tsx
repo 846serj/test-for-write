@@ -1261,105 +1261,153 @@ export default function GeneratePage() {
             {headlineResults.length > 0 && (
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">Headlines</h2>
-                <ul className="space-y-4">
-                  {headlineResults.map((headline, index) => {
-                    const headlineUrl = headline.url;
-                    return (
-                      <li
-                        key={headlineUrl || index}
-                        className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900"
-                      >
-                        <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-                          {headline.title || 'Untitled headline'}
-                        </h3>
-                        {(headline.source || headline.publishedAt) && (
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                            {headline.source && <span>Source: {headline.source}</span>}
-                            {headline.source && headline.publishedAt && <span className="mx-2">•</span>}
-                            {headline.publishedAt && <span>Published: {headline.publishedAt}</span>}
-                          </p>
-                        )}
-                        {headline.summary ? (
-                          <div className="mt-3 space-y-2">
-                            {headline.summary.overview && (
-                              <p className="text-sm text-gray-700 dark:text-gray-300">
-                                {headline.summary.overview}
-                              </p>
-                            )}
-                            {headline.summary.bullets.length > 0 && (
-                              <ul className="list-disc space-y-1 pl-5 text-sm text-gray-700 dark:text-gray-300">
-                                {headline.summary.bullets.map((bullet, bulletIndex) => (
-                                  <li key={bulletIndex}>{bullet}</li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                        ) : (
-                          headline.description && (
-                            <p className="text-sm text-gray-700 dark:text-gray-300 mt-2">
-                              {headline.description}
-                            </p>
-                          )
-                        )}
-                        {headline.relatedArticles?.length ? (
-                          <div className="mt-3 space-y-1">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                              Supporting sources
-                            </p>
-                            <ul className="space-y-1">
-                              {headline.relatedArticles.slice(0, 3).map((related, relatedIndex) => {
-                                const label = related.title || related.source || 'Related coverage';
-                                const key = related.url || `${relatedIndex}-${label}`;
-                                return (
-                                  <li key={key} className="text-xs text-gray-600 dark:text-gray-400">
-                                    {related.url ? (
-                                      <a
-                                        href={related.url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                                      >
-                                        {label}
-                                      </a>
-                                    ) : (
-                                      <span className="font-medium">{label}</span>
-                                    )}
-                                    {related.source && (
-                                      <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">
-                                        ({related.source})
-                                      </span>
-                                    )}
-                                  </li>
-                                );
-                              })}
-                              {headline.relatedArticles.length > 3 && (
-                                <li className="text-xs text-gray-500 dark:text-gray-400">
-                                  +{headline.relatedArticles.length - 3} more source
-                                  {headline.relatedArticles.length - 3 === 1 ? '' : 's'}
-                                </li>
-                              )}
-                            </ul>
-                          </div>
-                        ) : null}
-                        {headline.matchedQuery && (
-                          <p className="text-xs text-blue-700 dark:text-blue-300 mt-2">
-                            Matched query: <span className="font-medium">{headline.matchedQuery}</span>
-                          </p>
-                        )}
-                        {headlineUrl && (
-                          <a
-                            href={headlineUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-blue-600 dark:text-blue-400 mt-3 inline-block"
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead className="bg-gray-100 dark:bg-gray-800">
+                      <tr>
+                        <th
+                          scope="col"
+                          className="px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
+                        >
+                          Headline
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
+                        >
+                          Original Link
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
+                        >
+                          Summary
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                      {headlineResults.map((headline, index) => {
+                        const headlineUrl = headline.url;
+                        const bulletText = headline.summary?.bullets
+                          ?.map((bullet) => bullet?.trim())
+                          .filter(Boolean)
+                          .map((bullet) => `• ${bullet}`)
+                          .join('\n');
+                        const summaryText = [
+                          headline.summary?.overview?.trim(),
+                          bulletText,
+                        ]
+                          .filter((value): value is string => Boolean(value && value.length > 0))
+                          .join('\n');
+                        const resolvedSummary =
+                          summaryText || headline.description?.trim() || '';
+
+                        return (
+                          <tr
+                            key={headlineUrl || index}
+                            className="odd:bg-white even:bg-gray-50 dark:odd:bg-gray-900 dark:even:bg-gray-800"
                           >
-                            Read more
-                          </a>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
+                            <td className="align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
+                              <div className="font-semibold">
+                                {headline.title || 'Untitled headline'}
+                              </div>
+                              {(headline.source || headline.publishedAt) && (
+                                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                  {headline.source && <span>Source: {headline.source}</span>}
+                                  {headline.source && headline.publishedAt && (
+                                    <span className="mx-2">•</span>
+                                  )}
+                                  {headline.publishedAt && (
+                                    <span>Published: {headline.publishedAt}</span>
+                                  )}
+                                </div>
+                              )}
+                              {headline.matchedQuery && (
+                                <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
+                                  Matched query:{' '}
+                                  <span className="font-medium">
+                                    {headline.matchedQuery}
+                                  </span>
+                                </div>
+                              )}
+                              {headline.relatedArticles?.length ? (
+                                <div className="mt-3 space-y-1">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                    Supporting sources
+                                  </p>
+                                  <ul className="space-y-1">
+                                    {headline.relatedArticles
+                                      .slice(0, 3)
+                                      .map((related, relatedIndex) => {
+                                        const label =
+                                          related.title ||
+                                          related.source ||
+                                          'Related coverage';
+                                        const key = related.url || `${relatedIndex}-${label}`;
+                                        return (
+                                          <li
+                                            key={key}
+                                            className="text-xs text-gray-600 dark:text-gray-400"
+                                          >
+                                            {related.url ? (
+                                              <a
+                                                href={related.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                                              >
+                                                {label}
+                                              </a>
+                                            ) : (
+                                              <span className="font-medium">{label}</span>
+                                            )}
+                                            {related.source && (
+                                              <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">
+                                                ({related.source})
+                                              </span>
+                                            )}
+                                          </li>
+                                        );
+                                      })}
+                                    {headline.relatedArticles.length > 3 && (
+                                      <li className="text-xs text-gray-500 dark:text-gray-400">
+                                        +{headline.relatedArticles.length - 3} more source
+                                        {headline.relatedArticles.length - 3 === 1 ? '' : 's'}
+                                      </li>
+                                    )}
+                                  </ul>
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="align-top px-4 py-3 text-sm">
+                              {headlineUrl ? (
+                                <a
+                                  href={headlineUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 hover:underline dark:text-blue-400"
+                                >
+                                  {headlineUrl}
+                                </a>
+                              ) : (
+                                <span className="text-gray-500 dark:text-gray-400">
+                                  No link available
+                                </span>
+                              )}
+                            </td>
+                            <td className="align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-line">
+                              {resolvedSummary || (
+                                <span className="text-gray-500 dark:text-gray-400">
+                                  No summary available
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
