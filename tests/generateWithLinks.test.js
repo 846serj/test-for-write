@@ -185,3 +185,15 @@ test('findMissingSources accepts host and protocol variants', () => {
   ]);
   assert.deepStrictEqual(missing, ['https://third.com/miss']);
 });
+
+test('findMissingSources treats URLs as equivalent without query strings', () => {
+  const html = '<a href="https://example.com/story?utm_source=feed">One</a>';
+  const missing = findMissingSources(html, ['https://example.com/story']);
+  assert.deepStrictEqual(missing, []);
+});
+
+test('findMissingSources matches sources that include query strings', () => {
+  const html = '<a href="https://example.com/story">One</a>';
+  const missing = findMissingSources(html, ['https://example.com/story?utm_source=feed']);
+  assert.deepStrictEqual(missing, []);
+});
