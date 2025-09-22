@@ -1743,13 +1743,24 @@ function createHeadlinesHandler(
     }
   }
 
-  const descriptionQuery = !query && description
-    ? sanitizeDescriptionQuery(description)
-    : '';
+  const searchQueryCandidates: string[] = [];
+
+  if (query) {
+    searchQueryCandidates.push(query);
+  }
+
+  if (keywordQueries.length > 0) {
+    searchQueryCandidates.push(...keywordQueries);
+  } else if (!query && description) {
+    const sanitized = sanitizeDescriptionQuery(description);
+    if (sanitized) {
+      searchQueryCandidates.push(sanitized);
+    }
+  }
 
   const searchQueries = Array.from(
     new Set(
-      [query, descriptionQuery, ...keywordQueries]
+      searchQueryCandidates
         .map((value) => value?.trim())
         .filter((value): value is string => Boolean(value))
     )
