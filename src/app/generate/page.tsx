@@ -108,10 +108,7 @@ const TOP_HEADLINE_COUNTRY_OPTIONS = [
   { value: 'za', label: 'South Africa' },
 ];
 
-type HeadlineSummary = {
-  overview: string;
-  bullets: string[];
-};
+type HeadlineSummary = string[];
 
 type RelatedArticle = {
   title?: string;
@@ -454,30 +451,35 @@ export default function GeneratePage() {
             : item.source?.name ?? item.source?.title ?? '';
 
         const summary: HeadlineSummary | undefined = (() => {
-          if (!item || typeof item.summary !== 'object' || item.summary === null) {
+          if (!item) {
             return undefined;
           }
 
-          const overview =
-            typeof item.summary.overview === 'string'
-              ? item.summary.overview.trim()
-              : '';
-          const bullets = Array.isArray(item.summary.bullets)
+          const bulletSource = Array.isArray(item.summary)
+            ? item.summary
+            : item.summary && typeof item.summary === 'object' && Array.isArray(item.summary.bullets)
             ? item.summary.bullets
-                .map((bullet: unknown) =>
-                  typeof bullet === 'string' ? bullet.trim() : ''
-                )
-                .filter((entry: string) => Boolean(entry))
             : [];
 
-          if (!overview && bullets.length === 0) {
+          if (!Array.isArray(bulletSource)) {
             return undefined;
           }
 
-          return {
-            overview,
-            bullets,
-          };
+          const normalized = bulletSource
+            .map((bullet: unknown) => {
+              if (typeof bullet === 'string') {
+                return bullet;
+              }
+              if (bullet === null || bullet === undefined) {
+                return '';
+              }
+              return String(bullet);
+            })
+            .map((bullet: string) => bullet.replace(/\s+/g, ' ').trim())
+            .filter((bullet: string) => Boolean(bullet))
+            .slice(0, 5);
+
+          return normalized.length > 0 ? normalized : undefined;
         })();
 
         const relatedArticles: RelatedArticle[] = Array.isArray(item?.relatedArticles)
@@ -1288,19 +1290,15 @@ export default function GeneratePage() {
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                       {headlineResults.map((headline, index) => {
                         const headlineUrl = headline.url;
-                        const bulletText = headline.summary?.bullets
-                          ?.map((bullet) => bullet?.trim())
-                          .filter(Boolean)
-                          .map((bullet) => `• ${bullet}`)
-                          .join('\n');
-                        const summaryText = [
-                          headline.summary?.overview?.trim(),
-                          bulletText,
-                        ]
-                          .filter((value): value is string => Boolean(value && value.length > 0))
-                          .join('\n');
+                        const bulletText = Array.isArray(headline.summary)
+                          ? headline.summary
+                              .map((bullet) => bullet?.trim())
+                              .filter(Boolean)
+                              .map((bullet) => `• ${bullet}`)
+                              .join('\n')
+                          : '';
                         const resolvedSummary =
-                          summaryText || headline.description?.trim() || '';
+                          bulletText || headline.description?.trim() || '';
 
                         return (
                           <tr

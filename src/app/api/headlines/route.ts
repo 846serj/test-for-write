@@ -780,10 +780,7 @@ async function generateKeywordQueries(
   ];
 }
 
-type HeadlineSummary = {
-  overview: string;
-  bullets: string[];
-};
+type HeadlineSummary = string[];
 
 type RelatedArticle = {
   title: string;
@@ -1238,6 +1235,14 @@ async function generateClusterSummaries(
 
   const serialized = JSON.stringify(inputs, null, 2);
 
+  const systemPrompt = `You are a news summarizer. Summarize the article TEXT into 3–5 factual bullets.
+Rules:
+- Only include facts found in TEXT. Do not guess or infer.
+- Include concrete numbers (dates, counts, prices, specs) when present.
+- No opinions or hype. No adjectives like "stunning", "groundbreaking".
+- If critical details are missing, say "Detail not provided in source."
+- Keep each bullet ≤ 30 words.`;
+
   let content = '';
   try {
     const response = await client.chat.completions.create({
@@ -1245,12 +1250,14 @@ async function generateClusterSummaries(
       messages: [
         {
           role: 'system',
-          content:
-            'You are a meticulous news editor. For each cluster of related articles, craft a 2-3 sentence overview capturing the key development and context. Also produce 3-5 concise factual bullet points highlighting distinct details. Only use the provided information. Return strict JSON with the shape {"<cluster-id>": {"overview": string, "bullets": string[]}} with no extra commentary.',
+          content: systemPrompt,
         },
         {
           role: 'user',
-          content: `Summarize the following news clusters:\n${serialized}`,
+          content:
+            'Summarize each news cluster strictly as JSON {"<cluster-id>": string[]}.' +
+            '\nFollow the rules above using the provided TEXT for each cluster. No extra commentary.\n\n' +
+            serialized,
         },
       ],
       temperature: 0.2,
@@ -1283,29 +1290,40 @@ async function generateClusterSummaries(
 
   const result: Record<string, HeadlineSummary> = {};
 
-  for (const [id, value] of Object.entries(parsed as Record<string, any>)) {
-    if (!value || typeof value !== 'object') {
-      continue;
-    }
-
-    const overview = typeof value.overview === 'string' ? value.overview.trim() : '';
-    const bullets = Array.isArray(value.bullets)
-      ? value.bullets
-          .map((entry: unknown) =>
-            typeof entry === 'string' ? entry.trim() : entry ? String(entry).trim() : ''
-          )
-          .filter((entry: string) => Boolean(entry))
-          .slice(0, 5)
+  for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+    const bulletSource = Array.isArray(value)
+      ? value
+      : value && typeof value === 'object' && Array.isArray((value as any).bullets)
+      ? (value as any).bullets
       : [];
 
-    if (!overview && bullets.length === 0) {
+    if (!Array.isArray(bulletSource)) {
       continue;
     }
 
-    result[id] = {
-      overview,
-      bullets,
-    };
+    const normalizedBullets = bulletSource
+      .map((entry: unknown) => {
+        if (typeof entry === 'string') {
+          return entry;
+        }
+        if (entry === null || entry === undefined) {
+          return '';
+        }
+        return String(entry);
+      })
+      .map((entry: string) => entry.replace(/\s+/g, ' ').trim())
+      .filter((entry: string) => Boolean(entry))
+      .slice(0, 5)
+      .filter((entry: string) => {
+        const words = entry.split(/\s+/).filter(Boolean);
+        return words.length > 0 && words.length <= 30;
+      });
+
+    if (normalizedBullets.length < 3) {
+      continue;
+    }
+
+    result[id] = normalizedBullets;
   }
 
   return result;
@@ -1325,7 +1343,11 @@ async function buildHeadlineResponses(
 
   return ranked.map((entry, index) => {
     const { candidate, ranking } = entry;
-    const summary = summaries[`item-${index}`];
+    const summaryBullets = summaries[`item-${index}`];
+    const summary =
+      Array.isArray(summaryBullets) && summaryBullets.length > 0
+        ? [...summaryBullets]
+        : undefined;
     const relatedArticles = candidate.related.length > 0
       ? candidate.related.map((article) => ({ ...article }))
       : undefined;
