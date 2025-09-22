@@ -31,9 +31,26 @@ test('generateWithLinks retries when links are missing', async () => {
     { choices: [{ message: { content: '<p>No links here</p>' } }] },
     { choices: [{ message: { content: '<a href="a">1</a><a href="b">2</a><a href="c">3</a>' } }] }
   );
-  const content = await generateWithLinks('prompt', 'model', ['a','b','c'], MIN_LINKS, 100);
+  const systemPrompt = 'system context';
+  const content = await generateWithLinks(
+    'prompt',
+    'model',
+    ['a', 'b', 'c'],
+    systemPrompt,
+    MIN_LINKS,
+    100
+  );
   assert(content.includes('href="a"'));
   assert.strictEqual(responses.length, 0);
+  assert.strictEqual(calls.length, 2);
+  for (const call of calls) {
+    assert.strictEqual(call.messages.length, 2);
+    assert.deepStrictEqual(call.messages[0], {
+      role: 'system',
+      content: systemPrompt,
+    });
+    assert.strictEqual(call.messages[1].role, 'user');
+  }
 });
 
 test('generateWithLinks retries when response is truncated', async () => {
@@ -43,10 +60,14 @@ test('generateWithLinks retries when response is truncated', async () => {
     { choices: [{ message: { content: 'partial' }, finish_reason: 'length' }] },
     { choices: [{ message: { content: 'complete' }, finish_reason: 'stop' }] }
   );
-  const content = await generateWithLinks('prompt', 'model', [], 0, 100);
+  const content = await generateWithLinks('prompt', 'model', [], undefined, 0, 100);
   assert.strictEqual(content, 'complete');
   assert(calls[1].max_tokens > calls[0].max_tokens);
   assert.strictEqual(responses.length, 0);
+  for (const call of calls) {
+    assert.strictEqual(call.messages.length, 1);
+    assert.strictEqual(call.messages[0].role, 'user');
+  }
 });
 
 test('generateWithLinks retries when output too short', async () => {
@@ -56,8 +77,12 @@ test('generateWithLinks retries when output too short', async () => {
     { choices: [{ message: { content: '<p>short</p>' } }] },
     { choices: [{ message: { content: '<p>long enough content</p>' } }] }
   );
-  const content = await generateWithLinks('prompt', 'model', [], 0, 100, 5);
+  const content = await generateWithLinks('prompt', 'model', [], undefined, 0, 100, 5);
   assert(content.includes('long enough'));
   assert.strictEqual(responses.length, 0);
   assert.strictEqual(calls.length, 2);
+  for (const call of calls) {
+    assert.strictEqual(call.messages.length, 1);
+    assert.strictEqual(call.messages[0].role, 'user');
+  }
 });

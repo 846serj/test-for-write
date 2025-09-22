@@ -530,15 +530,24 @@ async function generateWithLinks(
   prompt: string,
   model: string,
   sources: string[],
+  systemPrompt?: string,
   minLinks: number = MIN_LINKS,
   maxTokens = 2000,
   minWords = 0
 ): Promise<string> {
   const limit = MODEL_CONTEXT_LIMITS[model] || 8000;
   let tokens = Math.min(maxTokens, limit);
+  const buildMessages = (content: string) =>
+    systemPrompt
+      ? [
+          { role: 'system' as const, content: systemPrompt },
+          { role: 'user' as const, content },
+        ]
+      : [{ role: 'user' as const, content }];
+
   let baseRes = await openai.chat.completions.create({
     model,
-    messages: [{ role: 'user', content: prompt }],
+    messages: buildMessages(prompt),
     temperature: 0.7,
     max_tokens: tokens,
   });
@@ -548,7 +557,7 @@ async function generateWithLinks(
     tokens = Math.min(tokens * 2, limit);
     baseRes = await openai.chat.completions.create({
       model,
-      messages: [{ role: 'user', content: prompt }],
+      messages: buildMessages(prompt),
       temperature: 0.7,
       max_tokens: tokens,
     });
@@ -565,7 +574,7 @@ async function generateWithLinks(
     const retryPrompt = `${prompt}\n\nYou forgot to include at least ${minLinks} links. Integrate at least ${minLinks} clickable HTML links from the provided sources using <a href="URL" target="_blank">text</a>.`;
     const retryRes = await openai.chat.completions.create({
       model,
-      messages: [{ role: 'user', content: retryPrompt }],
+      messages: buildMessages(retryPrompt),
       temperature: 0.7,
       max_tokens: tokens,
     });
@@ -584,7 +593,7 @@ async function generateWithLinks(
       const expandPrompt = `${prompt}\n\nYour previous response was only ${wordCount} words. Expand it to at least ${minWords} words while keeping the same structure and links.`;
       const retryRes = await openai.chat.completions.create({
         model,
-        messages: [{ role: 'user', content: expandPrompt }],
+        messages: buildMessages(expandPrompt),
         temperature: 0.7,
         max_tokens: tokens,
       });
@@ -645,6 +654,8 @@ export async function POST(request: Request) {
 
     const serpEnabled = includeLinks && useSerpApi && !!process.env.SERPAPI_KEY;
     const baseMaxTokens = calcMaxTokens(lengthOption, customSections, modelVersion);
+    const nowIso = new Date().toISOString();
+    const systemPrompt = `The current date and time is ${nowIso}. Treat the reporting summaries and source links supplied in prompts as authoritative context. Avoid introducing unsourced details or time-sensitive claims that are not confirmed by those references.`;
 
     const toneChoice =
       toneOfVoice === 'Custom' && customTone ? customTone : toneOfVoice;
@@ -727,6 +738,7 @@ Write the full article in valid HTML below:
         articlePrompt,
         modelVersion,
         linkSources,
+        systemPrompt,
         minLinks,
         maxTokens,
         minWords
@@ -830,6 +842,7 @@ Write the full article in valid HTML below:
         articlePrompt,
         modelVersion,
         linkSources,
+        systemPrompt,
         minLinks,
         maxTokens,
         minWords
@@ -882,6 +895,7 @@ Write the full article in valid HTML below:
         articlePrompt,
         modelVersion,
         linkSources,
+        systemPrompt,
         minLinks,
         baseMaxTokens
       );
@@ -958,6 +972,7 @@ Write the full article in valid HTML below:
         articlePrompt,
         modelVersion,
         linkSources,
+        systemPrompt,
         minLinks,
         maxTokens,
         getWordBounds(lengthOption, customSections)[0]
@@ -1070,6 +1085,7 @@ Output raw HTML only:
       articlePrompt,
       modelVersion,
       linkSources,
+      systemPrompt,
       minLinks,
       baseMaxTokens,
       getWordBounds(lengthOption, customSections)[0]
