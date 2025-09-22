@@ -700,6 +700,8 @@ async function generateWithLinks(
   minWords = 0
 ): Promise<string> {
   const limit = MODEL_CONTEXT_LIMITS[model] || 8000;
+  const requiredCount = Math.min(minLinks, sources.length);
+  const requiredSources = sources.slice(0, requiredCount);
   let tokens = Math.min(maxTokens, limit);
   const buildMessages = (content: string) =>
     systemPrompt
@@ -729,8 +731,8 @@ async function generateWithLinks(
 
   let content = cleanModelOutput(baseRes.choices[0]?.message?.content);
 
-  if (sources.length > 0) {
-    let missingSources = findMissingSources(content, sources);
+  if (requiredSources.length > 0) {
+    let missingSources = findMissingSources(content, requiredSources);
     if (missingSources.length > 0) {
       const retryPrompt = `${prompt}\n\nYou failed to cite the following required sources:\n${missingSources
         .map((url) => `- ${url}`)
@@ -744,7 +746,7 @@ async function generateWithLinks(
       content = cleanModelOutput(
         retryRes.choices[0]?.message?.content || content
       );
-      missingSources = findMissingSources(content, sources);
+      missingSources = findMissingSources(content, requiredSources);
       if (missingSources.length > 0) {
         throw new Error(
           `Model failed to cite required sources: ${missingSources.join(', ')}`
@@ -755,8 +757,9 @@ async function generateWithLinks(
 
   let linkCount = content.match(/<a\s+href=/gi)?.length || 0;
 
-  if (linkCount < minLinks && sources.length > 0) {
-    const retryPrompt = `${prompt}\n\nYou forgot to include at least ${minLinks} links. Integrate clickable HTML links for every provided source using <a href="URL" target="_blank">text</a> inside the relevant paragraphs, and do not append a final list of links.`;
+  if (requiredCount > 0 && linkCount < requiredCount) {
+    const requiredList = requiredSources.map((url) => `- ${url}`).join('\n');
+    const retryPrompt = `${prompt}\n\nYou forgot to include at least ${requiredCount} links. Each required source needs a clickable HTML citation exactly once:\n${requiredList}\nIntegrate clickable HTML links using <a href="URL" target="_blank">text</a> inside the relevant paragraphs, retain the other citations you already provided, and do not append a final list of links.`;
     const retryRes = await openai.chat.completions.create({
       model,
       messages: buildMessages(retryPrompt),
@@ -767,8 +770,8 @@ async function generateWithLinks(
       retryRes.choices[0]?.message?.content || content
     );
     linkCount = content.match(/<a\s+href=/gi)?.length || 0;
-    if (sources.length > 0) {
-      const missingSources = findMissingSources(content, sources);
+    if (requiredSources.length > 0) {
+      const missingSources = findMissingSources(content, requiredSources);
       if (missingSources.length > 0) {
         throw new Error(
           `Model failed to cite required sources: ${missingSources.join(', ')}`
@@ -777,8 +780,9 @@ async function generateWithLinks(
     }
   }
 
-  if (sources.length > 0 && linksClusteredNearEnd(content)) {
-    const retryPrompt = `${prompt}\n\nYour previous draft clustered the citations at the end. Rewrite the article so each listed source URL is woven into the paragraph or section that discusses it. Keep every <a href> citation inline with the relevant content and do not append a final list of links.`;
+  if (requiredCount > 0 && linksClusteredNearEnd(content)) {
+    const requiredList = requiredSources.map((url) => `- ${url}`).join('\n');
+    const retryPrompt = `${prompt}\n\nYour previous draft clustered the citations at the end. Rewrite the article so each required source URL is woven into the paragraph or section that discusses it. Required sources:\n${requiredList}\nKeep every <a href> citation inline with the relevant content, retain the citations you already placed, and do not append a final list of links.`;
     const retryRes = await openai.chat.completions.create({
       model,
       messages: buildMessages(retryPrompt),
@@ -788,16 +792,16 @@ async function generateWithLinks(
     content = cleanModelOutput(
       retryRes.choices[0]?.message?.content || content
     );
-    const missingSources = findMissingSources(content, sources);
+    const missingSources = findMissingSources(content, requiredSources);
     if (missingSources.length > 0) {
       throw new Error(
         `Model failed to cite required sources: ${missingSources.join(', ')}`
       );
     }
     linkCount = content.match(/<a\s+href=/gi)?.length || 0;
-    if (linkCount < minLinks) {
+    if (linkCount < requiredCount) {
       throw new Error(
-        `Model failed to include at least ${minLinks} links after redistributing citations.`
+        `Model failed to include at least ${requiredCount} links after redistributing citations.`
       );
     }
     if (linksClusteredNearEnd(content)) {
@@ -822,8 +826,8 @@ async function generateWithLinks(
       content = cleanModelOutput(
         retryRes.choices[0]?.message?.content || content
       );
-      if (sources.length > 0) {
-        const missingSources = findMissingSources(content, sources);
+      if (requiredSources.length > 0) {
+        const missingSources = findMissingSources(content, requiredSources);
         if (missingSources.length > 0) {
           throw new Error(
             `Model failed to cite required sources: ${missingSources.join(', ')}`
@@ -833,8 +837,8 @@ async function generateWithLinks(
     }
   }
 
-  if (sources.length > 0) {
-    const missingSources = findMissingSources(content, sources);
+  if (requiredSources.length > 0) {
+    const missingSources = findMissingSources(content, requiredSources);
     if (missingSources.length > 0) {
       throw new Error(
         `Model failed to cite required sources: ${missingSources.join(', ')}`
@@ -919,11 +923,18 @@ export async function POST(request: Request) {
       const minLinks = includeLinks
         ? Math.min(MIN_LINKS, linkSources.length)
         : 0;
+      const requiredLinks = linkSources.slice(0, minLinks);
+      const optionalLinks = linkSources.slice(minLinks);
+      const optionalInstruction = optionalLinks.length
+        ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
+            .map((u) => `    - ${u}`)
+            .join('\n')}`
+        : '';
       const linkInstruction =
-        includeLinks && linkSources.length
-          ? `- Integrate clickable HTML links for every one of the following sources into relevant keywords or phrases.\n${linkSources
+        includeLinks && requiredLinks.length
+          ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
               .map((u) => `  - ${u}`)
-              .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
+              .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
           : '';
 
       const reportingBlock = buildRecentReportingBlock(articles);
@@ -1030,10 +1041,17 @@ List only the headings (no descriptions).
         ? `- ${customInstruction}\n`
         : '';
       const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
-      const linkInstruction = linkSources.length
-        ? `- Integrate clickable HTML links for every one of the following sources into relevant keywords or phrases.\n${linkSources
+      const requiredLinks = linkSources.slice(0, minLinks);
+      const optionalLinks = linkSources.slice(minLinks);
+      const optionalInstruction = optionalLinks.length
+        ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
+            .map((u) => `    - ${u}`)
+            .join('\n')}`
+        : '';
+      const linkInstruction = requiredLinks.length
+        ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
             .map((u) => `  - ${u}`)
-            .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
+            .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
         : '';
       const toneChoice =
         toneOfVoice === 'Custom' && customTone ? customTone : toneOfVoice;
@@ -1101,10 +1119,17 @@ Write the full article in valid HTML below:
         ? `- ${customInstruction}\n`
         : '';
       const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
-      const linkInstruction = linkSources.length
-        ? `- Integrate clickable HTML links for every one of the following sources into relevant keywords or phrases.\n${linkSources
+      const requiredLinks = linkSources.slice(0, minLinks);
+      const optionalLinks = linkSources.slice(minLinks);
+      const optionalInstruction = optionalLinks.length
+        ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
+            .map((u) => `    - ${u}`)
+            .join('\n')}`
+        : '';
+      const linkInstruction = requiredLinks.length
+        ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
             .map((u) => `  - ${u}`)
-            .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
+            .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
         : '';
 
       const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
@@ -1156,11 +1181,18 @@ Write the full article in valid HTML below:
         ? `- ${customInstruction}\n`
         : '';
       const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
-    const linkInstruction = linkSources.length
-      ? `- Integrate clickable HTML links for every one of the following sources into relevant keywords or phrases.\n${linkSources
-          .map((u) => `  - ${u}`)
-          .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
-      : '';
+      const requiredLinks = linkSources.slice(0, minLinks);
+      const optionalLinks = linkSources.slice(minLinks);
+      const optionalInstruction = optionalLinks.length
+        ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
+            .map((u) => `    - ${u}`)
+            .join('\n')}`
+        : '';
+      const linkInstruction = requiredLinks.length
+        ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
+            .map((u) => `  - ${u}`)
+            .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
+        : '';
       const rewriteInstruction = sourceText
         ? `- Rewrite the following content completely to avoid plagiarism:\n\n${sourceText}\n\n`
         : `- Rewrite the blog post at this URL completely to avoid plagiarism: ${blogLink}\n`;
@@ -1286,10 +1318,17 @@ ${references}
     }
 
     const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
-    const linkInstruction = linkSources.length
-      ? `- Integrate clickable HTML links for every one of the following sources into relevant keywords or phrases.\n${linkSources
+    const requiredLinks = linkSources.slice(0, minLinks);
+    const optionalLinks = linkSources.slice(minLinks);
+    const optionalInstruction = optionalLinks.length
+      ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
+          .map((u) => `    - ${u}`)
+          .join('\n')}`
+      : '';
+    const linkInstruction = requiredLinks.length
+      ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
           .map((u) => `  - ${u}`)
-          .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
+          .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
       : '';
 
     const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
