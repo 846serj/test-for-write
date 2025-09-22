@@ -244,7 +244,7 @@ export default function GeneratePage() {
   const [modelVersion, setModelVersion] = useState<string>(models[0]);
   const [useSerpApi, setUseSerpApi] = useState<boolean>(true);
   const [includeLinks, setIncludeLinks] = useState<boolean>(true);
-  const [newsFreshness, setNewsFreshness] = useState<'1h' | '6h' | '24h'>('6h');
+  const [newsFreshness, setNewsFreshness] = useState<'1h' | '6h' | '7d'>('6h');
 
   useEffect(() => {
     if (activeTab !== 'headlines') {
@@ -632,12 +632,12 @@ export default function GeneratePage() {
                 className={inputStyle}
                 value={newsFreshness}
                 onChange={(e) =>
-                  setNewsFreshness(e.target.value as '1h' | '6h' | '24h')
+                  setNewsFreshness(e.target.value as '1h' | '6h' | '7d')
                 }
               >
                 <option value="1h">Past hour</option>
                 <option value="6h">Past 6 hours</option>
-                <option value="24h">Past 24 hours</option>
+                <option value="7d">Past 7 days</option>
               </select>
             </div>
           )}

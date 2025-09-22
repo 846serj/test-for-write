@@ -54,3 +54,10 @@ test('fetchSources defaults to 6h freshness when none provided', async () => {
   await fetchSources('another topic');
   assert.strictEqual(serpCalls[0].extraParams?.tbs, 'qdr:h6');
 });
+
+test('fetchSources uses past 7 days filter when requested', async () => {
+  serpCalls.length = 0;
+  setSerpResults([{ link: 'https://example.com' }]);
+  await fetchSources('weekly topic', '7d');
+  assert.strictEqual(serpCalls[0].extraParams?.tbs, 'qdr:w');
+});
