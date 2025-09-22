@@ -78,27 +78,41 @@ function calcMaxTokens(
   return Math.min(tokens, limit);
 }
 
-async function fetchSources(headline: string): Promise<string[]> {
-  const [g, n, s] = await Promise.all([
-    serpapiSearch({ query: headline, engine: 'google', limit: 5 }),
-    serpapiSearch({ query: headline, engine: 'google_news', limit: 5 }),
-    serpapiSearch({ query: headline, engine: 'google_scholar', limit: 5 }),
-  ]);
-  const combinedLinks = [...g, ...n, ...s]
-    .map((result) => result.link)
-    .filter((link): link is string => Boolean(link));
-  const unique = Array.from(new Set(combinedLinks));
-  // Shuffle the unique links
-  for (let i = unique.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [unique[i], unique[j]] = [unique[j], unique[i]];
+async function fetchSources(
+  headline: string,
+  freshness?: NewsFreshness
+): Promise<string[]> {
+  const resolvedFreshness = resolveFreshness(freshness);
+  const results = await serpapiSearch({
+    query: headline,
+    engine: 'google_news',
+    extraParams: { tbs: mapFreshnessToSerpTbs(resolvedFreshness) },
+    limit: 8,
+  });
+
+  const seen = new Set<string>();
+  const orderedLinks: string[] = [];
+
+  for (const result of results) {
+    const link = result.link;
+    if (link && !seen.has(link)) {
+      seen.add(link);
+      orderedLinks.push(link);
+    }
   }
-  return unique.slice(0, 5);
+
+  return orderedLinks.slice(0, 5);
 }
 
 function resolveFreshness(freshness: NewsFreshness | undefined): NewsFreshness {
   if (!freshness) return '6h';
   return freshness;
+}
+
+function mapFreshnessToSerpTbs(freshness: NewsFreshness): string {
+  if (freshness === '1h') return 'qdr:h';
+  if (freshness === '6h') return 'qdr:h6';
+  return 'qdr:d';
 }
 
 function computeFreshnessIso(freshness: NewsFreshness): string {
@@ -154,12 +168,7 @@ async function fetchNewsArticles(
     return [];
   }
 
-  const freshnessParam =
-    resolvedFreshness === '1h'
-      ? 'qdr:h'
-      : resolvedFreshness === '6h'
-      ? 'qdr:h6'
-      : 'qdr:d';
+  const freshnessParam = mapFreshnessToSerpTbs(resolvedFreshness);
 
   try {
     const serpResults = await serpapiSearch({
@@ -463,7 +472,7 @@ Write the full article in valid HTML below:
       });
     }
 
-    const sources = serpEnabled ? await fetchSources(title) : [];
+    const sources = serpEnabled ? await fetchSources(title, newsFreshness) : [];
 
     // ─── Listicle/Gallery ────────────────────────────────────────────────────────
     if (articleType === 'Listicle/Gallery') {
