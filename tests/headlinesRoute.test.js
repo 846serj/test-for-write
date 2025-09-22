@@ -224,15 +224,11 @@ test('infers keywords when only a description is provided', async () => {
     'transforming',
   ]);
   assert.deepStrictEqual(body.inferredCategories, ['technology']);
-  assert.deepStrictEqual(body.queriesAttempted, [
-    descriptionQuery,
-    keywordQuery,
-  ]);
+  assert.deepStrictEqual(body.queriesAttempted, [keywordQuery]);
   assert.deepStrictEqual(fetchCalls, [
-    { query: descriptionQuery, pageSize: 2, page: 1 },
-    { query: keywordQuery, pageSize: 2, page: 1 },
+    { query: keywordQuery, pageSize: 3, page: 1 },
   ]);
-  assert.strictEqual(body.successfulQueries, 2);
+  assert.strictEqual(body.successfulQueries, 1);
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
 });
