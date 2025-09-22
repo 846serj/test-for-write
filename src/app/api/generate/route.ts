@@ -521,6 +521,84 @@ async function summarizeBlogContent(
   }
 }
 
+function normalizeHrefValue(url: string): string {
+  return url.replace(/&amp;/g, '&').trim();
+}
+
+function buildUrlVariants(url: string): string[] {
+  const normalized = normalizeHrefValue(url);
+  if (!normalized) {
+    return [];
+  }
+
+  const variants = new Set<string>([normalized]);
+  if (normalized.endsWith('/')) {
+    variants.add(normalized.slice(0, -1));
+  } else {
+    variants.add(`${normalized}/`);
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    parsed.hash = '';
+    const href = parsed.toString();
+    variants.add(href);
+    if (href.endsWith('/')) {
+      variants.add(href.slice(0, -1));
+    } else {
+      variants.add(`${href}/`);
+    }
+  } catch {
+    // Ignore malformed URLs that cannot be parsed.
+  }
+
+  return Array.from(variants);
+}
+
+function cleanModelOutput(raw: string | null | undefined): string {
+  return (raw || '')
+    .replace(/^```(?:html)?\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
+}
+
+function findMissingSources(content: string, sources: string[]): string[] {
+  if (!sources.length) {
+    return [];
+  }
+
+  const cited = new Set<string>();
+  const anchorRegex = /<a\s+[^>]*href\s*=\s*["']([^"']+)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = anchorRegex.exec(content)) !== null) {
+    const href = match[1];
+    for (const variant of buildUrlVariants(href)) {
+      if (variant) {
+        cited.add(variant);
+      }
+    }
+  }
+
+  const missing: string[] = [];
+  for (const source of sources) {
+    if (!source) {
+      continue;
+    }
+    let found = false;
+    for (const variant of buildUrlVariants(source)) {
+      if (variant && cited.has(variant)) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      missing.push(source);
+    }
+  }
+
+  return missing;
+}
+
 // Generate article content and ensure a minimum number of links are present
 // prompt   - text prompt to send to the model
 // model    - model name to use
@@ -563,26 +641,54 @@ async function generateWithLinks(
     });
   }
 
-  let content = baseRes.choices[0]?.message?.content?.trim() || '';
-  content = content
-    .replace(/^```(?:html)?\n/i, '')
-    .replace(/```$/i, '')
-    .trim();
-  const linkCount = content.match(/<a\s+href=/gi)?.length || 0;
+  let content = cleanModelOutput(baseRes.choices[0]?.message?.content);
+
+  if (sources.length > 0) {
+    let missingSources = findMissingSources(content, sources);
+    if (missingSources.length > 0) {
+      const retryPrompt = `${prompt}\n\nYou failed to cite the following required sources:\n${missingSources
+        .map((url) => `- ${url}`)
+        .join('\n')}\nAdd a clickable HTML link for each listed URL using <a href="URL" target="_blank">text</a> exactly once, and retain the other citations you already provided.`;
+      const retryRes = await openai.chat.completions.create({
+        model,
+        messages: buildMessages(retryPrompt),
+        temperature: 0.7,
+        max_tokens: tokens,
+      });
+      content = cleanModelOutput(
+        retryRes.choices[0]?.message?.content || content
+      );
+      missingSources = findMissingSources(content, sources);
+      if (missingSources.length > 0) {
+        throw new Error(
+          `Model failed to cite required sources: ${missingSources.join(', ')}`
+        );
+      }
+    }
+  }
+
+  let linkCount = content.match(/<a\s+href=/gi)?.length || 0;
 
   if (linkCount < minLinks && sources.length > 0) {
-    const retryPrompt = `${prompt}\n\nYou forgot to include at least ${minLinks} links. Integrate at least ${minLinks} clickable HTML links from the provided sources using <a href="URL" target="_blank">text</a>.`;
+    const retryPrompt = `${prompt}\n\nYou forgot to include at least ${minLinks} links. Integrate clickable HTML links for every provided source using <a href="URL" target="_blank">text</a>.`;
     const retryRes = await openai.chat.completions.create({
       model,
       messages: buildMessages(retryPrompt),
       temperature: 0.7,
       max_tokens: tokens,
     });
-    content = retryRes.choices[0]?.message?.content?.trim() || content;
-    content = content
-      .replace(/^```(?:html)?\n/i, '')
-      .replace(/```$/i, '')
-      .trim();
+    content = cleanModelOutput(
+      retryRes.choices[0]?.message?.content || content
+    );
+    linkCount = content.match(/<a\s+href=/gi)?.length || 0;
+    if (sources.length > 0) {
+      const missingSources = findMissingSources(content, sources);
+      if (missingSources.length > 0) {
+        throw new Error(
+          `Model failed to cite required sources: ${missingSources.join(', ')}`
+        );
+      }
+    }
   }
 
   if (minWords > 0) {
@@ -597,11 +703,26 @@ async function generateWithLinks(
         temperature: 0.7,
         max_tokens: tokens,
       });
-      content = retryRes.choices[0]?.message?.content?.trim() || content;
-      content = content
-        .replace(/^```(?:html)?\n/i, '')
-        .replace(/```$/i, '')
-        .trim();
+      content = cleanModelOutput(
+        retryRes.choices[0]?.message?.content || content
+      );
+      if (sources.length > 0) {
+        const missingSources = findMissingSources(content, sources);
+        if (missingSources.length > 0) {
+          throw new Error(
+            `Model failed to cite required sources: ${missingSources.join(', ')}`
+          );
+        }
+      }
+    }
+  }
+
+  if (sources.length > 0) {
+    const missingSources = findMissingSources(content, sources);
+    if (missingSources.length > 0) {
+      throw new Error(
+        `Model failed to cite required sources: ${missingSources.join(', ')}`
+      );
     }
   }
 
@@ -684,7 +805,7 @@ export async function POST(request: Request) {
         : 0;
       const linkInstruction =
         includeLinks && linkSources.length
-          ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${linkSources
+          ? `- Integrate clickable HTML links for every one of the following sources into relevant keywords or phrases.\n${linkSources
               .map((u) => `  - ${u}`)
               .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
           : '';
@@ -794,7 +915,7 @@ List only the headings (no descriptions).
         : '';
       const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
       const linkInstruction = linkSources.length
-        ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${linkSources
+        ? `- Integrate clickable HTML links for every one of the following sources into relevant keywords or phrases.\n${linkSources
             .map((u) => `  - ${u}`)
             .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
         : '';
@@ -865,7 +986,7 @@ Write the full article in valid HTML below:
         : '';
       const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
       const linkInstruction = linkSources.length
-        ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${linkSources
+        ? `- Integrate clickable HTML links for every one of the following sources into relevant keywords or phrases.\n${linkSources
             .map((u) => `  - ${u}`)
             .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
         : '';
@@ -919,11 +1040,11 @@ Write the full article in valid HTML below:
         ? `- ${customInstruction}\n`
         : '';
       const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
-      const linkInstruction = linkSources.length
-        ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${linkSources
-            .map((u) => `  - ${u}`)
-            .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
-        : '';
+    const linkInstruction = linkSources.length
+      ? `- Integrate clickable HTML links for every one of the following sources into relevant keywords or phrases.\n${linkSources
+          .map((u) => `  - ${u}`)
+          .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
+      : '';
       const rewriteInstruction = sourceText
         ? `- Rewrite the following content completely to avoid plagiarism:\n\n${sourceText}\n\n`
         : `- Rewrite the blog post at this URL completely to avoid plagiarism: ${blogLink}\n`;
@@ -1050,7 +1171,7 @@ ${references}
 
     const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
     const linkInstruction = linkSources.length
-      ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${linkSources
+      ? `- Integrate clickable HTML links for every one of the following sources into relevant keywords or phrases.\n${linkSources
           .map((u) => `  - ${u}`)
           .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
       : '';

@@ -8,27 +8,35 @@ const tsCode = fs.readFileSync(routePath, 'utf8');
 
 const minLinksMatch = tsCode.match(/const MIN_LINKS = \d+;/);
 const modelLimitsMatch = tsCode.match(/const MODEL_CONTEXT_LIMITS[\s\S]*?};/);
+const normalizeHrefMatch = tsCode.match(/function normalizeHrefValue[\s\S]*?\n\}/);
+const buildVariantsMatch = tsCode.match(/function buildUrlVariants[\s\S]*?\n\}/);
+const cleanOutputMatch = tsCode.match(/function cleanModelOutput[\s\S]*?\n\}/);
+const findMissingMatch = tsCode.match(/function findMissingSources[\s\S]*?\n\}/);
 const funcMatch = tsCode.match(/async function generateWithLinks[\s\S]*?\n\}/);
 
 const snippet = `
 ${minLinksMatch[0]}
 ${modelLimitsMatch[0]}
+${normalizeHrefMatch[0]}
+${buildVariantsMatch[0]}
+${cleanOutputMatch[0]}
+${findMissingMatch[0]}
 let responses = [];
 let calls = [];
 const openai = { chat: { completions: { create: async (opts) => { calls.push(opts); return responses.shift(); } } } };
 ${funcMatch[0]}
-export { generateWithLinks, MIN_LINKS, responses, calls };
+export { generateWithLinks, MIN_LINKS, responses, calls, findMissingSources };
 `;
 
 const jsCode = ts.transpileModule(snippet, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
 const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString('base64');
-const { generateWithLinks, MIN_LINKS, responses, calls } = await import(moduleUrl);
+const { generateWithLinks, MIN_LINKS, responses, calls, findMissingSources } = await import(moduleUrl);
 
-test('generateWithLinks retries when links are missing', async () => {
+test('generateWithLinks names missing sources when retrying', async () => {
   calls.length = 0;
   responses.length = 0;
   responses.push(
-    { choices: [{ message: { content: '<p>No links here</p>' } }] },
+    { choices: [{ message: { content: '<a href="a">1</a>' } }] },
     { choices: [{ message: { content: '<a href="a">1</a><a href="b">2</a><a href="c">3</a>' } }] }
   );
   const systemPrompt = 'system context';
@@ -40,7 +48,7 @@ test('generateWithLinks retries when links are missing', async () => {
     MIN_LINKS,
     100
   );
-  assert(content.includes('href="a"'));
+  assert(content.includes('href="c"'));
   assert.strictEqual(responses.length, 0);
   assert.strictEqual(calls.length, 2);
   for (const call of calls) {
@@ -51,6 +59,10 @@ test('generateWithLinks retries when links are missing', async () => {
     });
     assert.strictEqual(call.messages[1].role, 'user');
   }
+  const retryMessage = calls[1].messages[calls[1].messages.length - 1].content;
+  assert(/You failed to cite/.test(retryMessage));
+  assert(retryMessage.includes('b'));
+  assert(retryMessage.includes('c'));
 });
 
 test('generateWithLinks retries when response is truncated', async () => {
@@ -85,4 +97,30 @@ test('generateWithLinks retries when output too short', async () => {
     assert.strictEqual(call.messages.length, 1);
     assert.strictEqual(call.messages[0].role, 'user');
   }
+});
+
+test('generateWithLinks throws when sources remain uncited', async () => {
+  calls.length = 0;
+  responses.length = 0;
+  responses.push(
+    { choices: [{ message: { content: '<a href="a">1</a>' } }] },
+    { choices: [{ message: { content: '<a href="a">1</a>' } }] }
+  );
+  await assert.rejects(
+    () =>
+      generateWithLinks('prompt', 'model', ['a', 'b'], undefined, MIN_LINKS, 100),
+    /failed to cite required sources/i
+  );
+  assert.strictEqual(calls.length, 2);
+});
+
+test('findMissingSources detects uncited URLs even with encoded hrefs', () => {
+  const html =
+    '<a href="https://example.com/story">One</a> <a href="https://demo.com/article?a=1&amp;b=2">Two</a>';
+  const missing = findMissingSources(html, [
+    'https://example.com/story',
+    'https://demo.com/article?a=1&b=2',
+    'https://third.com/miss',
+  ]);
+  assert.deepStrictEqual(missing, ['https://third.com/miss']);
 });
