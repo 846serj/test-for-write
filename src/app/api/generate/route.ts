@@ -270,6 +270,9 @@ function getWordBounds(
 // Minimum number of source links to include in generated content
 const MIN_LINKS = 3;
 
+// Low temperature to encourage factual consistency for reporting prompts
+const FACTUAL_TEMPERATURE = 0.2;
+
 const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'gpt-4o': 128000,
   'gpt-4o-mini': 128000,
@@ -680,7 +683,7 @@ async function generateWithLinks(
   let baseRes = await openai.chat.completions.create({
     model,
     messages: buildMessages(prompt),
-    temperature: 0.7,
+    temperature: FACTUAL_TEMPERATURE,
     max_tokens: tokens,
   });
 
@@ -690,7 +693,7 @@ async function generateWithLinks(
     baseRes = await openai.chat.completions.create({
       model,
       messages: buildMessages(prompt),
-      temperature: 0.7,
+      temperature: FACTUAL_TEMPERATURE,
       max_tokens: tokens,
     });
   }
@@ -706,7 +709,7 @@ async function generateWithLinks(
       const retryRes = await openai.chat.completions.create({
         model,
         messages: buildMessages(retryPrompt),
-        temperature: 0.7,
+        temperature: FACTUAL_TEMPERATURE,
         max_tokens: tokens,
       });
       content = cleanModelOutput(
@@ -728,7 +731,7 @@ async function generateWithLinks(
     const retryRes = await openai.chat.completions.create({
       model,
       messages: buildMessages(retryPrompt),
-      temperature: 0.7,
+      temperature: FACTUAL_TEMPERATURE,
       max_tokens: tokens,
     });
     content = cleanModelOutput(
@@ -750,7 +753,7 @@ async function generateWithLinks(
     const retryRes = await openai.chat.completions.create({
       model,
       messages: buildMessages(retryPrompt),
-      temperature: 0.7,
+      temperature: FACTUAL_TEMPERATURE,
       max_tokens: tokens,
     });
     content = cleanModelOutput(
@@ -784,7 +787,7 @@ async function generateWithLinks(
       const retryRes = await openai.chat.completions.create({
         model,
         messages: buildMessages(expandPrompt),
-        temperature: 0.7,
+        temperature: FACTUAL_TEMPERATURE,
         max_tokens: tokens,
       });
       content = cleanModelOutput(
