@@ -602,44 +602,198 @@ function buildUrlVariants(url: string): string[] {
     }
   };
 
+  const normalizePathname = (pathname: string): string => {
+    if (!pathname) {
+      return '/';
+    }
+    let result = pathname;
+    if (!result.startsWith('/')) {
+      result = `/${result}`;
+    }
+    while (result.length > 1 && result.endsWith('/')) {
+      result = result.slice(0, -1);
+    }
+    return result || '/';
+  };
+
+  const addHostPathVariants = (urlObj: URL) => {
+    const hostname = urlObj.hostname.toLowerCase();
+    if (!hostname) {
+      return;
+    }
+    const normalizedPath = normalizePathname(urlObj.pathname);
+    const hostVariants = new Set<string>([hostname]);
+    if (hostname.startsWith('www.')) {
+      hostVariants.add(hostname.slice(4));
+    } else {
+      hostVariants.add(`www.${hostname}`);
+    }
+    for (const host of hostVariants) {
+      if (!host) {
+        continue;
+      }
+      variants.add(`hostpath:${host}${normalizedPath}`);
+    }
+  };
+
+  const globalObj = globalThis as {
+    Buffer?: { from(data: string, encoding: string): { toString(encoding: string): string } };
+    atob?: (input: string) => string;
+  };
+
+  const decodeBase64 = (value: string): string | null => {
+    if (!value) {
+      return null;
+    }
+    const normalizedValue = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padding = (4 - (normalizedValue.length % 4 || 0)) % 4;
+    const padded = normalizedValue.padEnd(normalizedValue.length + padding, '=');
+
+    if (globalObj.Buffer) {
+      try {
+        return globalObj.Buffer.from(padded, 'base64').toString('utf8');
+      } catch {
+        // Ignore decoding errors.
+      }
+    }
+
+    if (typeof globalObj.atob === 'function') {
+      try {
+        const binary = globalObj.atob(padded);
+        let result = '';
+        for (let i = 0; i < binary.length; i += 1) {
+          result += String.fromCharCode(binary.charCodeAt(i));
+        }
+        return result;
+      } catch {
+        // Ignore decoding errors.
+      }
+    }
+
+    return null;
+  };
+
+  const tryParseUrl = (value: string | null | undefined): URL | null => {
+    if (!value) {
+      return null;
+    }
+    try {
+      return new URL(value);
+    } catch {
+      return null;
+    }
+  };
+
+  const resolveRedirectTarget = (urlObj: URL): URL | null => {
+    const hostname = urlObj.hostname.toLowerCase();
+    if (!hostname) {
+      return null;
+    }
+
+    if (hostname === 'news.google.com') {
+      const paramTarget = tryParseUrl(urlObj.searchParams.get('url') || urlObj.searchParams.get('u'));
+      if (paramTarget) {
+        return paramTarget;
+      }
+
+      const segments = urlObj.pathname.split('/');
+      for (let i = segments.length - 1; i >= 0; i -= 1) {
+        const segment = segments[i];
+        if (!segment) {
+          continue;
+        }
+        const decoded = decodeBase64(segment);
+        if (!decoded) {
+          continue;
+        }
+        const match = decoded.match(/https?:\/\/[^\s"'<>]+/i);
+        if (match) {
+          const candidate = tryParseUrl(match[0]);
+          if (candidate) {
+            return candidate;
+          }
+        }
+      }
+    }
+
+    if (hostname === 'www.google.com' && urlObj.pathname === '/url') {
+      const paramTarget = tryParseUrl(urlObj.searchParams.get('url') || urlObj.searchParams.get('q'));
+      if (paramTarget) {
+        return paramTarget;
+      }
+    }
+
+    return null;
+  };
+
   addVariant(normalized);
 
   try {
-    const parsed = new URL(normalized);
-    parsed.hash = '';
-    const baseHref = parsed.toString();
-    addVariant(baseHref);
+    const initial = new URL(normalized);
+    const seen = new Set<string>();
+    const queue: URL[] = [];
 
-    const withoutQuery = new URL(baseHref);
-    withoutQuery.search = '';
-    addVariant(withoutQuery.toString());
+    const enqueue = (candidate: URL) => {
+      candidate.hash = '';
+      const key = candidate.toString();
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      queue.push(candidate);
+    };
 
-    const hostnames = new Set<string>([parsed.hostname]);
-    if (parsed.hostname.startsWith('www.')) {
-      hostnames.add(parsed.hostname.slice(4));
-    } else if (parsed.hostname) {
-      hostnames.add(`www.${parsed.hostname}`);
-    }
+    enqueue(initial);
 
-    const protocols = new Set<string>([parsed.protocol]);
-    if (parsed.protocol === 'https:') {
-      protocols.add('http:');
-    } else if (parsed.protocol === 'http:') {
-      protocols.add('https:');
-    }
+    while (queue.length) {
+      const current = queue.pop()!;
+      const currentString = current.toString();
+      addVariant(currentString);
+      addHostPathVariants(current);
 
-    for (const hostname of hostnames) {
-      if (!hostname) continue;
-      for (const protocol of protocols) {
-        if (!protocol) continue;
-        const variantUrl = new URL(baseHref);
-        variantUrl.hostname = hostname;
-        variantUrl.protocol = protocol;
-        addVariant(variantUrl.toString());
+      const redirectTarget = resolveRedirectTarget(current);
+      if (redirectTarget) {
+        enqueue(redirectTarget);
+      }
 
-        if (variantUrl.search) {
-          variantUrl.search = '';
-          addVariant(variantUrl.toString());
+      if (current.search) {
+        const withoutQuery = new URL(currentString);
+        withoutQuery.search = '';
+        enqueue(withoutQuery);
+      }
+
+      const hostnames = new Set<string>();
+      if (current.hostname) {
+        hostnames.add(current.hostname);
+        if (current.hostname.startsWith('www.')) {
+          hostnames.add(current.hostname.slice(4));
+        } else {
+          hostnames.add(`www.${current.hostname}`);
+        }
+      }
+
+      const protocols = new Set<string>();
+      if (current.protocol) {
+        protocols.add(current.protocol);
+        if (current.protocol === 'https:') {
+          protocols.add('http:');
+        } else if (current.protocol === 'http:') {
+          protocols.add('https:');
+        }
+      }
+
+      for (const hostname of hostnames) {
+        if (!hostname) {
+          continue;
+        }
+        for (const protocol of protocols) {
+          if (!protocol) {
+            continue;
+          }
+          const variantUrl = new URL(currentString);
+          variantUrl.hostname = hostname;
+          variantUrl.protocol = protocol;
+          enqueue(variantUrl);
         }
       }
     }
