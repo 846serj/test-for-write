@@ -610,6 +610,10 @@ function buildUrlVariants(url: string): string[] {
     const baseHref = parsed.toString();
     addVariant(baseHref);
 
+    const withoutQuery = new URL(baseHref);
+    withoutQuery.search = '';
+    addVariant(withoutQuery.toString());
+
     const hostnames = new Set<string>([parsed.hostname]);
     if (parsed.hostname.startsWith('www.')) {
       hostnames.add(parsed.hostname.slice(4));
@@ -632,6 +636,11 @@ function buildUrlVariants(url: string): string[] {
         variantUrl.hostname = hostname;
         variantUrl.protocol = protocol;
         addVariant(variantUrl.toString());
+
+        if (variantUrl.search) {
+          variantUrl.search = '';
+          addVariant(variantUrl.toString());
+        }
       }
     }
   } catch {
