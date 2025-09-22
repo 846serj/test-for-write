@@ -30,6 +30,10 @@ const sectionRanges: Record<string, [number, number]> = {
   longer: [6, 8],
 };
 
+function normalizeTitleValue(title: string | undefined | null): string {
+  return (title ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 function getWordBounds(
   lengthOption: string | undefined,
   customSections: number | undefined
@@ -92,9 +96,15 @@ async function fetchSources(
 
   const seenLinks = new Set<string>();
   const seenPublishers = new Set<string>();
+  const seenTitles = new Set<string>();
   const orderedLinks: string[] = [];
 
   for (const result of results) {
+    const normalizedTitle = normalizeTitleValue(result.title);
+    if (normalizedTitle && seenTitles.has(normalizedTitle)) {
+      continue;
+    }
+
     const link = result.link;
     if (!link || seenLinks.has(link)) {
       continue;
@@ -107,6 +117,9 @@ async function fetchSources(
 
     seenLinks.add(link);
     seenPublishers.add(publisherId);
+    if (normalizedTitle) {
+      seenTitles.add(normalizedTitle);
+    }
     orderedLinks.push(link);
 
     if (orderedLinks.length >= 5) {
@@ -210,15 +223,38 @@ async function fetchNewsArticles(
       limit: 8,
     });
 
-    return serpResults
-      .map((item: SerpApiResult) => ({
+    const seenTitles = new Set<string>();
+    const articles: NewsArticle[] = [];
+
+    for (const item of serpResults) {
+      const normalizedTitle = normalizeTitleValue(item.title);
+      if (normalizedTitle && seenTitles.has(normalizedTitle)) {
+        continue;
+      }
+
+      const article: NewsArticle = {
         title: item.title || 'Untitled',
         url: item.link || '',
         summary: item.snippet || '',
         publishedAt: item.date || item.published_at || '',
-      }))
-      .filter((item) => item.title && item.url)
-      .slice(0, 8);
+      };
+
+      if (!article.title || !article.url) {
+        continue;
+      }
+
+      if (normalizedTitle) {
+        seenTitles.add(normalizedTitle);
+      }
+
+      articles.push(article);
+
+      if (articles.length >= 8) {
+        break;
+      }
+    }
+
+    return articles;
   } catch (err) {
     console.warn('[api/generate] serpapi fallback failed', err);
     return [];
