@@ -589,22 +589,50 @@ function buildUrlVariants(url: string): string[] {
     return [];
   }
 
-  const variants = new Set<string>([normalized]);
-  if (normalized.endsWith('/')) {
-    variants.add(normalized.slice(0, -1));
-  } else {
-    variants.add(`${normalized}/`);
-  }
+  const variants = new Set<string>();
+  const addVariant = (value: string | null | undefined) => {
+    if (!value) {
+      return;
+    }
+    variants.add(value);
+    if (value.endsWith('/')) {
+      variants.add(value.slice(0, -1));
+    } else {
+      variants.add(`${value}/`);
+    }
+  };
+
+  addVariant(normalized);
 
   try {
     const parsed = new URL(normalized);
     parsed.hash = '';
-    const href = parsed.toString();
-    variants.add(href);
-    if (href.endsWith('/')) {
-      variants.add(href.slice(0, -1));
-    } else {
-      variants.add(`${href}/`);
+    const baseHref = parsed.toString();
+    addVariant(baseHref);
+
+    const hostnames = new Set<string>([parsed.hostname]);
+    if (parsed.hostname.startsWith('www.')) {
+      hostnames.add(parsed.hostname.slice(4));
+    } else if (parsed.hostname) {
+      hostnames.add(`www.${parsed.hostname}`);
+    }
+
+    const protocols = new Set<string>([parsed.protocol]);
+    if (parsed.protocol === 'https:') {
+      protocols.add('http:');
+    } else if (parsed.protocol === 'http:') {
+      protocols.add('https:');
+    }
+
+    for (const hostname of hostnames) {
+      if (!hostname) continue;
+      for (const protocol of protocols) {
+        if (!protocol) continue;
+        const variantUrl = new URL(baseHref);
+        variantUrl.hostname = hostname;
+        variantUrl.protocol = protocol;
+        addVariant(variantUrl.toString());
+      }
     }
   } catch {
     // Ignore malformed URLs that cannot be parsed.

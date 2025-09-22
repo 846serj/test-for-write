@@ -7,17 +7,23 @@ const routePath = new URL('../src/app/api/generate/route.ts', import.meta.url);
 const tsCode = fs.readFileSync(routePath, 'utf8');
 
 const minLinksMatch = tsCode.match(/const MIN_LINKS = \d+;/);
+const factualTempMatch = tsCode.match(/const FACTUAL_TEMPERATURE\s*=\s*[^;]+;/);
 const modelLimitsMatch = tsCode.match(/const MODEL_CONTEXT_LIMITS[\s\S]*?};/);
 const normalizeHrefMatch = tsCode.match(/function normalizeHrefValue[\s\S]*?\n\}/);
-const buildVariantsMatch = tsCode.match(/function buildUrlVariants[\s\S]*?\n\}/);
+const linksClusteredMatch = tsCode.match(/function linksClusteredNearEnd[\s\S]*?\n\}/);
+const buildVariantsMatch = tsCode.match(
+  /function buildUrlVariants[\s\S]*?return Array\.from\(variants\);\n\}/
+);
 const cleanOutputMatch = tsCode.match(/function cleanModelOutput[\s\S]*?\n\}/);
 const findMissingMatch = tsCode.match(/function findMissingSources[\s\S]*?\n\}/);
 const funcMatch = tsCode.match(/async function generateWithLinks[\s\S]*?\n\}/);
 
 const snippet = `
 ${minLinksMatch[0]}
+${factualTempMatch[0]}
 ${modelLimitsMatch[0]}
 ${normalizeHrefMatch[0]}
+${linksClusteredMatch[0]}
 ${buildVariantsMatch[0]}
 ${cleanOutputMatch[0]}
 ${findMissingMatch[0]}
@@ -28,7 +34,9 @@ ${funcMatch[0]}
 export { generateWithLinks, MIN_LINKS, responses, calls, findMissingSources };
 `;
 
-const jsCode = ts.transpileModule(snippet, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
+const jsCode = ts.transpileModule(snippet, {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2018 },
+}).outputText;
 const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString('base64');
 const { generateWithLinks, MIN_LINKS, responses, calls, findMissingSources } = await import(moduleUrl);
 
@@ -120,6 +128,17 @@ test('findMissingSources detects uncited URLs even with encoded hrefs', () => {
   const missing = findMissingSources(html, [
     'https://example.com/story',
     'https://demo.com/article?a=1&b=2',
+    'https://third.com/miss',
+  ]);
+  assert.deepStrictEqual(missing, ['https://third.com/miss']);
+});
+
+test('findMissingSources accepts host and protocol variants', () => {
+  const html =
+    '<a href="https://www.example.com/story">One</a> <a href="http://sample.com/path">Two</a>';
+  const missing = findMissingSources(html, [
+    'https://example.com/story',
+    'https://www.sample.com/path',
     'https://third.com/miss',
   ]);
   assert.deepStrictEqual(missing, ['https://third.com/miss']);
