@@ -2,8 +2,10 @@ export interface SerpApiNewsResult {
   title?: string;
   link?: string;
   snippet?: string;
+  summary?: string;
   date?: string;
   published_at?: string;
+  date_published?: string;
   source?: string | { name?: string } | null;
 }
 
@@ -11,7 +13,10 @@ export interface SerpApiOrganicResult {
   title?: string;
   link?: string;
   snippet?: string;
+  summary?: string;
   date?: string;
+  published_at?: string;
+  date_published?: string;
   source?: string;
 }
 
@@ -35,8 +40,10 @@ export type SerpApiResult = {
   title?: string;
   link?: string;
   snippet?: string;
+  summary?: string;
   date?: string;
   published_at?: string;
+  date_published?: string;
   source?: string;
 };
 
@@ -71,8 +78,10 @@ function mapResponseToResults(data: SerpApiResponse): SerpApiResult[] {
       title: item?.title,
       link: item?.link,
       snippet: item?.snippet,
+      summary: item?.summary ?? item?.snippet,
       date: item?.date,
       published_at: item?.published_at,
+      date_published: item?.date_published,
       source: normalizeSource(item?.source),
     }));
   }
@@ -82,7 +91,10 @@ function mapResponseToResults(data: SerpApiResponse): SerpApiResult[] {
       title: item?.title,
       link: item?.link,
       snippet: item?.snippet,
+      summary: item?.summary ?? item?.snippet,
       date: item?.date,
+      published_at: item?.published_at,
+      date_published: item?.date_published,
       source: item?.source,
     }));
   }
@@ -92,6 +104,7 @@ function mapResponseToResults(data: SerpApiResponse): SerpApiResult[] {
       title: item?.title,
       link: item?.link,
       snippet: item?.snippet ?? item?.publication_info?.summary,
+      summary: item?.snippet ?? item?.publication_info?.summary,
     }));
   }
 
