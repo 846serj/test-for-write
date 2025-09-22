@@ -1,8 +1,13 @@
 // SERPAPI Response Types
 export interface SerpApiResult {
-  link: string;
+  link?: string;
   title?: string;
   snippet?: string;
+  summary?: string;
+  date?: string;
+  published_at?: string;
+  date_published?: string;
+  source?: string;
 }
 
 export interface SerpApiResponse {
