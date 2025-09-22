@@ -197,3 +197,19 @@ test('findMissingSources matches sources that include query strings', () => {
   const missing = findMissingSources(html, ['https://example.com/story?utm_source=feed']);
   assert.deepStrictEqual(missing, []);
 });
+
+test('findMissingSources treats Google News redirect targets as cited', () => {
+  const html = '<a href="https://www.example.com/story">Example</a>';
+  const googleNewsUrl =
+    'https://news.google.com/articles/CBMiXmh0dHBzOi8vd3d3LmV4YW1wbGUuY29tL3N0b3J5P3V0bV9zb3VyY2U9Z29vZ2xl?hl=en-US&gl=US&ceid=US:en';
+  const missing = findMissingSources(html, [googleNewsUrl]);
+  assert.deepStrictEqual(missing, []);
+});
+
+test('findMissingSources resolves Google tracking redirects', () => {
+  const html = '<a href="https://www.example.com/story">Example</a>';
+  const googleRedirectUrl =
+    'https://www.google.com/url?url=https%3A%2F%2Fwww.example.com%2Fstory%3Futm_source%3Dgoogle&sa=t';
+  const missing = findMissingSources(html, [googleRedirectUrl]);
+  assert.deepStrictEqual(missing, []);
+});
