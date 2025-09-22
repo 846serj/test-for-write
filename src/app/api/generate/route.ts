@@ -284,6 +284,7 @@ const MODEL_CONTEXT_LIMITS: Record<string, number> = {
 const DETAIL_INSTRUCTION =
   '- Provide specific real-world examples (e.g., car model years or actual app names) instead of generic placeholders like "App 1".\n' +
   '- When sources include concrete facts, repeat them precisely: list full names, state exact dates with month/day/year, give unrounded figures, and preserve other specific details.\n' +
+  '- Keep official names, model numbers, and other exact designations verbatim when they appear in the sources (e.g., "IL-20" instead of "plane").\n' +
   '- Do not speculate or embellish beyond what the sources explicitly provide.\n';
 
 function calcMaxTokens(
