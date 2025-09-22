@@ -40,10 +40,26 @@ const { fetchSources, serpCalls, setSerpResults, fetchNewsArticles } = await imp
 test('fetchSources requests google_news with freshness filter and preserves order', async () => {
   serpCalls.length = 0;
   setSerpResults([
+    {
+      link: 'https://example.com/newest',
+      source: 'Example News',
+      title: 'Latest Update',
+      snippet: '  Latest summary   here ',
+      date: '2024-01-01T00:00:00Z',
+    },
+    {
+      link: 'https://example.com/second',
+      source: 'Another Source',
+      title: 'Second Story',
+      snippet: 'Second summary',
+    },
     { link: 'https://example.com/newest', source: 'Example News' },
-    { link: 'https://example.com/second', source: 'Another Source' },
-    { link: 'https://example.com/newest', source: 'Example News' },
-    { link: 'https://example.com/third', source: 'Third Source' },
+    {
+      link: 'https://example.com/third',
+      source: 'Third Source',
+      title: 'Third Story',
+      snippet: '',
+    },
   ]);
   const sources = await fetchSources('breaking topic', '1h');
   assert.strictEqual(serpCalls.length, 1);
@@ -51,11 +67,27 @@ test('fetchSources requests google_news with freshness filter and preserves orde
   assert.strictEqual(serpCalls[0].query, 'breaking topic');
   assert.strictEqual(serpCalls[0].extraParams?.tbs, 'qdr:h');
   assert.strictEqual(serpCalls[0].limit, 8);
-  assert.deepStrictEqual(sources, [
-    'https://example.com/newest',
-    'https://example.com/second',
-    'https://example.com/third',
-  ]);
+  assert.deepStrictEqual(
+    sources.map(({ url, summary, publishedAt }) => ({ url, summary, publishedAt })),
+    [
+      {
+        url: 'https://example.com/newest',
+        summary: 'Latest summary here',
+        publishedAt: '2024-01-01T00:00:00Z',
+      },
+      {
+        url: 'https://example.com/second',
+        summary: 'Second summary',
+        publishedAt: '',
+      },
+      {
+        url: 'https://example.com/third',
+        summary: '',
+        publishedAt: '',
+      },
+    ]
+  );
+  assert.strictEqual(sources[0].title, 'Latest Update');
 });
 
 test('fetchSources defaults to 6h freshness when none provided', async () => {
@@ -81,7 +113,7 @@ test('fetchSources skips results that share the same publisher source', async ()
   ]);
 
   const sources = await fetchSources('duplicate publishers');
-  assert.deepStrictEqual(sources, [
+  assert.deepStrictEqual(sources.map((item) => item.url), [
     'https://example.com/article-a',
     'https://different.com/story',
   ]);
@@ -96,7 +128,7 @@ test('fetchSources deduplicates by hostname when source metadata is missing', as
   ]);
 
   const sources = await fetchSources('missing sources');
-  assert.deepStrictEqual(sources, [
+  assert.deepStrictEqual(sources.map((item) => item.url), [
     'https://www.host.com/article-1',
     'https://another.com/story',
   ]);
@@ -114,7 +146,7 @@ test('fetchSources limits to five unique publishers while preserving order', asy
   ]);
 
   const sources = await fetchSources('many sources');
-  assert.deepStrictEqual(sources, [
+  assert.deepStrictEqual(sources.map((item) => item.url), [
     'https://a.com/1',
     'https://b.com/1',
     'https://c.com/1',
@@ -144,7 +176,7 @@ test('fetchSources skips duplicate headlines even from different publishers', as
   ]);
 
   const sources = await fetchSources('duplicate titles');
-  assert.deepStrictEqual(sources, [
+  assert.deepStrictEqual(sources.map((item) => item.url), [
     'https://unique.com/story',
     'https://another.com/story',
   ]);
@@ -176,7 +208,7 @@ test('fetchSources dedupes titles that only differ by trailing publisher separat
   ]);
 
   const sources = await fetchSources('separator dedupe');
-  assert.deepStrictEqual(sources, [
+  assert.deepStrictEqual(sources.map((item) => item.url), [
     'https://site-a.com/story',
     'https://site-d.com/unique',
   ]);

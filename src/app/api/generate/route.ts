@@ -16,6 +16,13 @@ interface NewsArticle {
   publishedAt: string;
 }
 
+interface ReportingSource {
+  title: string;
+  url: string;
+  summary: string;
+  publishedAt: string;
+}
+
 const FRESHNESS_TO_HOURS: Record<NewsFreshness, number> = {
   '1h': 1,
   '6h': 6,
@@ -244,7 +251,7 @@ function calcMaxTokens(
 async function fetchSources(
   headline: string,
   freshness?: NewsFreshness
-): Promise<string[]> {
+): Promise<ReportingSource[]> {
   const resolvedFreshness = resolveFreshness(freshness);
   const results = await serpapiSearch({
     query: headline,
@@ -256,7 +263,7 @@ async function fetchSources(
   const seenLinks = new Set<string>();
   const seenPublishers = new Set<string>();
   const seenTitles = new Set<string>();
-  const orderedLinks: string[] = [];
+  const orderedSources: ReportingSource[] = [];
 
   for (const result of results) {
     const normalizedTitle = normalizeTitleValue(result.title);
@@ -274,19 +281,63 @@ async function fetchSources(
       continue;
     }
 
+    const summary = (result.snippet || result.summary || '').replace(/\s+/g, ' ').trim();
+    const publishedAt =
+      result.date || result.published_at || result.date_published || '';
+    const title = result.title || 'Untitled';
+
     seenLinks.add(link);
     seenPublishers.add(publisherId);
     if (normalizedTitle) {
       seenTitles.add(normalizedTitle);
     }
-    orderedLinks.push(link);
 
-    if (orderedLinks.length >= 5) {
+    orderedSources.push({
+      title,
+      url: link,
+      summary,
+      publishedAt,
+    });
+
+    if (orderedSources.length >= 5) {
       break;
     }
   }
 
-  return orderedLinks;
+  return orderedSources;
+}
+
+function formatPublishedTimestamp(value: string): string {
+  if (!value) {
+    return 'Unknown publication time';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Unknown publication time';
+  }
+  return date.toISOString();
+}
+
+function normalizeSummary(summary: string): string {
+  const trimmed = summary.replace(/\s+/g, ' ').trim();
+  return trimmed || 'No summary provided.';
+}
+
+function buildRecentReportingBlock(sources: ReportingSource[]): string {
+  if (!sources.length) {
+    return '';
+  }
+
+  const entries = sources
+    .map((item) => {
+      const timestamp = formatPublishedTimestamp(item.publishedAt);
+      const summary = normalizeSummary(item.summary);
+      const title = item.title || 'Untitled';
+      return `- "${title}" (${timestamp})\n  Summary: ${summary}\n  URL: ${item.url}`;
+    })
+    .join('\n');
+
+  return `Recent reporting to reference:\n${entries}`;
 }
 
 function normalizePublisher(result: SerpApiResult): string | null {
@@ -627,18 +678,7 @@ export async function POST(request: Request) {
               .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
           : '';
 
-      const articleSummaries = articles
-        .map((item) => {
-          const date = item.publishedAt ? new Date(item.publishedAt) : null;
-          const timestamp = date && !isNaN(date.getTime())
-            ? date.toISOString()
-            : 'Unknown publication time';
-          const summary = item.summary
-            ? item.summary.replace(/\s+/g, ' ').trim()
-            : 'No summary provided.';
-          return `- "${item.title}" (${timestamp})\n  Summary: ${summary}\n  URL: ${item.url}`;
-        })
-        .join('\n');
+      const reportingBlock = buildRecentReportingBlock(articles);
 
       let lengthInstruction = '';
       if (lengthOption === 'custom' && customSections) {
@@ -661,8 +701,7 @@ You are a professional news reporter writing a fast-turnaround article about "${
 
 Do NOT include the title or any <h1> tag in the HTML output.
 
-Recent reporting to reference:
-${articleSummaries}
+${reportingBlock}
 
 ${toneInstruction}${povInstruction}Requirements:
   ${lengthInstruction}${customInstructionBlock}  - Synthesize the developments from the listed sources into a cohesive news article.
@@ -699,7 +738,14 @@ Write the full article in valid HTML below:
       });
     }
 
-    const sources = serpEnabled ? await fetchSources(title, newsFreshness) : [];
+    const reportingSources = serpEnabled
+      ? await fetchSources(title, newsFreshness)
+      : [];
+    const reportingBlock = buildRecentReportingBlock(reportingSources);
+    const groundingInstruction = reportingSources.length
+      ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\n'
+      : '';
+    const linkSources = reportingSources.map((item) => item.url).filter(Boolean);
 
     // ─── Listicle/Gallery ────────────────────────────────────────────────────────
     if (articleType === 'Listicle/Gallery') {
@@ -734,9 +780,9 @@ List only the headings (no descriptions).
       const customInstructionBlock = customInstruction
         ? `- ${customInstruction}\n`
         : '';
-      const minLinks = Math.min(MIN_LINKS, sources.length); // how many links to require
-      const linkInstruction = sources.length
-        ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${sources
+      const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
+      const linkInstruction = linkSources.length
+        ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${linkSources
             .map((u) => `  - ${u}`)
             .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
         : '';
@@ -749,6 +795,8 @@ List only the headings (no descriptions).
         ? `- Use a ${pointOfView} perspective.\n`
         : '';
 
+      const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
+
       const articlePrompt = `
 You are a professional journalist writing a listicle-style web article.
 
@@ -758,14 +806,14 @@ Do NOT include the title or any <h1> tag in the HTML output.
 Outline:
 ${outline}
 
-${toneInstruction}${povInstruction}Requirements:
+${reportingSection}${toneInstruction}${povInstruction}Requirements:
   ${lengthInstruction}${numberingInstruction}${wordCountInstruction}${customInstructionBlock}  - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
   - For each <h2> in the outline, write 2–3 paragraphs under it.
   - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
   - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${customInstructionBlock}${linkInstruction}  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
+  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
   - Do NOT invent sources or links.
 
 Write the full article in valid HTML below:
@@ -781,14 +829,14 @@ Write the full article in valid HTML below:
       const content = await generateWithLinks(
         articlePrompt,
         modelVersion,
-        sources,
+        linkSources,
         minLinks,
         maxTokens,
         minWords
       );
       return NextResponse.json({
         content,
-        sources,
+        sources: linkSources,
       });
     }
 
@@ -802,12 +850,14 @@ Write the full article in valid HTML below:
       const customInstructionBlock = customInstruction
         ? `- ${customInstruction}\n`
         : '';
-      const minLinks = Math.min(MIN_LINKS, sources.length); // how many links to require
-      const linkInstruction = sources.length
-        ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${sources
+      const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
+      const linkInstruction = linkSources.length
+        ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${linkSources
             .map((u) => `  - ${u}`)
             .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
         : '';
+
+      const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
 
       const articlePrompt = `
 You are a professional journalist writing a web article from a YouTube transcript.
@@ -815,14 +865,14 @@ You are a professional journalist writing a web article from a YouTube transcrip
 Title: "${title}"
 Do NOT include the title or any <h1> tag in the HTML output.
 
-${transcriptInstruction}${toneInstruction}${povInstruction}Requirements:
+${transcriptInstruction}${reportingSection}${toneInstruction}${povInstruction}Requirements:
   - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
   - For each <h2> in the outline, write 2–3 paragraphs under it.
   - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
   - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${customInstructionBlock}${linkInstruction}  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
+  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
   - Do NOT invent sources or links.
 
 Write the full article in valid HTML below:
@@ -831,13 +881,13 @@ Write the full article in valid HTML below:
       const content = await generateWithLinks(
         articlePrompt,
         modelVersion,
-        sources,
+        linkSources,
         minLinks,
         baseMaxTokens
       );
       return NextResponse.json({
         content,
-        sources,
+        sources: linkSources,
       });
     }
 
@@ -854,15 +904,17 @@ Write the full article in valid HTML below:
       const customInstructionBlock = customInstruction
         ? `- ${customInstruction}\n`
         : '';
-      const minLinks = Math.min(MIN_LINKS, sources.length); // how many links to require
-      const linkInstruction = sources.length
-        ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${sources
+      const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
+      const linkInstruction = linkSources.length
+        ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${linkSources
             .map((u) => `  - ${u}`)
             .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
         : '';
       const rewriteInstruction = sourceText
         ? `- Rewrite the following content completely to avoid plagiarism:\n\n${sourceText}\n\n`
         : `- Rewrite the blog post at this URL completely to avoid plagiarism: ${blogLink}\n`;
+
+      const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
 
       let lengthInstruction: string;
       if (lengthOption === 'default') {
@@ -887,7 +939,7 @@ You are a professional journalist rewriting an existing blog post into a fresh, 
 Title: "${title}"
 Do NOT include the title or any <h1> tag in the HTML output.
 
-${rewriteInstruction}${toneInstruction}${povInstruction}Requirements:
+${rewriteInstruction}${reportingSection}${toneInstruction}${povInstruction}Requirements:
   ${lengthInstruction}
   - Begin with a 2–3 sentence introduction (no <h2> tags).
   - Organize the article with <h2> headings similar to the original structure.
@@ -896,7 +948,7 @@ ${rewriteInstruction}${toneInstruction}${povInstruction}Requirements:
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
   - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${customInstructionBlock}${linkInstruction}  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
+  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
   - Do NOT invent sources or links.
 
 Write the full article in valid HTML below:
@@ -905,14 +957,14 @@ Write the full article in valid HTML below:
       const content = await generateWithLinks(
         articlePrompt,
         modelVersion,
-        sources,
+        linkSources,
         minLinks,
         maxTokens,
         getWordBounds(lengthOption, customSections)[0]
       );
       return NextResponse.json({
         content,
-        sources,
+        sources: linkSources,
       });
     }
 
@@ -931,8 +983,8 @@ Write the full article in valid HTML below:
     }
 
     const references =
-      sources.length > 0
-        ? `• Use these references:\n${sources
+      linkSources.length > 0
+        ? `• Use these references:\n${linkSources
             .map((u) => `- ${u}`)
             .join('\n')}`
         : '';
@@ -981,12 +1033,14 @@ ${references}
         '- Aim for around 9 sections (~1,900 words total, ~220 words per section), but feel free to adjust based on the topic.\n';
     }
 
-    const minLinks = Math.min(MIN_LINKS, sources.length); // how many links to require
-    const linkInstruction = sources.length
-      ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${sources
+    const minLinks = Math.min(MIN_LINKS, linkSources.length); // how many links to require
+    const linkInstruction = linkSources.length
+      ? `- Integrate at least ${minLinks} clickable HTML links into relevant keywords or phrases.\n${linkSources
           .map((u) => `  - ${u}`)
           .join('\n')}\n  - Embed each link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end. Spread the links naturally across the article.`
       : '';
+
+    const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
 
     const articlePrompt = `
 You are a professional journalist writing a web article.
@@ -997,7 +1051,7 @@ Do NOT include the title or any <h1> tag in the HTML output.
 Outline:
 ${outline}
 
-${toneInstruction}${povInstruction}Requirements:
+${reportingSection}${toneInstruction}${povInstruction}Requirements:
   ${lengthInstruction}
   - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
   - For each <h2> in the outline, write 2–3 paragraphs under it.
@@ -1005,7 +1059,7 @@ ${toneInstruction}${povInstruction}Requirements:
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
   - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${customInstructionBlock}${linkInstruction}
+  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}
   - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
   - Do NOT invent sources or links.
 
@@ -1015,14 +1069,14 @@ Output raw HTML only:
     const content = await generateWithLinks(
       articlePrompt,
       modelVersion,
-      sources,
+      linkSources,
       minLinks,
       baseMaxTokens,
       getWordBounds(lengthOption, customSections)[0]
     );
     return NextResponse.json({
       content,
-      sources,
+      sources: linkSources,
     });
   } catch (err: any) {
     console.error('[api/generate] error:', err);
