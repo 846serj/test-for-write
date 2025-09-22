@@ -1172,6 +1172,76 @@ type SummaryClusterInput = {
   articles: SummaryClusterArticle[];
 };
 
+function buildFallbackBullets(input: SummaryClusterInput): string[] {
+  const seen = new Set<string>();
+  const bullets: string[] = [];
+
+  const pushBullet = (raw: string | undefined, { allowDuplicate = false } = {}) => {
+    if (!raw || bullets.length >= 5) {
+      return;
+    }
+
+    const normalized = raw.replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+      return;
+    }
+
+    const words = normalized.split(/\s+/).filter(Boolean);
+    if (words.length === 0) {
+      return;
+    }
+
+    const truncated = words.slice(0, 30).join(' ');
+    if (!truncated) {
+      return;
+    }
+
+    const key = truncated.toLowerCase();
+    if (!allowDuplicate) {
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+    }
+
+    bullets.push(truncated);
+  };
+
+  for (const article of input.articles) {
+    pushBullet(article.summary);
+    if (bullets.length >= 5) {
+      break;
+    }
+  }
+
+  if (bullets.length < 3) {
+    for (const article of input.articles) {
+      pushBullet(article.title);
+      if (bullets.length >= 5) {
+        break;
+      }
+    }
+  }
+
+  const placeholders = [
+    'Detail not provided in source.',
+    'Additional detail not provided in source.',
+    'Further detail not provided in source.',
+  ];
+
+  let placeholderIndex = 0;
+  while (bullets.length < 3 && placeholderIndex < placeholders.length) {
+    pushBullet(placeholders[placeholderIndex], { allowDuplicate: true });
+    placeholderIndex += 1;
+  }
+
+  while (bullets.length < 3 && bullets.length < 5) {
+    pushBullet('Detail not provided in source.', { allowDuplicate: true });
+  }
+
+  return bullets.slice(0, 5);
+}
+
 async function generateClusterSummaries(
   client: OpenAIClient,
   clusters: HeadlineCandidate[],
@@ -1234,6 +1304,11 @@ async function generateClusterSummaries(
   });
 
   const serialized = JSON.stringify(inputs, null, 2);
+
+  const fallbackSummaries = new Map<string, string[]>();
+  for (const input of inputs) {
+    fallbackSummaries.set(input.id, buildFallbackBullets(input));
+  }
 
   const systemPrompt = `You are a news summarizer. Summarize the article TEXT into 3–5 factual bullets.
 Rules:
@@ -1322,10 +1397,23 @@ Rules:
       .slice(0, 5);
 
     if (normalizedBullets.length < 3) {
+      const fallback = fallbackSummaries.get(id);
+      if (fallback && fallback.length >= 3) {
+        result[id] = [...fallback];
+      }
       continue;
     }
 
     result[id] = normalizedBullets;
+  }
+
+  for (const input of inputs) {
+    if (!result[input.id] || result[input.id].length < 3) {
+      const fallback = fallbackSummaries.get(input.id);
+      if (fallback && fallback.length >= 3) {
+        result[input.id] = [...fallback];
+      }
+    }
   }
 
   return result;
