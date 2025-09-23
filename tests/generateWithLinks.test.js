@@ -9,6 +9,7 @@ const tsCode = fs.readFileSync(routePath, 'utf8');
 const minLinksMatch = tsCode.match(/const MIN_LINKS = \d+;/);
 const factualTempMatch = tsCode.match(/const FACTUAL_TEMPERATURE\s*=\s*[^;]+;/);
 const modelLimitsMatch = tsCode.match(/const MODEL_CONTEXT_LIMITS[\s\S]*?};/);
+const normalizeTitleMatch = tsCode.match(/function normalizeTitleValue[\s\S]*?\n\}/);
 const normalizeHrefMatch = tsCode.match(/function normalizeHrefValue[\s\S]*?\n\}/);
 const buildVariantsMatch = tsCode.match(
   /function buildUrlVariants[\s\S]*?return Array\.from\(variants\);\n\}/
@@ -27,6 +28,7 @@ const snippet = `
 ${minLinksMatch[0]}
 ${factualTempMatch[0]}
 ${modelLimitsMatch[0]}
+${normalizeTitleMatch[0]}
 ${normalizeHrefMatch[0]}
 ${buildVariantsMatch[0]}
 ${cleanOutputMatch[0]}
@@ -45,7 +47,7 @@ const jsCode = ts.transpileModule(snippet, {
 const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString('base64');
 const { generateWithLinks, MIN_LINKS, responses, calls, findMissingSources } = await import(moduleUrl);
 
-test('generateWithLinks distributes missing sources into existing containers', async () => {
+test('generateWithLinks embeds required sources inside matching phrases', async () => {
   calls.length = 0;
   responses.length = 0;
   responses.push({
@@ -53,33 +55,80 @@ test('generateWithLinks distributes missing sources into existing containers', a
       {
         message: {
           content:
-            '<p>Intro paragraph.</p><p>Details with <a href="a">first</a> citation.</p>',
+            '<p>Alpha Corp partnered with Beta Initiative on Tuesday, according to recent TechCrunch coverage.</p>' +
+            '<ul><li>Reuters reported that the Securities and Exchange Commission opened a review.</li>' +
+            '<li>Bloomberg highlighted Federal Trade Commission concerns and investor unease.</li></ul>',
         },
       },
     ],
   });
+  const sources = [
+    'https://techcrunch.com/story',
+    'https://www.reuters.com/markets/idUS123',
+    'https://www.bloomberg.com/news/articles/xyz',
+  ];
+  const metadata = [
+    {
+      url: 'https://techcrunch.com/story',
+      title: 'Alpha Corp partners with Beta Initiative - TechCrunch',
+    },
+    {
+      url: 'https://www.reuters.com/markets/idUS123',
+      title: 'Securities and Exchange Commission review - Reuters',
+    },
+    {
+      url: 'https://www.bloomberg.com/news/articles/xyz',
+      title: 'Federal Trade Commission raises concerns - Bloomberg',
+    },
+  ];
   const systemPrompt = 'system context';
   const content = await generateWithLinks(
     'prompt',
     'model',
-    ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
+    sources,
     systemPrompt,
     MIN_LINKS,
-    100
+    100,
+    0,
+    metadata
   );
-  assert(content.includes('href="a"'));
-  assert(content.includes('<a href="b" target="_blank" rel="noopener">paragraph</a>.'));
-  assert(content.includes('<a href="c" target="_blank" rel="noopener">citation</a>.'));
-  assert(content.includes('<a href="d" target="_blank" rel="noopener">Intro</a>'));
-  assert(content.includes('<a href="e" target="_blank" rel="noopener">Details</a>'));
-  assert(content.includes('<a href="f" target="_blank" rel="noopener">f</a>'));
-  assert(content.includes('<a href="g" target="_blank" rel="noopener">g</a>'));
-  assert(!content.includes('>Source</a>'));
-  assert(!content.includes('Source:'));
   const linkCount = (content.match(/<a\s+href=/g) ?? []).length;
-  assert.strictEqual(linkCount, 7);
+  assert.strictEqual(linkCount, 3);
   assert.strictEqual(responses.length, 0);
   assert.strictEqual(calls.length, 1);
+  const techcrunchAnchor = content.match(
+    /<a href="https:\/\/techcrunch.com\/story"[^>]*>(.*?)<\/a>/
+  );
+  assert(techcrunchAnchor);
+  assert(
+    ['Alpha Corp', 'Beta Initiative', 'TechCrunch'].some((phrase) =>
+      techcrunchAnchor[1].includes(phrase)
+    )
+  );
+  assert(/<p>[^<]*<a href="https:\/\/techcrunch.com\/story"/i.test(content));
+  const reutersAnchor = content.match(
+    /<a href="https:\/\/www\.reuters.com\/markets\/idUS123"[^>]*>(.*?)<\/a>/
+  );
+  assert(reutersAnchor);
+  assert(
+    ['Reuters', 'Securities and Exchange Commission'].some((phrase) =>
+      reutersAnchor[1].includes(phrase)
+    )
+  );
+  assert(/<li>[^<]*<a href="https:\/\/www\.reuters.com\/markets\/idUS123"/i.test(content));
+  const bloombergAnchor = content.match(
+    /<a href="https:\/\/www\.bloomberg.com\/news\/articles\/xyz"[^>]*>(.*?)<\/a>/
+  );
+  assert(bloombergAnchor);
+  assert(
+    ['Bloomberg', 'Federal Trade Commission'].some((phrase) =>
+      bloombergAnchor[1].includes(phrase)
+    )
+  );
+  assert(/<li>[^<]*<a href="https:\/\/www\.bloomberg.com\/news\/articles\/xyz"/i.test(content));
+  for (const url of sources) {
+    assert(!content.includes(`<p><a href="${url}`));
+  }
   const { messages } = calls[0];
   assert.strictEqual(messages.length, 2);
   assert.deepStrictEqual(messages[0], { role: 'system', content: systemPrompt });
@@ -105,7 +154,7 @@ test('generateWithLinks leaves content unchanged when all required cited', async
   assert.strictEqual(calls.length, 1);
 });
 
-test('generateWithLinks appends sources when no containers exist', async () => {
+test('generateWithLinks links inline even when paragraph containers are missing', async () => {
   calls.length = 0;
   responses.length = 0;
   responses.push({ choices: [{ message: { content: '<div>Intro only.</div>' } }] });
@@ -118,14 +167,12 @@ test('generateWithLinks appends sources when no containers exist', async () => {
     100
   );
   assert(
-    content.includes(
-      '<p><a href="https://example.com/story" target="_blank" rel="noopener">example.com</a></p>'
-    )
+    /<div><a href="https:\/\/example.com\/story"[^>]*>Intro<\/a> only\.<\/div>/.test(content)
   );
-  assert(!content.includes('Source'));
+  assert(!content.includes('<p><a href="https://example.com/story"'));
 });
 
-test('generateWithLinks falls back to inline label when no keywords remain', async () => {
+test('generateWithLinks wraps available text when keywords are absent', async () => {
   calls.length = 0;
   responses.length = 0;
   responses.push({ choices: [{ message: { content: '<p>And then.</p>' } }] });
@@ -138,11 +185,8 @@ test('generateWithLinks falls back to inline label when no keywords remain', asy
     100
   );
   assert(
-    content.includes(
-      'And then. <a href="https://demo.example.com/path" target="_blank" rel="noopener">demo.example.com</a>'
-    )
+    /<p><a href="https:\/\/demo.example.com\/path"[^>]*>And then\.<\/a><\/p>/.test(content)
   );
-  assert(!content.includes('Source'));
 });
 
 test('generateWithLinks retries when response is truncated', async () => {
