@@ -1590,6 +1590,8 @@ ${transcriptInstruction}${reportingSection}${toneInstruction}${povInstruction}Re
 Write the full article in valid HTML below:
 `.trim();
 
+      const [minWords] = getWordBounds(lengthOption, customSections);
+
       const content = await generateWithLinks(
         articlePrompt,
         modelVersion,
@@ -1597,6 +1599,7 @@ Write the full article in valid HTML below:
         systemPrompt,
         minLinks,
         baseMaxTokens,
+        minWords,
         reportingSources
       );
       return NextResponse.json({
