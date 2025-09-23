@@ -15,7 +15,12 @@ const buildVariantsMatch = tsCode.match(
 );
 const cleanOutputMatch = tsCode.match(/function cleanModelOutput[\s\S]*?\n\}/);
 const findMissingMatch = tsCode.match(/function findMissingSources[\s\S]*?\n\}/);
-const escapeHtmlMatch = tsCode.match(/function escapeHtml[\s\S]*?\n\}/);
+const helpersStart = tsCode.indexOf('function escapeHtml');
+const generateWithLinksIndex = tsCode.indexOf('async function generateWithLinks');
+if (helpersStart === -1 || generateWithLinksIndex === -1) {
+  throw new Error('Failed to locate helper functions for generateWithLinks tests');
+}
+const helperBlock = tsCode.slice(helpersStart, generateWithLinksIndex);
 const funcMatch = tsCode.match(/async function generateWithLinks[\s\S]*?\n\}/);
 
 const snippet = `
@@ -26,7 +31,7 @@ ${normalizeHrefMatch[0]}
 ${buildVariantsMatch[0]}
 ${cleanOutputMatch[0]}
 ${findMissingMatch[0]}
-${escapeHtmlMatch[0]}
+${helperBlock}
 let responses = [];
 let calls = [];
 const openai = { chat: { completions: { create: async (opts) => { calls.push(opts); return responses.shift(); } } } };
@@ -63,17 +68,14 @@ test('generateWithLinks distributes missing sources into existing containers', a
     100
   );
   assert(content.includes('href="a"'));
-  assert(
-    content.includes(
-      '<p>Intro paragraph. (<a href="b" target="_blank" rel="noopener">Source</a>) (<a href="d" target="_blank" rel="noopener">Source</a>) (<a href="f" target="_blank" rel="noopener">Source</a>)</p>'
-    )
-  );
-  assert(
-    content.includes(
-      '<p>Details with <a href="a">first</a> citation. (<a href="c" target="_blank" rel="noopener">Source</a>) (<a href="e" target="_blank" rel="noopener">Source</a>) (<a href="g" target="_blank" rel="noopener">Source</a>)</p>'
-    )
-  );
-  assert(!content.includes('<p>Source: '));
+  assert(content.includes('<a href="b" target="_blank" rel="noopener">paragraph</a>.'));
+  assert(content.includes('<a href="c" target="_blank" rel="noopener">citation</a>.'));
+  assert(content.includes('<a href="d" target="_blank" rel="noopener">Intro</a>'));
+  assert(content.includes('<a href="e" target="_blank" rel="noopener">Details</a>'));
+  assert(content.includes('<a href="f" target="_blank" rel="noopener">f</a>'));
+  assert(content.includes('<a href="g" target="_blank" rel="noopener">g</a>'));
+  assert(!content.includes('>Source</a>'));
+  assert(!content.includes('Source:'));
   const linkCount = (content.match(/<a\s+href=/g) ?? []).length;
   assert.strictEqual(linkCount, 7);
   assert.strictEqual(responses.length, 0);
@@ -117,9 +119,30 @@ test('generateWithLinks appends sources when no containers exist', async () => {
   );
   assert(
     content.includes(
-      '<p>Source: <a href="https://example.com/story" target="_blank" rel="noopener">https://example.com/story</a></p>'
+      '<p><a href="https://example.com/story" target="_blank" rel="noopener">example.com</a></p>'
     )
   );
+  assert(!content.includes('Source'));
+});
+
+test('generateWithLinks falls back to inline label when no keywords remain', async () => {
+  calls.length = 0;
+  responses.length = 0;
+  responses.push({ choices: [{ message: { content: '<p>And then.</p>' } }] });
+  const content = await generateWithLinks(
+    'prompt',
+    'model',
+    ['https://demo.example.com/path'],
+    undefined,
+    MIN_LINKS,
+    100
+  );
+  assert(
+    content.includes(
+      'And then. <a href="https://demo.example.com/path" target="_blank" rel="noopener">demo.example.com</a>'
+    )
+  );
+  assert(!content.includes('Source'));
 });
 
 test('generateWithLinks retries when response is truncated', async () => {
