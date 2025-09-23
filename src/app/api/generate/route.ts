@@ -805,6 +805,295 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function decodeHtmlEntities(text: string): string {
+  if (!text) {
+    return '';
+  }
+  return text.replace(/&(amp|quot|#39|lt|gt);/g, (_, entity: string) => {
+    switch (entity) {
+      case 'lt':
+        return '<';
+      case 'gt':
+        return '>';
+      case 'quot':
+        return '"';
+      case '#39':
+        return "'";
+      default:
+        return '&';
+    }
+  });
+}
+
+function getLinkLabelFromUrl(safeUrl: string): string {
+  const rawUrl = decodeHtmlEntities(safeUrl).trim();
+  if (!rawUrl) {
+    return 'link';
+  }
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.replace(/^www\./i, '');
+    if (host) {
+      return host;
+    }
+  } catch {
+    // Fall back to manual parsing below
+  }
+  const withoutProtocol = rawUrl.replace(/^https?:\/\//i, '');
+  const host = withoutProtocol.split(/[/?#]/)[0];
+  return host || 'link';
+}
+
+interface TextSegment {
+  text: string;
+  start: number;
+  end: number;
+}
+
+interface SnippetRange {
+  start: number;
+  end: number;
+}
+
+const COMMON_STOPWORDS = new Set<string>([
+  'a',
+  'an',
+  'and',
+  'or',
+  'but',
+  'if',
+  'nor',
+  'for',
+  'so',
+  'yet',
+  'the',
+  'of',
+  'in',
+  'on',
+  'to',
+  'with',
+  'by',
+  'as',
+  'at',
+  'from',
+  'into',
+  'about',
+  'after',
+  'before',
+  'during',
+  'while',
+  'since',
+  'until',
+  'amid',
+  'among',
+  'between',
+  'across',
+  'around',
+  'because',
+  'that',
+  'this',
+  'those',
+  'these',
+  'their',
+  'his',
+  'her',
+  'its',
+  'our',
+  'your',
+  'my',
+  'mine',
+  'ours',
+  'yours',
+  'them',
+  'they',
+  'are',
+  'is',
+  'was',
+  'were',
+  'be',
+  'being',
+  'been',
+  'has',
+  'have',
+  'had',
+  'do',
+  'does',
+  'did',
+  'not',
+  'no',
+  'it',
+  'he',
+  'she',
+  'we',
+  'you',
+  'i',
+  'me',
+  'him',
+  'her',
+  'than',
+  'then',
+  'over',
+  'under',
+  'per',
+  'via',
+  'through',
+  'toward',
+  'towards',
+]);
+
+function extractPlainTextSegments(html: string): TextSegment[] {
+  const segments: TextSegment[] = [];
+  let index = 0;
+  let anchorDepth = 0;
+
+  while (index < html.length) {
+    if (html[index] === '<') {
+      const closeIndex = html.indexOf('>', index + 1);
+      if (closeIndex === -1) {
+        break;
+      }
+      const rawTag = html.slice(index + 1, closeIndex).trim();
+      const isClosing = rawTag.startsWith('/');
+      const tagName = rawTag
+        .replace(/^\//, '')
+        .replace(/\s+[\s\S]*$/, '')
+        .toLowerCase();
+      if (!isClosing) {
+        if (tagName === 'a') {
+          anchorDepth += 1;
+        }
+      } else if (tagName === 'a' && anchorDepth > 0) {
+        anchorDepth -= 1;
+      }
+      index = closeIndex + 1;
+      continue;
+    }
+
+    const start = index;
+    while (index < html.length && html[index] !== '<') {
+      index += 1;
+    }
+    if (anchorDepth === 0 && start < index) {
+      segments.push({ text: html.slice(start, index), start, end: index });
+    }
+  }
+
+  return segments;
+}
+
+function selectTrailingSnippet(text: string): SnippetRange | null {
+  if (!/[A-Za-z0-9]/.test(text)) {
+    return null;
+  }
+
+  const whitespaceMatch = text.match(/(\s*)$/);
+  const trailingWhitespaceLength = whitespaceMatch ? whitespaceMatch[1].length : 0;
+  const contentEnd = text.length - trailingWhitespaceLength;
+  if (contentEnd <= 0) {
+    return null;
+  }
+  const content = text.slice(0, contentEnd);
+  if (!/[A-Za-z0-9]/.test(content)) {
+    return null;
+  }
+
+  const punctuationMatch = content.match(/[\)\]\}”"'.,;:!?]+$/u);
+  const punctuationLength = punctuationMatch ? punctuationMatch[0].length : 0;
+  const coreEnd = contentEnd - punctuationLength;
+  const core = text.slice(0, coreEnd);
+  if (!/[A-Za-z0-9]/.test(core)) {
+    return null;
+  }
+
+  const wordRegex = /[\p{L}\p{N}][\p{L}\p{N}'-]*/gu;
+  const words: { text: string; start: number; end: number }[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = wordRegex.exec(core)) !== null) {
+    words.push({ text: match[0], start: match.index, end: match.index + match[0].length });
+  }
+
+  if (!words.length) {
+    return null;
+  }
+
+  let lastIndex = words.length - 1;
+  while (lastIndex >= 0) {
+    const lower = words[lastIndex].text.toLowerCase();
+    if (!COMMON_STOPWORDS.has(lower)) {
+      break;
+    }
+    lastIndex -= 1;
+  }
+
+  if (lastIndex < 0) {
+    return null;
+  }
+
+  const usableWords = words.slice(0, lastIndex + 1);
+  const lastWord = usableWords[usableWords.length - 1];
+  const trailingEnd = lastWord.end;
+
+  const maxWords = 6;
+  const minMeaningfulLength = 3;
+  let selected: SnippetRange | null = null;
+
+  for (
+    let startIndex = usableWords.length - 1;
+    startIndex >= 0 && usableWords.length - startIndex <= maxWords;
+    startIndex -= 1
+  ) {
+    const slice = usableWords.slice(startIndex);
+    const candidateStart = slice[0].start;
+    const candidateText = core.slice(candidateStart, trailingEnd);
+    const trimmedCandidate = candidateText.trim();
+    if (trimmedCandidate.length < minMeaningfulLength) {
+      continue;
+    }
+    const hasMeaningfulWord = slice.some(
+      (item) => !COMMON_STOPWORDS.has(item.text.toLowerCase())
+    );
+    if (!hasMeaningfulWord) {
+      continue;
+    }
+    const hasCapitalized = slice.some(
+      (item) => /^[A-Z]/.test(item.text) && item.text.toLowerCase() !== item.text
+    );
+    const hasLongWord = slice.some((item) => item.text.length >= 4);
+    const hasDigit = /\d/.test(trimmedCandidate);
+    if (hasCapitalized || hasDigit || hasLongWord) {
+      selected = { start: candidateStart, end: trailingEnd };
+      break;
+    }
+    if (!selected) {
+      selected = { start: candidateStart, end: trailingEnd };
+    }
+  }
+
+  if (!selected) {
+    const lower = lastWord.text.toLowerCase();
+    if (lastWord.text.length < minMeaningfulLength || COMMON_STOPWORDS.has(lower)) {
+      return null;
+    }
+    selected = { start: lastWord.start, end: lastWord.end };
+  }
+
+  return selected;
+}
+
+function findInlineLinkTarget(html: string): SnippetRange | null {
+  const segments = extractPlainTextSegments(html);
+  for (let i = segments.length - 1; i >= 0; i -= 1) {
+    const snippet = selectTrailingSnippet(segments[i].text);
+    if (snippet) {
+      return {
+        start: segments[i].start + snippet.start,
+        end: segments[i].start + snippet.end,
+      };
+    }
+  }
+  return null;
+}
+
 // Generate article content and ensure a minimum number of links are present
 // prompt   - text prompt to send to the model
 // model    - model name to use
@@ -884,10 +1173,25 @@ async function generateWithLinks(
         const innerWithoutTrailing = trailingWhitespace
           ? inner.slice(0, inner.length - trailingWhitespace.length)
           : inner;
+        const target = findInlineLinkTarget(innerWithoutTrailing);
+        const anchorStart = `<a href="${safeUrl}" target="_blank" rel="noopener">`;
+        const anchorEnd = '</a>';
+
+        if (target) {
+          const snippetText = innerWithoutTrailing.slice(target.start, target.end);
+          if (snippetText.trim()) {
+            return (
+              `${innerWithoutTrailing.slice(0, target.start)}` +
+              `${anchorStart}${snippetText}${anchorEnd}` +
+              `${innerWithoutTrailing.slice(target.end)}${trailingWhitespace}`
+            );
+          }
+        }
+
+        const label = getLinkLabelFromUrl(safeUrl);
         const needsSpace =
-          innerWithoutTrailing.length > 0 && !/\s$/.test(innerWithoutTrailing);
-        const anchorHtml = `<a href="${safeUrl}" target="_blank" rel="noopener">Source</a>`;
-        const addition = `${needsSpace ? ' ' : ''}(${anchorHtml})`;
+          innerWithoutTrailing.length > 0 && !/[\s([{-]$/.test(innerWithoutTrailing);
+        const addition = `${needsSpace ? ' ' : ''}${anchorStart}${label}${anchorEnd}`;
         return `${innerWithoutTrailing}${addition}${trailingWhitespace}`;
       };
 
@@ -935,7 +1239,8 @@ async function generateWithLinks(
             break;
           }
           const safeUrl = escapeHtml(source);
-          content += `<p>Source: <a href="${safeUrl}" target="_blank" rel="noopener">${safeUrl}</a></p>`;
+          const label = getLinkLabelFromUrl(safeUrl);
+          content += `<p><a href="${safeUrl}" target="_blank" rel="noopener">${label}</a></p>`;
           linkCount += 1;
           missingSources.delete(source);
           if (linkCount >= MAX_LINKS) {
