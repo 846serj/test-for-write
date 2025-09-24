@@ -15,6 +15,10 @@ import {
   normalizeSummaryBullets,
   SEARCH_IN_ORDER,
 } from './headlineFormHelpers';
+import {
+  readJsonOrText,
+  summarizeRawResponse,
+} from '../../utils/readJsonOrText';
 
 const LANGUAGE_OPTIONS = [
   { value: 'all', label: 'All languages' },
@@ -337,13 +341,23 @@ export default function GeneratePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      const { data, raw } = await readJsonOrText(res, 'generate');
 
-      if (!res.ok || !data.content) {
+      if (!res.ok || !data?.content) {
+        if (raw) {
+          console.error('[generate] non-JSON response body:', raw);
+        }
+
+        const fallbackMessage =
+          data?.error ||
+          summarizeRawResponse(raw) ||
+          res.statusText ||
+          'no content returned';
+
         alert(
-          `Failed to generate article: ${
-            data.error || res.statusText || 'no content returned'
-          }${data.airtableError ? ` - ${data.airtableError}` : ''}`
+          `Failed to generate article: ${fallbackMessage}${
+            data?.airtableError ? ` - ${data.airtableError}` : ''
+          }`
         );
         return;
       }
@@ -408,11 +422,28 @@ export default function GeneratePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildResult.payload),
       });
-      const data = await response.json();
+      const { data, raw } = await readJsonOrText(response, 'headlines');
 
       if (!response.ok) {
+        if (raw) {
+          console.error('[generate] headlines non-JSON response body:', raw);
+        }
+
         throw new Error(
-          data?.error || response.statusText || 'Failed to fetch headlines'
+          data?.error ||
+            summarizeRawResponse(raw) ||
+            response.statusText ||
+            'Failed to fetch headlines'
+        );
+      }
+
+      if (!data) {
+        if (raw) {
+          console.error('[generate] headlines unexpected response body:', raw);
+        }
+
+        throw new Error(
+          summarizeRawResponse(raw) || 'Invalid response from server'
         );
       }
 
