@@ -1,7 +1,7 @@
 // page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
@@ -249,6 +249,7 @@ export default function GeneratePage() {
   const [useSerpApi, setUseSerpApi] = useState<boolean>(true);
   const [includeLinks, setIncludeLinks] = useState<boolean>(true);
   const [newsFreshness, setNewsFreshness] = useState<'1h' | '6h' | '7d'>('6h');
+  const lastPrefetchRef = useRef<{ blog?: string; transcript?: string }>({});
 
   useEffect(() => {
     if (activeTab !== 'headlines') {
@@ -256,6 +257,54 @@ export default function GeneratePage() {
       setHeadlineError(null);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (articleType !== 'Rewrite blog post') {
+      return;
+    }
+    const url = blogLink.trim();
+    if (!url) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (lastPrefetchRef.current.blog === url) {
+        return;
+      }
+      lastPrefetchRef.current.blog = url;
+      fetch('/api/prefetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'blog', url }),
+      }).catch(() => {
+        lastPrefetchRef.current.blog = undefined;
+      });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [articleType, blogLink]);
+
+  useEffect(() => {
+    if (articleType !== 'YouTube video to blog post') {
+      return;
+    }
+    const url = videoLink.trim();
+    if (!url) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (lastPrefetchRef.current.transcript === url) {
+        return;
+      }
+      lastPrefetchRef.current.transcript = url;
+      fetch('/api/prefetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'transcript', url }),
+      }).catch(() => {
+        lastPrefetchRef.current.transcript = undefined;
+      });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [articleType, videoLink]);
 
   const toggleSearchIn = (value: string) => {
     setSearchIn((current) =>
