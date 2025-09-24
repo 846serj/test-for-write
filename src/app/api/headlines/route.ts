@@ -381,7 +381,7 @@ type OpenAIClient = {
           model: string;
           messages: { role: 'system' | 'user' | 'assistant'; content: string }[];
           temperature?: number;
-          max_tokens?: number;
+          max_completion_tokens?: number;
         }
       ) => Promise<{
         choices?: Array<{
@@ -694,7 +694,7 @@ async function inferKeywordsAndCategories(
       { role: 'user', content: userPrompt },
     ],
     ...withTemperature('gpt-5-mini', 0.5),
-    max_tokens: 400,
+    max_completion_tokens: 400,
   });
 
   const content = response.choices?.[0]?.message?.content?.trim() ?? '';
@@ -757,7 +757,7 @@ async function generateKeywordQueries(
       { role: 'user', content: userPrompt },
     ],
     ...withTemperature('gpt-5-mini', 0.4),
-    max_tokens: 200,
+    max_completion_tokens: 200,
   });
 
   const content =
@@ -1337,7 +1337,7 @@ Rules:
         },
       ],
       ...withTemperature('gpt-5-mini', 0.2),
-      max_tokens: 600,
+      max_completion_tokens: 600,
     });
 
     content = response.choices?.[0]?.message?.content?.trim() ?? '';
