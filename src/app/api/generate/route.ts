@@ -294,8 +294,11 @@ const DETAIL_INSTRUCTION =
   '- When summarizing, never replace explicit metrics, named individuals, or timelines with vague substitutes such as "many", "recently", or "officials"—quote the exact figures, dates, and proper nouns provided.\n' +
   '- Do not speculate or embellish beyond what the sources explicitly provide.\n' +
   '- Treat every "Key details" line in the reporting block as mandatory: restate those exact metrics, names, and timelines in the article body and attribute them to the correct source with an inline citation.\n' +
-  '- Each paragraph that introduces a factual statement must contain at least one inline citation that backs up a concrete detail such as a number, date, named person, organization, or location.\n' +
+  '- Each paragraph that introduces a factual statement must contain at least one inline citation tied to a concrete detail such as a number, date, named person, organization, or location, and paragraphs covering multiple facts should cite each one individually.\n' +
   '- When outlining developments over time, pair each milestone with the exact date or timeframe reported in the sources (e.g., "on March 3, 2024") and cite it inline.\n' +
+  '- Enumerate every figure, location, and named stakeholder the sources mention instead of collapsing them into a single vague summary—spell them out verbatim and cite them inline.\n' +
+  '- Explicitly reference the titles or roles that identify key people or organizations when the sources provide them, and cite the matching link.\n' +
+  '- When a source explains impact or stakes (e.g., job losses, funding amounts, geographic coverage), restate those outcomes verbatim with citations rather than summarizing them abstractly.\n' +
   '- If a potentially important fact cannot be verified in the provided sources, omit it and instead note "Unverified based on available sources."\n';
 
 const TIMELINE_REGEX =
@@ -760,7 +763,7 @@ function buildRecentReportingBlock(sources: ReportingSource[]): string {
       const title = item.title || 'Untitled';
       const detailLine =
         keyDetails.length > 0
-          ? `\n  Must include and cite:\n${keyDetails
+          ? `\n  Must include and cite each item below as a distinct, cited sentence:\n${keyDetails
               .map((detail) => `    - ${detail}`)
               .join('\n')}`
           : '';
