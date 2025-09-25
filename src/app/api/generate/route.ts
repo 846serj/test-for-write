@@ -234,7 +234,9 @@ const DETAIL_INSTRUCTION =
   '- Provide specific real-world examples (e.g., car model years or actual app names) instead of generic placeholders like "App 1".\n' +
   '- When sources include concrete facts, repeat them precisely: list full names, state exact dates with month/day/year, give unrounded figures, and preserve other specific details.\n' +
   '- Keep official names, model numbers, and other exact designations verbatim when they appear in the sources (e.g., "IL-20" instead of "plane").\n' +
-  '- Do not speculate or embellish beyond what the sources explicitly provide.\n';
+  '- Do not speculate or embellish beyond what the sources explicitly provide.\n' +
+  '- For every factual claim (including dates, names, statistics, or described benefits), cite a supporting source URL inline using <a href="URL" target="_blank">anchor text</a>.\n' +
+  '- If a potentially important fact cannot be verified in the provided sources, omit it and instead note "Unverified based on available sources."\n';
 
 async function generateOutlineWithGrokFallback(
   prompt: string,
@@ -1410,7 +1412,7 @@ export async function POST(request: Request) {
     const serpEnabled = includeLinks && useSerpApi && !!process.env.SERPAPI_KEY;
     const baseMaxTokens = calcMaxTokens(lengthOption, customSections, modelVersion);
     const nowIso = new Date().toISOString();
-    const systemPrompt = `The current date and time is ${nowIso}. Treat the reporting summaries and source links supplied in prompts as authoritative context. Avoid introducing unsourced details or time-sensitive claims that are not confirmed by those references.`;
+    const systemPrompt = `The current date and time is ${nowIso}. Treat the reporting summaries and source links supplied in prompts as authoritative context. Avoid introducing unsourced details or time-sensitive claims that are not confirmed by those references. If sources conflict, highlight both sides (e.g., "Source A reports X, while Source B claims Y").`;
 
     const toneChoice =
       toneOfVoice === 'Custom' && customTone ? customTone : toneOfVoice;
