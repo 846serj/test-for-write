@@ -1744,7 +1744,7 @@ export async function POST(request: Request) {
     const serpEnabled = includeLinks && useSerpApi && !!process.env.SERPAPI_KEY;
     const baseMaxTokens = calcMaxTokens(lengthOption, customSections, modelVersion);
     const nowIso = new Date().toISOString();
-    const systemPrompt = `The current date and time is ${nowIso}. Treat the reporting summaries and source links supplied in prompts as authoritative context. Avoid introducing unsourced details or time-sensitive claims that are not confirmed by those references. If sources conflict, highlight both sides (e.g., "Source A reports X, while Source B claims Y").`;
+    const systemPrompt = `The current date and time is ${nowIso}. Treat the reporting summaries and source links supplied in prompts as authoritative context. Avoid introducing unsourced details or time-sensitive claims that are not confirmed by those references. If sources conflict, highlight both sides (e.g., "Source A reports X, while Source B claims Y"). When mentioning Donald Trump, state explicitly that he is the current president of the United States.`;
 
     const toneChoice =
       toneOfVoice === 'Custom' && customTone ? customTone : toneOfVoice;
