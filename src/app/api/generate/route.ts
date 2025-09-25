@@ -162,6 +162,7 @@ ${reportingSection}${toneInstruction}${povInstruction}Requirements:
   ${lengthInstruction}
   - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
   - For each <h2> in the outline, write 2–3 paragraphs under it.
+  - Keep every section anchored to the authoritative reporting summaries provided so each paragraph reflects accurate, highly relevant sourcing.
 ${extraRequirementBlock}  - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
@@ -867,7 +868,7 @@ function buildRecentReportingBlock(sources: ReportingSource[]): string {
     })
     .join('\n');
 
-  return `Recent reporting to reference:\n${entries}`;
+  return `Key reporting to reference:\n${entries}`;
 }
 
 function normalizePublisher(result: SerpApiResult): string | null {
@@ -2456,7 +2457,7 @@ ${reportingContext}Requirements:
 • Use exactly ${count} items.
 • Number each heading formatted like ${listNumberingFormat}.
 • Provide a short clause after each numbered heading describing the key sourced insight it should cover.
-• Keep the outline tightly focused on the developments described in the reporting summaries.
+• Keep the outline tightly focused on the authoritative reporting summaries provided so every item reflects accurate, highly relevant sourcing.
 • Preserve every concrete fact from the reporting block—names, dates, figures, locations, direct quotes—and restate them verbatim inside the relevant numbered heading or bullet instead of paraphrasing generically.
 • For every bullet that uses a reporting summary, append " (Source: URL)" with the matching link.
 • Do not merge distinct facts into one bullet: break out each specific person, organization, date, or metric so it can be cited individually.
@@ -2520,6 +2521,7 @@ ${outline}
 ${reportingSection}${toneInstruction}${povInstruction}Requirements:
   ${lengthInstruction}${numberingInstruction}${wordCountInstruction}${customInstructionBlock}  - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
   - For each <h2> in the outline, write 2–3 paragraphs under it.
+  - Keep every section anchored to the authoritative reporting summaries provided so each paragraph reflects accurate, highly relevant sourcing.
   - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
