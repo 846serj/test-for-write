@@ -2194,39 +2194,95 @@ export async function POST(request: Request) {
           : '';
 
       const reportingBlock = buildRecentReportingBlock(articles);
+      const referenceBlock =
+        linkSources.length > 0
+          ? `• Use these references:\n${linkSources
+              .map((u) => `- ${u}`)
+              .join('\n')}`
+          : '';
+      const groundingInstruction = articles.length
+        ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\n'
+        : '';
 
-      let lengthInstruction = '';
-      if (lengthOption === 'custom' && customSections) {
-        const approx = customSections * 220;
-        lengthInstruction = `- Use exactly ${customSections} sections (~${approx} words total).\n`;
-      } else if (lengthOption && WORD_RANGES[lengthOption]) {
-        const [minW, maxW] = WORD_RANGES[lengthOption];
-        lengthInstruction = `- Keep the article between ${minW} and ${maxW} words.\n`;
+      let sectionInstruction: string;
+      if (lengthOption === 'default') {
+        sectionInstruction = 'Include around 5 <h2> headings.';
+      } else if (lengthOption === 'custom' && customSections) {
+        sectionInstruction = `Use exactly ${customSections} <h2> headings.`;
+      } else if (lengthOption && sectionRanges[lengthOption]) {
+        const [minS, maxS] = sectionRanges[lengthOption];
+        sectionInstruction = `Include ${minS}–${maxS} <h2> headings.`;
       } else {
-        lengthInstruction = '- Aim for a concise, timely report (~900 words).\n';
+        sectionInstruction = 'Include at least three <h2> headings.';
       }
+
+      const reportingContext = reportingBlock ? `${reportingBlock}\n\n` : '';
+      const outlinePrompt = `
+You are a professional news editor planning a factually grounded article titled "${title}".
+
+${reportingContext}Outline requirements:
+• Begin with a section labeled "INTRO:" and include a single bullet with a 2–3 sentence lead (no <h2>) that spotlights the newest developments, why they matter now, and cites the matching sources.
+• After the "INTRO:" section, ${sectionInstruction}
+• Arrange the remaining sections chronologically or by major stakeholder impact so the story flows like a news report.
+• Under each <h2>, list 2–3 bullet-point subtopics describing the reported developments, reactions, figures, and context to cover.
+• Preserve every concrete fact from the reporting block and Key details list—names, dates, figures, locations, quotes—and restate them verbatim within the relevant subtopic bullets instead of summarizing vaguely.
+• For every bullet that draws on reporting, append " (Source: URL)" with the matching link.
+• Do not combine multiple unrelated facts in a single bullet; give each person, organization, metric, or timestamp its own bullet so it can be cited precisely.
+• Emphasize the time-sensitive angles and signal what has changed compared with previous updates.
+• Do NOT use "Introduction" or "Intro" as an <h2> heading.
+• Do NOT use "Conclusion" or "Bottom line" as an <h2> heading.
+${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent information beyond the provided reporting.
+`.trim();
+
+      const outline = await generateOutlineWithGrokFallback(
+        outlinePrompt,
+        modelVersion,
+        0.6
+      );
 
       const customInstruction = customInstructions?.trim();
       const customInstructionBlock = customInstruction
         ? `- ${customInstruction}\n`
         : '';
 
+      let lengthInstruction = '';
+      if (lengthOption === 'default') {
+        lengthInstruction =
+          '- Aim for around 5 sections (~900 words total, ~180 words per section).\n';
+      } else if (lengthOption === 'custom' && customSections) {
+        const approx = customSections * 220;
+        lengthInstruction = `- Use exactly ${customSections} sections (~${approx} words total).\n`;
+      } else if (lengthOption && WORD_RANGES[lengthOption]) {
+        const [minW, maxW] = WORD_RANGES[lengthOption];
+        const [minS, maxS] = sectionRanges[lengthOption] || [3, 6];
+        lengthInstruction = `- Include ${minS}–${maxS} sections and write between ${minW} and ${maxW} words.\n`;
+      } else {
+        lengthInstruction = '- Aim for a concise, timely report (~900 words).\n';
+      }
+
+      const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
+
       const articlePrompt = `
 You are a professional news reporter writing a fast-turnaround article about "${title}".
 
 Do NOT include the title or any <h1> tag in the HTML output.
 
-${reportingBlock}
+Outline:
+${outline}
 
-${toneInstruction}${povInstruction}Requirements:
-  ${lengthInstruction}${customInstructionBlock}  - Synthesize the developments from the listed sources into a cohesive news article.
+${reportingSection}${toneInstruction}${povInstruction}Requirements:
+  ${lengthInstruction}
+  - Use the outline's introduction bullet to write a 2–3 sentence lead (no <h2> tags) without including the words "INTRO:" or "Introduction".
+  - For each <h2> in the outline, write 2–3 paragraphs under it.
+  - Keep the pacing focused on timely developments, clarifying what happened, when, and why it matters now.
   - Attribute key facts to the appropriate source by linking the relevant URL directly in the text.
-  - Clearly indicate the timing of significant events and why they matter now.
   - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
   - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${customInstructionBlock}${linkInstruction}  - Do NOT invent sources or information not present in the listed reporting.
+  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}
+  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
+  - Do NOT invent sources or information not present in the listed reporting.
 
 Write the full article in valid HTML below:
 `.trim();
