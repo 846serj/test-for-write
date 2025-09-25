@@ -24,6 +24,15 @@ interface ReportingSource {
   publishedAt: string;
 }
 
+type VerificationSource =
+  | string
+  | {
+      url?: string | null;
+      title?: string | null;
+      summary?: string | null;
+      publishedAt?: string | null;
+    };
+
 const FRESHNESS_TO_HOURS: Record<NewsFreshness, number> = {
   '1h': 1,
   '6h': 6,
@@ -219,6 +228,9 @@ function getWordBounds(
 // Minimum number of source links to include in generated content
 const MIN_LINKS = 3;
 const STRICT_LINK_RETRY_THRESHOLD = 1;
+const VERIFICATION_DISCREPANCY_THRESHOLD = 0;
+const VERIFICATION_MAX_ATTEMPTS = 2;
+const VERIFICATION_MAX_SOURCE_FIELD_LENGTH = 600;
 
 // Low temperature to encourage factual consistency for reporting prompts
 const FACTUAL_TEMPERATURE = 0.2;
@@ -1428,6 +1440,171 @@ async function generateWithLinks(
   return content;
 }
 
+interface VerificationResult {
+  isAccurate: boolean;
+  discrepancies: string[];
+}
+
+function truncateField(value: string | null | undefined): string {
+  if (!value) {
+    return '';
+  }
+  const trimmed = value.replace(/\s+/g, ' ').trim();
+  if (trimmed.length <= VERIFICATION_MAX_SOURCE_FIELD_LENGTH) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, VERIFICATION_MAX_SOURCE_FIELD_LENGTH - 1)}…`;
+}
+
+function normalizeVerificationSources(
+  sources: VerificationSource[]
+): Array<{ url: string; title?: string; summary?: string; publishedAt?: string }> {
+  return sources
+    .map((source) => {
+      if (typeof source === 'string') {
+        return { url: source };
+      }
+      return {
+        url: source.url ?? '',
+        title: source.title ?? undefined,
+        summary: source.summary ?? undefined,
+        publishedAt: source.publishedAt ?? undefined,
+      };
+    })
+    .filter((item) => Boolean(item.url));
+}
+
+async function verifyOutput(
+  content: string,
+  sources: VerificationSource[]
+): Promise<VerificationResult> {
+  const trimmedContent = content?.trim();
+  if (!trimmedContent) {
+    return { isAccurate: true, discrepancies: [] };
+  }
+
+  const normalizedSources = normalizeVerificationSources(sources);
+  if (!process.env.GROK_API_KEY || normalizedSources.length === 0) {
+    return { isAccurate: true, discrepancies: [] };
+  }
+
+  const formattedSources = normalizedSources
+    .map((item, index) => {
+      const parts = [`${index + 1}. URL: ${item.url}`];
+      const title = truncateField(item.title);
+      const summary = truncateField(item.summary);
+      const publishedAt = truncateField(item.publishedAt);
+      if (title) {
+        parts.push(`   Title: ${title}`);
+      }
+      if (summary) {
+        parts.push(`   Summary: ${summary}`);
+      }
+      if (publishedAt) {
+        parts.push(`   Published: ${publishedAt}`);
+      }
+      return parts.join('\n');
+    })
+    .join('\n');
+
+  const prompt = [
+    'Check if this article matches sources; list discrepancies.',
+    '',
+    'You are a post-generation fact-checking assistant. Compare the article HTML to the provided sources and highlight any unsupported or contradictory claims.',
+    'Respond with JSON using this schema: {"discrepancies":[{"description":string,"severity":"minor"|"major"}]}.',
+    'Classify issues as "major" when the article conflicts with, misstates, or omits critical facts from the sources.',
+    '',
+    'Article HTML:',
+    trimmedContent,
+    '',
+    'Sources:',
+    formattedSources || 'No sources provided.',
+  ].join('\n');
+
+  try {
+    const response = await grokChatCompletion({ prompt, temperature: 0 });
+    let parsed: any;
+    try {
+      parsed = JSON.parse(response);
+    } catch {
+      const match = response.match(/\{[\s\S]*\}/);
+      if (match) {
+        parsed = JSON.parse(match[0]);
+      }
+    }
+
+    if (!parsed || !Array.isArray(parsed.discrepancies)) {
+      return { isAccurate: true, discrepancies: [] };
+    }
+
+    const normalizedDiscrepancies = parsed.discrepancies
+      .map((item: any) => {
+        if (!item) {
+          return null;
+        }
+        if (typeof item === 'string') {
+          return { description: item.trim(), severity: 'major' };
+        }
+        if (typeof item === 'object') {
+          const description = typeof item.description === 'string' ? item.description.trim() : '';
+          if (!description) {
+            return null;
+          }
+          const severity = typeof item.severity === 'string' ? item.severity.toLowerCase() : 'major';
+          return { description, severity };
+        }
+        return null;
+      })
+      .filter((item: { description: string; severity: string } | null): item is {
+        description: string;
+        severity: string;
+      } => Boolean(item && item.description));
+
+    const majorIssues = normalizedDiscrepancies.filter(
+      (item) => (item.severity || 'major').toLowerCase() !== 'minor'
+    );
+
+    if (majorIssues.length > VERIFICATION_DISCREPANCY_THRESHOLD) {
+      const summaries = majorIssues.map(
+        (item) => `[${(item.severity || 'major').toUpperCase()}] ${item.description}`
+      );
+      console.warn('Accuracy issues: ', summaries);
+      return { isAccurate: false, discrepancies: summaries };
+    }
+
+    return { isAccurate: true, discrepancies: [] };
+  } catch (err) {
+    console.warn('[api/generate] verification failed', err);
+    return { isAccurate: true, discrepancies: [] };
+  }
+}
+
+async function generateWithVerification(
+  generator: () => Promise<string>,
+  sources: VerificationSource[],
+  fallbackSources: string[] = []
+): Promise<string> {
+  const combinedSources = sources.length
+    ? sources
+    : fallbackSources.map((url) => ({ url }));
+  const shouldVerify = Boolean(process.env.GROK_API_KEY) && combinedSources.length > 0;
+  const attempts = shouldVerify ? VERIFICATION_MAX_ATTEMPTS : 1;
+
+  let content = '';
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    content = await generator();
+    if (!shouldVerify) {
+      break;
+    }
+    const verification = await verifyOutput(content, combinedSources);
+    if (verification.isAccurate || attempt === attempts - 1) {
+      break;
+    }
+  }
+
+  return content;
+}
+
 export async function POST(request: Request) {
   try {
     const {
@@ -1564,15 +1741,20 @@ Write the full article in valid HTML below:
           : minBound;
       const maxTokens = Math.min(baseMaxTokens, 4000);
 
-      const content = await generateWithLinks(
-        articlePrompt,
-        modelVersion,
-        linkSources,
-        systemPrompt,
-        minLinks,
-        maxTokens,
-        minWords,
-        articles
+      const content = await generateWithVerification(
+        () =>
+          generateWithLinks(
+            articlePrompt,
+            modelVersion,
+            linkSources,
+            systemPrompt,
+            minLinks,
+            maxTokens,
+            minWords,
+            articles
+          ),
+        articles,
+        newsSources
       );
 
       return NextResponse.json({
@@ -1690,15 +1872,20 @@ Write the full article in valid HTML below:
       maxTokens = Math.min(maxTokens, limit);
       const minWords = Math.floor(count * wordsPerItem * 0.8);
 
-      const content = await generateWithLinks(
-        articlePrompt,
-        modelVersion,
-        linkSources,
-        systemPrompt,
-        minLinks,
-        maxTokens,
-        minWords,
-        reportingSources
+      const content = await generateWithVerification(
+        () =>
+          generateWithLinks(
+            articlePrompt,
+            modelVersion,
+            linkSources,
+            systemPrompt,
+            minLinks,
+            maxTokens,
+            minWords,
+            reportingSources
+          ),
+        reportingSources,
+        linkSources
       );
       return NextResponse.json({
         content,
@@ -1756,15 +1943,20 @@ Write the full article in valid HTML below:
 
       const [minWords] = getWordBounds(lengthOption, customSections);
 
-      const content = await generateWithLinks(
-        articlePrompt,
-        modelVersion,
-        linkSources,
-        systemPrompt,
-        minLinks,
-        baseMaxTokens,
-        minWords,
-        reportingSources
+      const content = await generateWithVerification(
+        () =>
+          generateWithLinks(
+            articlePrompt,
+            modelVersion,
+            linkSources,
+            systemPrompt,
+            minLinks,
+            baseMaxTokens,
+            minWords,
+            reportingSources
+          ),
+        reportingSources,
+        linkSources
       );
       return NextResponse.json({
         content,
@@ -1845,15 +2037,20 @@ ${rewriteInstruction}${reportingSection}${toneInstruction}${povInstruction}Requi
 Write the full article in valid HTML below:
 `.trim();
 
-      const content = await generateWithLinks(
-        articlePrompt,
-        modelVersion,
-        linkSources,
-        systemPrompt,
-        minLinks,
-        maxTokens,
-        getWordBounds(lengthOption, customSections)[0],
-        reportingSources
+      const content = await generateWithVerification(
+        () =>
+          generateWithLinks(
+            articlePrompt,
+            modelVersion,
+            linkSources,
+            systemPrompt,
+            minLinks,
+            maxTokens,
+            getWordBounds(lengthOption, customSections)[0],
+            reportingSources
+          ),
+        reportingSources,
+        linkSources
       );
       return NextResponse.json({
         content,
@@ -1959,15 +2156,20 @@ ${reportingSection}${toneInstruction}${povInstruction}Requirements:
 Output raw HTML only:
 `.trim();
 
-    const content = await generateWithLinks(
-      articlePrompt,
-      modelVersion,
-      linkSources,
-      systemPrompt,
-      minLinks,
-      baseMaxTokens,
-      getWordBounds(lengthOption, customSections)[0],
-      reportingSources
+    const content = await generateWithVerification(
+      () =>
+        generateWithLinks(
+          articlePrompt,
+          modelVersion,
+          linkSources,
+          systemPrompt,
+          minLinks,
+          baseMaxTokens,
+          getWordBounds(lengthOption, customSections)[0],
+          reportingSources
+        ),
+      reportingSources,
+      linkSources
     );
     return NextResponse.json({
       content,
