@@ -1549,6 +1549,7 @@ ${reportingContext}Requirements:
 • Number each heading formatted like ${listNumberingFormat}.
 • Provide a short clause after each numbered heading describing the key sourced insight it should cover.
 • Keep the outline tightly focused on the developments described in the reporting summaries.
+• For every bullet that uses a reporting summary, append " (Source: URL)" with the matching link.
 ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond the provided sources.
 `.trim();
 
@@ -1819,7 +1820,7 @@ ${reportingContext}Outline requirements:
 • Begin with a section labeled "INTRO:" and include a single bullet with a 2–3 sentence introduction (no <h2>).
 • After the "INTRO:" section, ${sectionInstruction}.
 • Under each <h2>, list 2–3 bullet-point subtopics describing what evidence, examples, or angles to cover.
-• Clearly indicate which referenced source(s) inform each major bullet when relevant.
+• For every bullet that draws on reporting, append " (Source: URL)" with the matching link.
 • Do NOT use "Introduction" or "Intro" as an <h2> heading.
 • Do NOT use "Conclusion" or "Bottom line" as an <h2> heading.
 ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent information beyond the provided reporting.
