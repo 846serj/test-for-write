@@ -306,14 +306,65 @@ export default function GeneratePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      const contentType = res.headers.get('content-type') ?? '';
+
+      if (!res.ok) {
+        let message = res.statusText || `Request failed with status ${res.status}`;
+
+        if (contentType.includes('application/json')) {
+          try {
+            const errorBody = await res.clone().json();
+            message =
+              errorBody?.error ||
+              errorBody?.airtableError ||
+              message;
+          } catch {
+            try {
+              const fallbackText = await res.text();
+              if (fallbackText) {
+                message = fallbackText;
+              }
+            } catch {}
+          }
+        } else {
+          try {
+            const fallbackText = await res.text();
+            if (fallbackText) {
+              message = fallbackText;
+            }
+          } catch {}
+        }
+
+        const friendlyMessage =
+          message ||
+          'No recent sources were found. Try adjusting your topic or timeframe.';
+
+        alert(`Failed to generate article: ${friendlyMessage}`);
+        return;
+      }
+
+      if (!contentType.includes('application/json')) {
+        let fallbackText: string | null = null;
+        try {
+          fallbackText = await res.text();
+        } catch {}
+
+        const friendlyMessage =
+          fallbackText ||
+          'Received an unexpected response format while generating the article.';
+
+        alert(`Failed to generate article: ${friendlyMessage}`);
+        return;
+      }
+
       const data = await res.json();
 
-      if (!res.ok || !data.content) {
-        alert(
-          `Failed to generate article: ${
-            data.error || res.statusText || 'no content returned'
-          }${data.airtableError ? ` - ${data.airtableError}` : ''}`
-        );
+      if (!data.content) {
+        const friendlyMessage =
+          data.error ||
+          data.airtableError ||
+          'No recent sources were found. Try adjusting your topic or timeframe.';
+        alert(`Failed to generate article: ${friendlyMessage}`);
         return;
       }
 
