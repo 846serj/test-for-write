@@ -905,6 +905,70 @@ async function fetchNewsArticles(
   const nowMs = Date.now();
   const newsKey = process.env.NEWS_API_KEY;
 
+  const fetchSerpArticles = serpFallbackEnabled && process.env.SERPAPI_KEY
+    ? (async (): Promise<NewsArticle[]> => {
+        try {
+          const freshnessParam = mapFreshnessToSerpTbs(resolvedFreshness);
+          const serpResults = await serpapiSearch({
+            query,
+            engine: 'google_news',
+            extraParams: { tbs: freshnessParam },
+            limit: 8,
+          });
+
+          const seenTitles = new Set<string>();
+          const articles: NewsArticle[] = [];
+
+          for (const item of serpResults) {
+            const normalizedTitle = normalizeTitleValue(item.title);
+            if (normalizedTitle && seenTitles.has(normalizedTitle)) {
+              continue;
+            }
+
+            const article: NewsArticle = {
+              title: item.title || 'Untitled',
+              url: item.link || '',
+              summary: (item.snippet || '').replace(/\s+/g, ' ').trim(),
+              publishedAt: '',
+            };
+
+            if (!article.title || !article.url) {
+              continue;
+            }
+
+            const publishedTimestamp = parsePublishedTimestamp(
+              item.published_at || item.date_published || item.date || '',
+              nowMs
+            );
+
+            if (
+              publishedTimestamp === null ||
+              !isTimestampWithinWindow(publishedTimestamp, nowMs)
+            ) {
+              continue;
+            }
+
+            article.publishedAt = normalizePublishedAt(publishedTimestamp);
+
+            if (normalizedTitle) {
+              seenTitles.add(normalizedTitle);
+            }
+
+            articles.push(article);
+
+            if (articles.length >= 8) {
+              break;
+            }
+          }
+
+          return articles;
+        } catch (err) {
+          console.warn('[api/generate] serpapi fallback failed', err);
+          return [];
+        }
+      })()
+    : null;
+
   if (newsKey) {
     try {
       const url = new URL('https://newsapi.org/v2/everything');
@@ -959,67 +1023,11 @@ async function fetchNewsArticles(
     }
   }
 
-  if (!serpFallbackEnabled || !process.env.SERPAPI_KEY) {
-    return [];
+  if (fetchSerpArticles) {
+    return await fetchSerpArticles;
   }
 
-  const freshnessParam = mapFreshnessToSerpTbs(resolvedFreshness);
-
-  try {
-    const serpResults = await serpapiSearch({
-      query,
-      engine: 'google_news',
-      extraParams: { tbs: freshnessParam },
-      limit: 8,
-    });
-
-    const seenTitles = new Set<string>();
-    const articles: NewsArticle[] = [];
-
-    for (const item of serpResults) {
-      const normalizedTitle = normalizeTitleValue(item.title);
-      if (normalizedTitle && seenTitles.has(normalizedTitle)) {
-        continue;
-      }
-
-      const article: NewsArticle = {
-        title: item.title || 'Untitled',
-        url: item.link || '',
-        summary: (item.snippet || '').replace(/\s+/g, ' ').trim(),
-        publishedAt: '',
-      };
-
-      if (!article.title || !article.url) {
-        continue;
-      }
-
-      const publishedTimestamp = parsePublishedTimestamp(
-        item.published_at || item.date_published || item.date || '',
-        nowMs
-      );
-
-      if (publishedTimestamp === null || !isTimestampWithinWindow(publishedTimestamp, nowMs)) {
-        continue;
-      }
-
-      article.publishedAt = normalizePublishedAt(publishedTimestamp);
-
-      if (normalizedTitle) {
-        seenTitles.add(normalizedTitle);
-      }
-
-      articles.push(article);
-
-      if (articles.length >= 8) {
-        break;
-      }
-    }
-
-    return articles;
-  } catch (err) {
-    console.warn('[api/generate] serpapi fallback failed', err);
-    return [];
-  }
+  return [];
 }
 
 // Fetch YouTube captions
