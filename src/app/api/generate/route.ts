@@ -24,6 +24,14 @@ interface ReportingSource {
   publishedAt: string;
 }
 
+type ReportingContext = {
+  reportingSources: ReportingSource[];
+  reportingBlock: string;
+  groundingInstruction: string;
+  linkSources: string[];
+  referenceBlock: string;
+};
+
 type VerificationSource =
   | string
   | {
@@ -304,116 +312,116 @@ async function fetchSources(
   const seenTitles = new Set<string>();
   const orderedSources: ReportingSource[] = [];
 
-  const handleNews = process.env.NEWS_API_KEY
-    ? fetchNewsArticles(headline, resolvedFreshness, false)
-        .then((articles) => {
-          for (const article of articles) {
-            const url = article.url;
-            const normalizedTitle = normalizeTitleValue(article.title);
-            if (!url || seenLinks.has(url)) {
-              continue;
-            }
+  const newsPromise: Promise<NewsArticle[]> = process.env.NEWS_API_KEY
+    ? fetchNewsArticles(headline, resolvedFreshness, false).catch((err) => {
+        console.warn(
+          '[api/generate] news api sourcing failed, continuing with SERP',
+          err
+        );
+        return [];
+      })
+    : Promise.resolve([]);
 
-            if (normalizedTitle && seenTitles.has(normalizedTitle)) {
-              continue;
-            }
+  const serpPromise = serpapiSearch({
+    query: headline,
+    engine: 'google_news',
+    extraParams: { tbs: mapFreshnessToSerpTbs(resolvedFreshness) },
+    limit: 8,
+  });
 
-            let publisherId: string | null = null;
-            try {
-              publisherId = new URL(url).hostname
-                .toLowerCase()
-                .replace(/^www\./, '');
-            } catch {
-              publisherId = null;
-            }
+  const [newsArticles, serpResults] = await Promise.all([
+    newsPromise,
+    serpPromise,
+  ]);
 
-            if (publisherId && seenPublishers.has(publisherId)) {
-              continue;
-            }
-
-            orderedSources.push({
-              title: article.title || 'Untitled',
-              url,
-              summary: article.summary || '',
-              publishedAt: article.publishedAt || '',
-            });
-
-            seenLinks.add(url);
-            if (publisherId) {
-              seenPublishers.add(publisherId);
-            }
-            if (normalizedTitle) {
-              seenTitles.add(normalizedTitle);
-            }
-
-            if (orderedSources.length >= 5) {
-              break;
-            }
-          }
-        })
-        .catch((err) => {
-          console.warn(
-            '[api/generate] news api sourcing failed, continuing with SERP',
-            err
-          );
-        })
-    : Promise.resolve();
-
-  return handleNews.then(() => {
-    if (orderedSources.length >= 5) {
-      return orderedSources;
+  for (const article of newsArticles) {
+    const url = article.url;
+    const normalizedTitle = normalizeTitleValue(article.title);
+    if (!url || seenLinks.has(url)) {
+      continue;
     }
 
-    return serpapiSearch({
-      query: headline,
-      engine: 'google_news',
-      extraParams: { tbs: mapFreshnessToSerpTbs(resolvedFreshness) },
-      limit: 8,
-    }).then((results) => {
-      for (const result of results) {
-        const normalizedTitle = normalizeTitleValue(result.title);
-        if (normalizedTitle && seenTitles.has(normalizedTitle)) {
-          continue;
-        }
+    if (normalizedTitle && seenTitles.has(normalizedTitle)) {
+      continue;
+    }
 
-        const link = result.link;
-        if (!link || seenLinks.has(link)) {
-          continue;
-        }
+    let publisherId: string | null = null;
+    try {
+      publisherId = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      publisherId = null;
+    }
 
-        const publisherId = normalizePublisher(result);
-        if (!publisherId || seenPublishers.has(publisherId)) {
-          continue;
-        }
+    if (publisherId && seenPublishers.has(publisherId)) {
+      continue;
+    }
 
-        const summary = (result.snippet || result.summary || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-        const publishedAt =
-          result.date || result.published_at || result.date_published || '';
-        const title = result.title || 'Untitled';
-
-        seenLinks.add(link);
-        seenPublishers.add(publisherId);
-        if (normalizedTitle) {
-          seenTitles.add(normalizedTitle);
-        }
-
-        orderedSources.push({
-          title,
-          url: link,
-          summary,
-          publishedAt,
-        });
-
-        if (orderedSources.length >= 5) {
-          break;
-        }
-      }
-
-      return orderedSources;
+    orderedSources.push({
+      title: article.title || 'Untitled',
+      url,
+      summary: article.summary || '',
+      publishedAt: article.publishedAt || '',
     });
-  });
+
+    seenLinks.add(url);
+    if (publisherId) {
+      seenPublishers.add(publisherId);
+    }
+    if (normalizedTitle) {
+      seenTitles.add(normalizedTitle);
+    }
+
+    if (orderedSources.length >= 5) {
+      break;
+    }
+  }
+
+  if (orderedSources.length >= 5) {
+    return orderedSources;
+  }
+
+  for (const result of serpResults) {
+    const normalizedTitle = normalizeTitleValue(result.title);
+    if (normalizedTitle && seenTitles.has(normalizedTitle)) {
+      continue;
+    }
+
+    const link = result.link;
+    if (!link || seenLinks.has(link)) {
+      continue;
+    }
+
+    const publisherId = normalizePublisher(result);
+    if (!publisherId || seenPublishers.has(publisherId)) {
+      continue;
+    }
+
+    const summary = (result.snippet || result.summary || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const publishedAt =
+      result.date || result.published_at || result.date_published || '';
+    const title = result.title || 'Untitled';
+
+    seenLinks.add(link);
+    seenPublishers.add(publisherId);
+    if (normalizedTitle) {
+      seenTitles.add(normalizedTitle);
+    }
+
+    orderedSources.push({
+      title,
+      url: link,
+      summary,
+      publishedAt,
+    });
+
+    if (orderedSources.length >= 5) {
+      break;
+    }
+  }
+
+  return orderedSources;
 }
 
 function formatPublishedTimestamp(value: string): string {
@@ -1763,23 +1771,50 @@ Write the full article in valid HTML below:
       });
     }
 
-    const reportingSources = serpEnabled
-      ? await fetchSources(title, newsFreshness)
-      : [];
-    const reportingBlock = buildRecentReportingBlock(reportingSources);
-    const groundingInstruction = reportingSources.length
-      ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\n'
-      : '';
-    const linkSources = reportingSources.map((item) => item.url).filter(Boolean);
-    const referenceBlock =
-      linkSources.length > 0
-        ? `• Use these references:\n${linkSources
-            .map((u) => `- ${u}`)
-            .join('\n')}`
+    const reportingContextPromise: Promise<ReportingContext> = (async () => {
+      if (!serpEnabled) {
+        return {
+          reportingSources: [],
+          reportingBlock: '',
+          groundingInstruction: '',
+          linkSources: [],
+          referenceBlock: '',
+        };
+      }
+
+      const reportingSources = await fetchSources(title, newsFreshness);
+      const reportingBlock = buildRecentReportingBlock(reportingSources);
+      const groundingInstruction = reportingSources.length
+        ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\n'
         : '';
+      const linkSources = reportingSources
+        .map((item) => item.url)
+        .filter(Boolean);
+      const referenceBlock =
+        linkSources.length > 0
+          ? `• Use these references:\n${linkSources
+              .map((u) => `- ${u}`)
+              .join('\n')}`
+          : '';
+
+      return {
+        reportingSources,
+        reportingBlock,
+        groundingInstruction,
+        linkSources,
+        referenceBlock,
+      };
+    })();
 
     // ─── Listicle/Gallery ────────────────────────────────────────────────────────
     if (articleType === 'Listicle/Gallery') {
+      const {
+        reportingSources,
+        reportingBlock,
+        groundingInstruction,
+        linkSources,
+        referenceBlock,
+      } = await reportingContextPromise;
       const match = title.match(/\d+/);
       const count = match ? parseInt(match[0], 10) : 5;
 
@@ -1895,7 +1930,14 @@ Write the full article in valid HTML below:
 
     // ─── YouTube Transcript → Blog ─────────────────────────────────────────────
     if (articleType === 'YouTube video to blog post') {
-      const transcript = await fetchTranscript(videoLink || '');
+      const transcriptPromise = fetchTranscript(videoLink || '');
+      const {
+        reportingSources,
+        reportingBlock,
+        groundingInstruction,
+        linkSources,
+      } = await reportingContextPromise;
+      const transcript = await transcriptPromise;
       const transcriptInstruction = transcript
         ? `- Use the following transcript as source material:\n\n${transcript}\n\n`
         : `- Use the transcript from this video link as source material: ${videoLink}\n`;
@@ -1967,11 +2009,18 @@ Write the full article in valid HTML below:
     // ─── Rewrite blog post ──────────────────────────────────────────────────────
     if (articleType === 'Rewrite blog post') {
       const maxTokens = calcMaxTokens(lengthOption, customSections, modelVersion);
-      const sourceText = await summarizeBlogContent(
+      const sourceTextPromise = summarizeBlogContent(
         blogLink || '',
         useSummary,
         modelVersion
       );
+      const {
+        reportingSources,
+        reportingBlock,
+        groundingInstruction,
+        linkSources,
+      } = await reportingContextPromise;
+      const sourceText = await sourceTextPromise;
 
       const customInstruction = customInstructions?.trim();
       const customInstructionBlock = customInstruction
@@ -2059,6 +2108,14 @@ Write the full article in valid HTML below:
     }
 
     // ─── Blog post (default) ───────────────────────────────────────────────────
+    const {
+      reportingSources,
+      reportingBlock,
+      groundingInstruction,
+      linkSources,
+      referenceBlock,
+    } = await reportingContextPromise;
+
     let sectionInstruction: string;
     if (lengthOption === 'default') {
       sectionInstruction = 'Include around 9 <h2> headings.';
