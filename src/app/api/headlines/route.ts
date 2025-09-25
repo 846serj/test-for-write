@@ -381,8 +381,6 @@ type OpenAIClient = {
           messages: { role: 'system' | 'user' | 'assistant'; content: string }[];
           temperature?: number;
           max_tokens?: number;
-          max_completion_tokens?: number;
-          response_format?: { type: string };
         }
       ) => Promise<{
         choices?: Array<{
@@ -400,56 +398,6 @@ type HeadlinesHandlerDependencies = {
   openaiClient?: OpenAIClient;
   logger?: Pick<typeof console, 'error'>;
 };
-
-type ChatCompletionOptions = Parameters<
-  OpenAIClient['chat']['completions']['create']
->[0];
-
-const FIXED_TEMPERATURE_PREFIXES = [/^gpt-4\.1/i, /^gpt-5/i, /^o\d/i];
-
-function supportsAdjustableTemperature(model: string): boolean {
-  return !FIXED_TEMPERATURE_PREFIXES.some((pattern) => pattern.test(model));
-}
-
-function requiresMaxCompletionTokens(model: string): boolean {
-  return FIXED_TEMPERATURE_PREFIXES.some((pattern) => pattern.test(model));
-}
-
-function sanitizeChatCompletionOptions(
-  options: ChatCompletionOptions
-): ChatCompletionOptions {
-  const sanitized = {
-    ...options,
-  } as ChatCompletionOptions & { max_completion_tokens?: number };
-
-  if (
-    sanitized.temperature !== undefined &&
-    sanitized.temperature !== null &&
-    sanitized.temperature !== 1 &&
-    !supportsAdjustableTemperature(sanitized.model)
-  ) {
-    delete sanitized.temperature;
-  }
-
-  if (
-    sanitized.max_tokens !== undefined &&
-    sanitized.max_tokens !== null &&
-    requiresMaxCompletionTokens(sanitized.model)
-  ) {
-    sanitized.max_completion_tokens = sanitized.max_tokens;
-    delete sanitized.max_tokens;
-  }
-
-  return sanitized;
-}
-
-function callChatCompletion(
-  client: OpenAIClient,
-  options: ChatCompletionOptions
-) {
-  const normalized = sanitizeChatCompletionOptions(options);
-  return client.chat.completions.create(normalized);
-}
 
 function normalizeKeywords(raw: unknown): string[] {
   if (raw === undefined || raw === null) {
@@ -738,7 +686,7 @@ async function inferKeywordsAndCategories(
     `${allowedCategories}. ` +
     'Format: {"keywords": [..], "categories": [..]}.';
 
-  const response = await callChatCompletion(client, {
+  const response = await client.chat.completions.create({
     model: 'gpt-5-mini',
     messages: [
       { role: 'system', content: systemPrompt },
@@ -801,7 +749,7 @@ async function generateKeywordQueries(
     'Respond with a JSON array of strings only. Keywords:\n' +
     keywords.map((keyword, index) => `${index + 1}. ${keyword}`).join('\n');
 
-  const response = await callChatCompletion(client, {
+  const response = await client.chat.completions.create({
     model: 'gpt-5-mini',
     messages: [
       { role: 'system', content: systemPrompt },
@@ -1372,7 +1320,7 @@ Rules:
 
   let content = '';
   try {
-    const response = await callChatCompletion(client, {
+    const response = await client.chat.completions.create({
       model: 'gpt-5-mini',
       messages: [
         {
