@@ -1013,27 +1013,45 @@ async function generateWithLinks(
         if (keywordCache.has(url)) {
           return keywordCache.get(url)!;
         }
-
         const context = contextByUrl.get(url);
         const keywords: string[] = [];
         const seen = new Set<string>();
 
-        const fromTitle = context?.title?.replace(/\s+/g, ' ').trim();
-        if (fromTitle) {
-          const parts = fromTitle
-            .split(/\s[-–—|:]+\s|[–—|:]+/)
-            .map((part) => part.trim())
-            .filter(Boolean);
-          for (const part of parts) {
-            const normalizedPart = part.replace(/\s+/g, ' ').trim();
-            addKeyword(keywords, seen, normalizedPart);
-            const withoutTrailingLower = normalizedPart.replace(/\s+[a-z][\w'’\-]*$/g, '');
-            if (withoutTrailingLower && withoutTrailingLower !== normalizedPart) {
-              addKeyword(keywords, seen, withoutTrailingLower);
+        const rawTitle = context?.title?.replace(/\s+/g, ' ').trim();
+        if (rawTitle) {
+          const normalized = normalizeTitleValue(rawTitle);
+          if (normalized) {
+            const words = normalized.split(' ').filter((word) => word);
+            for (let size = Math.min(4, words.length); size >= 2; size -= 1) {
+              for (let i = 0; i <= words.length - size; i += 1) {
+                const slice = words.slice(i, i + size);
+                if (slice.every((word) => FALLBACK_STOPWORDS.has(word))) {
+                  continue;
+                }
+                if (slice.some((word) => word.length > 3)) {
+                  addKeyword(keywords, seen, slice.join(' '));
+                }
+              }
+            }
+            const filtered = words.filter((word) => !FALLBACK_STOPWORDS.has(word));
+            for (const word of filtered) {
+              if (word.length > 2) {
+                addKeyword(keywords, seen, word);
+              }
             }
           }
 
-          const capitalizedMatches = fromTitle.match(
+          const delimiterParts = rawTitle
+            .split(/[–—|:]+/)
+            .map((part) => part.trim())
+            .filter(Boolean);
+          for (const part of delimiterParts) {
+            if (/[A-Za-z0-9]/.test(part)) {
+              addKeyword(keywords, seen, part);
+            }
+          }
+
+          const capitalizedMatches = rawTitle.match(
             /\b([A-Z][A-Za-z0-9&'’\-]*(?:\s+[A-Z][A-Za-z0-9&'’\-]*)*)\b/g
           );
           if (capitalizedMatches) {
@@ -1043,9 +1061,9 @@ async function generateWithLinks(
           }
         }
 
-        const fromSummary = context?.summary?.replace(/\s+/g, ' ').trim();
-        if (fromSummary) {
-          const capitalizedMatches = fromSummary.match(
+        const summary = context?.summary?.replace(/\s+/g, ' ').trim();
+        if (summary) {
+          const capitalizedMatches = summary.match(
             /\b([A-Z][A-Za-z0-9&'’\-]*(?:\s+[A-Z][A-Za-z0-9&'’\-]*)*)\b/g
           );
           if (capitalizedMatches) {
@@ -1059,25 +1077,17 @@ async function generateWithLinks(
           const host = new URL(url).hostname.replace(/^www\./i, '');
           if (host) {
             addKeyword(keywords, seen, host);
-            const hostParts = host.split('.');
-            if (hostParts.length > 1) {
-              addKeyword(keywords, seen, hostParts.slice(0, -1).join(' '));
+            const parts = host.split('.');
+            if (parts.length > 1) {
+              addKeyword(keywords, seen, parts.slice(0, -1).join(' '));
             }
-            const primary = hostParts[0];
+            const primary = parts[0];
             if (primary) {
               addKeyword(keywords, seen, primary.replace(/[-_]+/g, ' '));
             }
           }
         } catch {
           // Ignore invalid URLs
-        }
-
-        if (!keywords.length) {
-          const slug = url.split('/').pop() ?? '';
-          const slugParts = slug.split(/[-_]+/).filter((part) => part.length > 3);
-          for (const part of slugParts.slice(0, 5)) {
-            addKeyword(keywords, seen, part);
-          }
         }
 
         keywordCache.set(url, keywords);
@@ -1088,124 +1098,101 @@ async function generateWithLinks(
         const segments: { text: string; start: number; end: number }[] = [];
         let index = 0;
         let anchorDepth = 0;
-
         while (index < html.length) {
-          const nextTag = html.indexOf('<', index);
-          if (nextTag === -1) {
-            if (anchorDepth === 0 && index < html.length) {
-              segments.push({ text: html.slice(index), start: index, end: html.length });
+          if (html[index] === '<') {
+            const closeIndex = html.indexOf('>', index + 1);
+            if (closeIndex === -1) {
+              break;
             }
-            break;
+            const rawTag = html.slice(index + 1, closeIndex).trim();
+            const isClosing = rawTag.startsWith('/');
+            const tagName = rawTag
+              .replace(/^\//, '')
+              .replace(/\s+[\s\S]*$/, '')
+              .toLowerCase();
+            if (!isClosing && tagName === 'a') {
+              anchorDepth += 1;
+            } else if (isClosing && tagName === 'a' && anchorDepth > 0) {
+              anchorDepth -= 1;
+            }
+            index = closeIndex + 1;
+            continue;
           }
-
-          if (anchorDepth === 0 && nextTag > index) {
-            segments.push({ text: html.slice(index, nextTag), start: index, end: nextTag });
+          const start = index;
+          while (index < html.length && html[index] !== '<') {
+            index += 1;
           }
-
-          const closeIndex = html.indexOf('>', nextTag + 1);
-          if (closeIndex === -1) {
-            break;
+          if (anchorDepth === 0 && start < index) {
+            segments.push({ text: html.slice(start, index), start, end: index });
           }
-
-          const rawTag = html.slice(nextTag + 1, closeIndex).trim();
-          const isClosing = rawTag.startsWith('/');
-          const tagName = rawTag
-            .replace(/^\//, '')
-            .replace(/\s+[\s\S]*$/, '')
-            .toLowerCase();
-
-          if (!isClosing && tagName === 'a') {
-            anchorDepth += 1;
-          } else if (isClosing && tagName === 'a' && anchorDepth > 0) {
-            anchorDepth -= 1;
-          }
-
-          index = closeIndex + 1;
         }
-
         return segments;
       };
 
-      const findKeywordRange = (html: string, keywords: string[]) => {
-        if (!keywords.length) {
-          return null;
-        }
-
+      const findKeywordMatch = (html: string, keywords: string[]) => {
         const segments = collectSegments(html);
         for (const keyword of keywords) {
-          const value = keyword.trim();
-          if (!value) {
-            continue;
-          }
-
-          const target = value.toLowerCase();
+          const target = keyword.trim();
           if (!target) {
             continue;
           }
-
+          const lowerTarget = target.toLowerCase();
           for (const segment of segments) {
             const lowerText = segment.text.toLowerCase();
-            let searchIndex = lowerText.indexOf(target);
-            while (searchIndex !== -1) {
-              const beforeChar = segment.text[searchIndex - 1];
-              const afterChar = segment.text[searchIndex + value.length];
-              const touchesWordBefore = beforeChar ? wordCharRegex.test(beforeChar) : false;
-              const touchesWordAfter = afterChar ? wordCharRegex.test(afterChar) : false;
-              if (!touchesWordBefore && !touchesWordAfter) {
+            let searchIndex = 0;
+            while (searchIndex <= lowerText.length) {
+              const foundIndex = lowerText.indexOf(lowerTarget, searchIndex);
+              if (foundIndex === -1) {
+                break;
+              }
+              const beforeChar = segment.text[foundIndex - 1];
+              const afterChar = segment.text[foundIndex + target.length];
+              const hasBefore = beforeChar ? wordCharRegex.test(beforeChar) : false;
+              const hasAfter = afterChar ? wordCharRegex.test(afterChar) : false;
+              if (!hasBefore && !hasAfter) {
                 return {
-                  start: segment.start + searchIndex,
-                  end: segment.start + searchIndex + value.length,
+                  start: segment.start + foundIndex,
+                  end: segment.start + foundIndex + target.length,
                 };
               }
-              searchIndex = lowerText.indexOf(target, searchIndex + 1);
+              searchIndex = foundIndex + 1;
             }
           }
         }
-
         return null;
       };
 
-      const findFallbackRange = (html: string) => {
+      const findFallbackMatch = (html: string) => {
         const segments = collectSegments(html);
-        let firstChoice: { start: number; end: number } | null = null;
-        let backup: { start: number; end: number } | null = null;
-
+        let firstTextRange: { start: number; end: number } | null = null;
         for (const segment of segments) {
-          const regex = /[\p{L}\p{N}][\p{L}\p{N}'’\-]{2,}/gu;
+          const regex = /[\p{L}\p{N}][\p{L}\p{N}'’\-]*/gu;
           let match: RegExpExecArray | null;
           while ((match = regex.exec(segment.text)) !== null) {
             const word = match[0];
+            if (word.length < 3) {
+              continue;
+            }
             if (FALLBACK_STOPWORDS.has(word.toLowerCase())) {
               continue;
             }
-
-            const start = segment.start + match.index;
-            const end = start + word.length;
-            const hasLeadText = /\S/.test(html.slice(0, start));
-            if (hasLeadText) {
-              return { start, end };
-            }
-
-            if (!firstChoice) {
-              firstChoice = { start, end };
-            }
-
-            break;
+            return {
+              start: segment.start + match.index,
+              end: segment.start + match.index + word.length,
+            };
           }
-
-          if (!backup) {
+          if (!firstTextRange) {
             const trimmed = segment.text.replace(/^\s+/, '');
             if (trimmed) {
-              const leadingWhitespace = segment.text.length - trimmed.length;
-              backup = {
-                start: segment.start + leadingWhitespace,
-                end: segment.start + leadingWhitespace + trimmed.length,
+              const leadingWhitespaceLength = segment.text.length - trimmed.length;
+              firstTextRange = {
+                start: segment.start + leadingWhitespaceLength,
+                end: segment.start + leadingWhitespaceLength + trimmed.length,
               };
             }
           }
         }
-
-        return firstChoice ?? backup;
+        return firstTextRange;
       };
 
       const wrapRange = (html: string, range: { start: number; end: number }, safeUrl: string) => {
@@ -1235,9 +1222,9 @@ async function generateWithLinks(
 
         for (let offset = 0; offset < containerCount; offset += 1) {
           const container = containers[(containerIndex + offset) % containerCount];
-          const keywordRange = findKeywordRange(container.inner, keywords);
-          if (keywordRange) {
-            container.inner = wrapRange(container.inner, keywordRange, safeUrl);
+          const matchRange = findKeywordMatch(container.inner, keywords);
+          if (matchRange) {
+            container.inner = wrapRange(container.inner, matchRange, safeUrl);
             missingSources.delete(source);
             linkCount += 1;
             containerIndex = (containerIndex + offset + 1) % containerCount;
@@ -1250,7 +1237,7 @@ async function generateWithLinks(
         if (!inserted) {
           for (let offset = 0; offset < containers.length; offset += 1) {
             const container = containers[(containerIndex + offset) % containers.length];
-            const fallbackRange = findFallbackRange(container.inner);
+            const fallbackRange = findFallbackMatch(container.inner);
             if (fallbackRange) {
               container.inner = wrapRange(container.inner, fallbackRange, safeUrl);
               missingSources.delete(source);
@@ -1377,7 +1364,7 @@ export async function POST(request: Request) {
         includeLinks && requiredLinks.length
           ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
               .map((u) => `  - ${u}`)
-              .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Attach each required link to the keyword or fact it supports.\n  - Cite at least one provided source for any controversial or disputed claim.\n  - Spread the links naturally across the article.`
+              .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
           : '';
 
       const reportingBlock = buildRecentReportingBlock(articles);
@@ -1498,7 +1485,7 @@ List only the headings (no descriptions).
       const linkInstruction = requiredLinks.length
         ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
             .map((u) => `  - ${u}`)
-            .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Attach each required link to the keyword or fact it supports.\n  - Cite at least one provided source for any controversial or disputed claim.\n  - Spread the links naturally across the article.`
+            .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
         : '';
       const toneChoice =
         toneOfVoice === 'Custom' && customTone ? customTone : toneOfVoice;
@@ -1580,7 +1567,7 @@ Write the full article in valid HTML below:
       const linkInstruction = requiredLinks.length
         ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
             .map((u) => `  - ${u}`)
-            .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Attach each required link to the keyword or fact it supports.\n  - Cite at least one provided source for any controversial or disputed claim.\n  - Spread the links naturally across the article.`
+            .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
         : '';
 
       const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
@@ -1649,7 +1636,7 @@ Write the full article in valid HTML below:
       const linkInstruction = requiredLinks.length
         ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
             .map((u) => `  - ${u}`)
-            .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Attach each required link to the keyword or fact it supports.\n  - Cite at least one provided source for any controversial or disputed claim.\n  - Spread the links naturally across the article.`
+            .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
         : '';
       const rewriteInstruction = sourceText
         ? `- Rewrite the following content completely to avoid plagiarism:\n\n${sourceText}\n\n`
@@ -1790,7 +1777,7 @@ ${references}
     const linkInstruction = requiredLinks.length
       ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
           .map((u) => `  - ${u}`)
-          .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Attach each required link to the keyword or fact it supports.\n  - Cite at least one provided source for any controversial or disputed claim.\n  - Spread the links naturally across the article.`
+          .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
       : '';
 
     const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
