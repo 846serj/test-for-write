@@ -2223,9 +2223,9 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error:
-              'No recent news sources were available for your query. Try different keywords or timeframes.',
+              'No recent news on this topic. Adjust your topic, keywords, or timeframe to broaden the search for relevant reporting.',
             suggestion:
-              'Adjust your topic, keywords, or timeframe to broaden the search for relevant reporting.',
+              'No recent news on this topic. Adjust your topic, keywords, or timeframe to broaden the search for relevant reporting.',
             code: 'NO_RECENT_SOURCES',
           },
           { status: 422 }
