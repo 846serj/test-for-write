@@ -294,6 +294,8 @@ const DETAIL_INSTRUCTION =
   '- When summarizing, never replace explicit metrics, named individuals, or timelines with vague substitutes such as "many", "recently", or "officials"—quote the exact figures, dates, and proper nouns provided.\n' +
   '- Do not speculate or embellish beyond what the sources explicitly provide.\n' +
   '- For every factual claim (including dates, names, statistics, or described benefits), cite a supporting source URL inline using <a href="URL" target="_blank">anchor text</a>.\n' +
+  '- Each paragraph must ground at least one concrete statistic, named individual, or dated event from the sources and place the citation immediately after the fact.\n' +
+  '- When outlining developments over time, pair each milestone with the exact date or timeframe reported in the sources (e.g., "on March 3, 2024") and cite it inline.\n' +
   '- If a potentially important fact cannot be verified in the provided sources, omit it and instead note "Unverified based on available sources."\n';
 
 const TIMELINE_REGEX =
@@ -540,22 +542,22 @@ function extractStructuredFacts(summary: string | undefined | null): StructuredF
   };
 }
 
-function formatKeyDetails(summary: string | undefined | null): string | null {
+function formatKeyDetails(summary: string | undefined | null): string[] {
   const facts = extractStructuredFacts(summary);
   const segments: string[] = [];
   if (facts.metrics.length) {
-    segments.push(`Metrics: ${facts.metrics.join(', ')}`);
+    segments.push(`Cite these metrics verbatim: ${facts.metrics.join(', ')}`);
   }
   if (facts.timelines.length) {
-    segments.push(`Timeline: ${facts.timelines.join(', ')}`);
+    segments.push(`State these reported timelines exactly: ${facts.timelines.join(', ')}`);
   }
   if (facts.methods.length) {
-    segments.push(`Methods: ${facts.methods.join('; ')}`);
+    segments.push(`Reference the research methods noted: ${facts.methods.join('; ')}`);
   }
   if (facts.entities.length) {
-    segments.push(`Entities: ${facts.entities.join(', ')}`);
+    segments.push(`Name these entities precisely: ${facts.entities.join(', ')}`);
   }
-  return segments.length ? segments.join(' | ') : null;
+  return segments;
 }
 
 async function generateOutlineWithGrokFallback(
@@ -756,7 +758,12 @@ function buildRecentReportingBlock(sources: ReportingSource[]): string {
       const summary = normalizeSummary(item.summary);
       const keyDetails = formatKeyDetails(item.summary);
       const title = item.title || 'Untitled';
-      const detailLine = keyDetails ? `\n  Key details: ${keyDetails}` : '';
+      const detailLine =
+        keyDetails.length > 0
+          ? `\n  Must include and cite:\n${keyDetails
+              .map((detail) => `    - ${detail}`)
+              .join('\n')}`
+          : '';
       return `- "${title}" (${timestamp})\n  Summary: ${summary}${detailLine}\n  URL: ${item.url}`;
     })
     .join('\n');
