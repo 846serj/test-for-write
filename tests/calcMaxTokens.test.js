@@ -17,7 +17,7 @@ const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString(
 const { calcMaxTokens, DEFAULT_WORDS } = await import(moduleUrl);
 
 test('calcMaxTokens default uses approx DEFAULT_WORDS words', () => {
-  const tokens = calcMaxTokens('default', undefined, 'gpt-5');
+  const tokens = calcMaxTokens('default', undefined, 'gpt-4o');
   const approxWords = tokens * 0.75;
   assert(
     approxWords > DEFAULT_WORDS - 50 && approxWords < DEFAULT_WORDS + 50
@@ -30,12 +30,12 @@ test('listicle formulas include a 20% buffer', () => {
 });
 
 test('calcMaxTokens handles custom length option', () => {
-  const tokens = calcMaxTokens('custom', 5, 'gpt-5');
+  const tokens = calcMaxTokens('custom', 5, 'gpt-4o');
   assert.equal(tokens, Math.ceil((5 * 220) / 0.75));
 });
 
 test('calcMaxTokens falls back for unknown option', () => {
-  const tokens = calcMaxTokens('unknown', undefined, 'gpt-5');
+  const tokens = calcMaxTokens('unknown', undefined, 'gpt-4o');
   const approxWords = tokens * 0.75;
   assert(approxWords > 1850 && approxWords < 1950);
 });
