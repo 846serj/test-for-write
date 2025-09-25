@@ -293,8 +293,8 @@ const DETAIL_INSTRUCTION =
   '- Keep official names, model numbers, and other exact designations verbatim when they appear in the sources (e.g., "IL-20" instead of "plane").\n' +
   '- When summarizing, never replace explicit metrics, named individuals, or timelines with vague substitutes such as "many", "recently", or "officials"—quote the exact figures, dates, and proper nouns provided.\n' +
   '- Do not speculate or embellish beyond what the sources explicitly provide.\n' +
-  '- For every factual claim (including dates, names, statistics, or described benefits), cite a supporting source URL inline using <a href="URL" target="_blank">anchor text</a>.\n' +
-  '- Each paragraph must ground at least one concrete statistic, named individual, or dated event from the sources and place the citation immediately after the fact.\n' +
+  '- Treat every "Key details" line in the reporting block as mandatory: restate those exact metrics, names, and timelines in the article body and attribute them to the correct source with an inline citation.\n' +
+  '- Each paragraph that introduces a factual statement must contain at least one inline citation that backs up a concrete detail such as a number, date, named person, organization, or location.\n' +
   '- When outlining developments over time, pair each milestone with the exact date or timeframe reported in the sources (e.g., "on March 3, 2024") and cite it inline.\n' +
   '- If a potentially important fact cannot be verified in the provided sources, omit it and instead note "Unverified based on available sources."\n';
 
