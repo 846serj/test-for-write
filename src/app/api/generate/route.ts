@@ -273,6 +273,8 @@ const MIN_LINKS = 3;
 const STRICT_LINK_RETRY_THRESHOLD = 2;
 const VERIFICATION_DISCREPANCY_THRESHOLD = 0;
 const VERIFICATION_MAX_SOURCE_FIELD_LENGTH = 600;
+const VERIFICATION_MAX_SOURCES = 8;
+const VERIFICATION_TIMEOUT_MS = 25_000;
 
 // Low temperature to encourage factual consistency for reporting prompts
 const FACTUAL_TEMPERATURE = 0.2;
@@ -1670,19 +1672,53 @@ function truncateField(value: string | null | undefined): string {
 function normalizeVerificationSources(
   sources: VerificationSource[]
 ): Array<{ url: string; title?: string; summary?: string; publishedAt?: string }> {
-  return sources
-    .map((source) => {
-      if (typeof source === 'string') {
-        return { url: source };
-      }
-      return {
-        url: source.url ?? '',
-        title: source.title ?? undefined,
-        summary: source.summary ?? undefined,
-        publishedAt: source.publishedAt ?? undefined,
-      };
-    })
-    .filter((item) => Boolean(item.url));
+  const seen = new Set<string>();
+  const normalized: Array<{
+    url: string;
+    title?: string;
+    summary?: string;
+    publishedAt?: string;
+  }> = [];
+
+  for (const source of sources) {
+    if (normalized.length >= VERIFICATION_MAX_SOURCES) {
+      break;
+    }
+
+    let url: string | undefined;
+    let title: string | undefined;
+    let summary: string | undefined;
+    let publishedAt: string | undefined;
+
+    if (typeof source === 'string') {
+      url = source;
+    } else if (source) {
+      url = source.url ?? undefined;
+      title = source.title ?? undefined;
+      summary = source.summary ?? undefined;
+      publishedAt = source.publishedAt ?? undefined;
+    }
+
+    const trimmedUrl = url?.trim();
+    if (!trimmedUrl) {
+      continue;
+    }
+
+    const normalizedUrl = trimmedUrl.replace(/\s+/g, ' ');
+    if (seen.has(normalizedUrl)) {
+      continue;
+    }
+
+    seen.add(normalizedUrl);
+    normalized.push({
+      url: normalizedUrl,
+      title,
+      summary,
+      publishedAt,
+    });
+  }
+
+  return normalized;
 }
 
 async function verifyOutput(
@@ -1733,7 +1769,11 @@ async function verifyOutput(
   ].join('\n');
 
   try {
-    const response = await grokChatCompletion({ prompt, temperature: 0 });
+    const response = await grokChatCompletion({
+      prompt,
+      temperature: 0,
+      timeoutMs: VERIFICATION_TIMEOUT_MS,
+    });
     let parsed: any;
     try {
       parsed = JSON.parse(response);
