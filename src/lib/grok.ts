@@ -4,7 +4,7 @@ type GrokChatCompletionOptions = {
   temperature?: number;
 };
 
-const DEFAULT_GROK_MODEL = 'grok-beta';
+const DEFAULT_GROK_MODEL = 'grok-4';
 
 interface GrokChatCompletionResponse {
   choices?: Array<{
