@@ -218,6 +218,7 @@ function getWordBounds(
 
 // Minimum number of source links to include in generated content
 const MIN_LINKS = 3;
+const STRICT_LINK_RETRY_THRESHOLD = 1;
 
 // Low temperature to encourage factual consistency for reporting prompts
 const FACTUAL_TEMPERATURE = 0.2;
@@ -901,6 +902,11 @@ interface SourceContext {
   summary?: string;
 }
 
+interface KeywordEntry {
+  value: string;
+  isExact: boolean;
+}
+
 const FALLBACK_STOPWORDS = new Set<string>([
   'a',
   'an',
@@ -1000,10 +1006,11 @@ async function generateWithLinks(
   minLinks: number = MIN_LINKS,
   maxTokens = 2000,
   minWords = 0,
-  contextualSources: SourceContext[] = []
+  contextualSources: SourceContext[] = [],
+  strictLinking = true
 ): Promise<string> {
   const limit = MODEL_CONTEXT_LIMITS[model] || 8000;
-  const requiredCount = Math.min(Math.max(MIN_LINKS, sources.length), 7);
+  const requiredCount = Math.min(Math.max(MIN_LINKS, sources.length), 5);
   const requiredSources = sources.slice(0, requiredCount);
   let tokens = Math.min(maxTokens, limit);
   const buildMessages = (content: string) =>
@@ -1037,8 +1044,41 @@ async function generateWithLinks(
   let linkCount = content.match(/<a\s+href=/gi)?.length || 0;
 
   if (requiredSources.length > 0) {
-    const missingSources = new Set(findMissingSources(content, requiredSources));
-    const MAX_LINKS = 7;
+    let missingSources = new Set(findMissingSources(content, requiredSources));
+    const MAX_LINKS = 5;
+
+    if (
+      strictLinking &&
+      missingSources.size > STRICT_LINK_RETRY_THRESHOLD &&
+      requiredSources.length > 0
+    ) {
+      const reminderList = requiredSources
+        .map((source, index) => `${index + 1}. ${source}`)
+        .join('\n');
+      const reminderPrompt = `${prompt}\n\nReminder: Cite each of these sources exactly once within natural sentences:\n${reminderList}`;
+
+      let reminderTokens = tokens;
+      let retryRes = await openai.chat.completions.create({
+        model,
+        messages: buildMessages(reminderPrompt),
+        temperature: FACTUAL_TEMPERATURE,
+        max_tokens: reminderTokens,
+      });
+
+      if (retryRes.choices[0]?.finish_reason === 'length' && reminderTokens < limit) {
+        reminderTokens = Math.min(reminderTokens * 2, limit);
+        retryRes = await openai.chat.completions.create({
+          model,
+          messages: buildMessages(reminderPrompt),
+          temperature: FACTUAL_TEMPERATURE,
+          max_tokens: reminderTokens,
+        });
+      }
+
+      content = cleanModelOutput(retryRes.choices[0]?.message?.content);
+      linkCount = content.match(/<a\s+href=/gi)?.length || 0;
+      missingSources = new Set(findMissingSources(content, requiredSources));
+    }
 
     if (missingSources.size > 0) {
       const containerRegex = /<(p|li)(\b[^>]*)>([\s\S]*?)<\/\1>/gi;
@@ -1079,35 +1119,48 @@ async function generateWithLinks(
         contextByUrl.set(item.url, item);
       }
 
-      const keywordCache = new Map<string, string[]>();
+      const keywordCache = new Map<string, KeywordEntry[]>();
       const wordCharRegex = /[\p{L}\p{N}'’\-]/u;
 
-      const addKeyword = (list: string[], seen: Set<string>, value: string) => {
-        const trimmed = value.replace(/\s+/g, ' ').trim();
-        if (!trimmed) {
-          return;
-        }
-        if (trimmed.length > 120) {
-          return;
-        }
-        const normalized = trimmed.toLowerCase();
-        if (seen.has(normalized)) {
-          return;
-        }
-        seen.add(normalized);
-        list.push(trimmed);
-      };
-
-      const deriveKeywordsFor = (url: string): string[] => {
+      const deriveKeywordsFor = (url: string): KeywordEntry[] => {
         if (keywordCache.has(url)) {
           return keywordCache.get(url)!;
         }
         const context = contextByUrl.get(url);
-        const keywords: string[] = [];
-        const seen = new Set<string>();
+        const exactKeywords: KeywordEntry[] = [];
+        const fuzzyKeywords: KeywordEntry[] = [];
+        const seen = new Map<string, boolean>();
+
+        const addKeyword = (value: string, isExact: boolean) => {
+          const trimmed = value.replace(/\s+/g, ' ').trim();
+          if (!trimmed || trimmed.length > 120) {
+            return;
+          }
+          const normalized = trimmed.toLowerCase();
+          const existing = seen.get(normalized);
+          if (existing === true) {
+            return;
+          }
+          if (existing === false) {
+            if (!isExact) {
+              return;
+            }
+            const index = fuzzyKeywords.findIndex(
+              (entry) => entry.value.toLowerCase() === normalized
+            );
+            if (index !== -1) {
+              fuzzyKeywords.splice(index, 1);
+            }
+          }
+
+          seen.set(normalized, isExact);
+          const bucket = isExact ? exactKeywords : fuzzyKeywords;
+          bucket.push({ value: trimmed, isExact });
+        };
 
         const rawTitle = context?.title?.replace(/\s+/g, ' ').trim();
         if (rawTitle) {
+          addKeyword(rawTitle, true);
           const normalized = normalizeTitleValue(rawTitle);
           if (normalized) {
             const words = normalized.split(' ').filter((word) => word);
@@ -1118,14 +1171,14 @@ async function generateWithLinks(
                   continue;
                 }
                 if (slice.some((word) => word.length > 3)) {
-                  addKeyword(keywords, seen, slice.join(' '));
+                  addKeyword(slice.join(' '), false);
                 }
               }
             }
             const filtered = words.filter((word) => !FALLBACK_STOPWORDS.has(word));
             for (const word of filtered) {
               if (word.length > 2) {
-                addKeyword(keywords, seen, word);
+                addKeyword(word, false);
               }
             }
           }
@@ -1136,7 +1189,7 @@ async function generateWithLinks(
             .filter(Boolean);
           for (const part of delimiterParts) {
             if (/[A-Za-z0-9]/.test(part)) {
-              addKeyword(keywords, seen, part);
+              addKeyword(part, true);
             }
           }
 
@@ -1145,7 +1198,7 @@ async function generateWithLinks(
           );
           if (capitalizedMatches) {
             for (const phrase of capitalizedMatches) {
-              addKeyword(keywords, seen, phrase);
+              addKeyword(phrase, true);
             }
           }
         }
@@ -1157,7 +1210,7 @@ async function generateWithLinks(
           );
           if (capitalizedMatches) {
             for (const phrase of capitalizedMatches.slice(0, 6)) {
-              addKeyword(keywords, seen, phrase);
+              addKeyword(phrase, true);
             }
           }
         }
@@ -1165,22 +1218,23 @@ async function generateWithLinks(
         try {
           const host = new URL(url).hostname.replace(/^www\./i, '');
           if (host) {
-            addKeyword(keywords, seen, host);
+            addKeyword(host, false);
             const parts = host.split('.');
             if (parts.length > 1) {
-              addKeyword(keywords, seen, parts.slice(0, -1).join(' '));
+              addKeyword(parts.slice(0, -1).join(' '), false);
             }
             const primary = parts[0];
             if (primary) {
-              addKeyword(keywords, seen, primary.replace(/[-_]+/g, ' '));
+              addKeyword(primary.replace(/[-_]+/g, ' '), false);
             }
           }
         } catch {
           // Ignore invalid URLs
         }
 
-        keywordCache.set(url, keywords);
-        return keywords;
+        const combined = [...exactKeywords, ...fuzzyKeywords];
+        keywordCache.set(url, combined);
+        return combined;
       };
 
       const collectSegments = (html: string) => {
@@ -1218,19 +1272,28 @@ async function generateWithLinks(
         return segments;
       };
 
-      const findKeywordMatch = (html: string, keywords: string[]) => {
+      const findKeywordMatch = (html: string, keywords: KeywordEntry[]) => {
         const segments = collectSegments(html);
-        for (const keyword of keywords) {
-          const target = keyword.trim();
+        if (!segments.length) {
+          return null;
+        }
+        const prioritized = [
+          ...keywords.filter((entry) => entry.isExact),
+          ...keywords.filter((entry) => !entry.isExact),
+        ];
+        for (const keyword of prioritized) {
+          const target = keyword.value.trim();
           if (!target) {
             continue;
           }
-          const lowerTarget = target.toLowerCase();
+          const searchTarget = keyword.isExact ? target : target.toLowerCase();
           for (const segment of segments) {
-            const lowerText = segment.text.toLowerCase();
+            const haystack = keyword.isExact
+              ? segment.text
+              : segment.text.toLowerCase();
             let searchIndex = 0;
-            while (searchIndex <= lowerText.length) {
-              const foundIndex = lowerText.indexOf(lowerTarget, searchIndex);
+            while (searchIndex <= haystack.length) {
+              const foundIndex = haystack.indexOf(searchTarget, searchIndex);
               if (foundIndex === -1) {
                 break;
               }
@@ -1439,7 +1502,7 @@ export async function POST(request: Request) {
       const requiredLinks = includeLinks
         ? linkSources.slice(
             0,
-            Math.min(Math.max(MIN_LINKS, linkSources.length), 7)
+            Math.min(Math.max(MIN_LINKS, linkSources.length), 5)
           )
         : [];
       const minLinks = includeLinks ? requiredLinks.length : 0;
@@ -1573,7 +1636,7 @@ ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond
         : '';
       const requiredLinks = linkSources.slice(
         0,
-        Math.min(Math.max(MIN_LINKS, linkSources.length), 7)
+        Math.min(Math.max(MIN_LINKS, linkSources.length), 5)
       );
       const minLinks = requiredLinks.length; // how many links to require
       const optionalLinks = linkSources.slice(requiredLinks.length);
@@ -1655,7 +1718,7 @@ Write the full article in valid HTML below:
         : '';
       const requiredLinks = linkSources.slice(
         0,
-        Math.min(Math.max(MIN_LINKS, linkSources.length), 7)
+        Math.min(Math.max(MIN_LINKS, linkSources.length), 5)
       );
       const minLinks = requiredLinks.length; // how many links to require
       const optionalLinks = linkSources.slice(requiredLinks.length);
@@ -1724,7 +1787,7 @@ Write the full article in valid HTML below:
         : '';
       const requiredLinks = linkSources.slice(
         0,
-        Math.min(Math.max(MIN_LINKS, linkSources.length), 7)
+        Math.min(Math.max(MIN_LINKS, linkSources.length), 5)
       );
       const minLinks = requiredLinks.length; // how many links to require
       const optionalLinks = linkSources.slice(requiredLinks.length);
@@ -1855,7 +1918,7 @@ ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent information beyo
 
     const requiredLinks = linkSources.slice(
       0,
-      Math.min(Math.max(MIN_LINKS, linkSources.length), 7)
+      Math.min(Math.max(MIN_LINKS, linkSources.length), 5)
     );
     const minLinks = requiredLinks.length; // how many links to require
     const optionalLinks = linkSources.slice(requiredLinks.length);
