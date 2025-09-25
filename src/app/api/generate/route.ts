@@ -2221,8 +2221,14 @@ export async function POST(request: Request) {
       const articles = await fetchNewsArticles(title, serpEnabled);
       if (!articles.length) {
         return NextResponse.json(
-          { error: 'No recent news articles found for that topic.' },
-          { status: 502 }
+          {
+            error:
+              'No recent news sources were available for your query. Try different keywords or timeframes.',
+            suggestion:
+              'Adjust your topic, keywords, or timeframe to broaden the search for relevant reporting.',
+            code: 'NO_RECENT_SOURCES',
+          },
+          { status: 422 }
         );
       }
 

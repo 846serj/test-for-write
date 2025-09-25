@@ -198,6 +198,7 @@ export default function GeneratePage() {
   const [excludeDomainsInput, setExcludeDomainsInput] = useState('');
   const [headlineCategory, setHeadlineCategory] = useState('');
   const [headlineCountry, setHeadlineCountry] = useState('');
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
   // Tone of Voice
   const [toneOfVoice, setToneOfVoice] = useState<
@@ -266,6 +267,7 @@ export default function GeneratePage() {
     }
 
     setLoading(true);
+    setGenerateError(null);
     try {
       const instructions = customInstructions.trim();
 
@@ -310,14 +312,25 @@ export default function GeneratePage() {
 
       if (!res.ok) {
         let message = res.statusText || `Request failed with status ${res.status}`;
+        let errorCode: string | null = null;
 
         if (contentType.includes('application/json')) {
           try {
             const errorBody = await res.clone().json();
+            errorCode = typeof errorBody?.code === 'string' ? errorBody.code : null;
             message =
               errorBody?.error ||
               errorBody?.airtableError ||
               message;
+
+            if (errorCode === 'NO_RECENT_SOURCES') {
+              const inlineMessage =
+                errorBody?.suggestion ||
+                errorBody?.error ||
+                'No recent sources were found. Try adjusting your topic or timeframe.';
+              setGenerateError(inlineMessage);
+              return;
+            }
           } catch {
             try {
               const fallbackText = await res.text();
@@ -360,6 +373,15 @@ export default function GeneratePage() {
       const data = await res.json();
 
       if (!data.content) {
+        if (data?.code === 'NO_RECENT_SOURCES') {
+          setGenerateError(
+            data?.suggestion ||
+              data?.error ||
+              'No recent sources were found. Try adjusting your topic or timeframe.'
+          );
+          return;
+        }
+
         const friendlyMessage =
           data.error ||
           data.airtableError ||
@@ -377,6 +399,7 @@ export default function GeneratePage() {
       } catch {}
 
       router.push(`/editor?title=${encodeURIComponent(title)}`);
+      setGenerateError(null);
     } catch (err) {
       console.error('[generate] fetch error:', err);
       alert('Error generating article — check console');
@@ -848,6 +871,11 @@ export default function GeneratePage() {
             >
               {loading ? 'Generating…' : 'Generate & Edit'}
             </button>
+            {generateError && (
+              <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+                {generateError}
+              </p>
+            )}
           </div>
           </div>
         ) : (
