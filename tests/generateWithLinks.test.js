@@ -198,9 +198,7 @@ test('generateWithLinks retries when response is truncated', async () => {
   );
   const content = await generateWithLinks('prompt', 'model', [], undefined, 0, 100);
   assert.strictEqual(content, 'complete');
-  assert(
-    calls[1].max_completion_tokens > calls[0].max_completion_tokens
-  );
+  assert(calls[1].max_tokens > calls[0].max_tokens);
   assert.strictEqual(responses.length, 0);
   for (const call of calls) {
     assert.strictEqual(call.messages.length, 1);

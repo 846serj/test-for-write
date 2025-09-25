@@ -520,7 +520,7 @@ async function summarizeBlogContent(
       model,
       messages: [{ role: 'user', content: prompt }],
       ...withTemperature(model, 0.5),
-      max_completion_tokens: 300,
+      max_tokens: 300,
     });
     return res.choices[0]?.message?.content?.trim() || original;
   } catch {
@@ -929,17 +929,17 @@ async function generateWithLinks(
     model,
     messages: buildMessages(prompt),
     ...withTemperature(model, FACTUAL_TEMPERATURE),
-    max_completion_tokens: tokens,
+    max_tokens: tokens,
   });
 
-  // If the response was cut off due to max_completion_tokens, retry once with more room
+  // If the response was cut off due to max_tokens, retry once with more room
   if (baseRes.choices[0]?.finish_reason === 'length' && tokens < limit) {
     tokens = Math.min(tokens * 2, limit);
     baseRes = await openai.chat.completions.create({
       model,
       messages: buildMessages(prompt),
       ...withTemperature(model, FACTUAL_TEMPERATURE),
-      max_completion_tokens: tokens,
+      max_tokens: tokens,
     });
   }
 
