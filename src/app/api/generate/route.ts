@@ -1,6 +1,6 @@
 // route.ts
 import { NextResponse } from 'next/server';
-import { openai } from '../../../lib/openai';
+import { createChatCompletion, openai } from '../../../lib/openai';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
@@ -515,7 +515,7 @@ async function summarizeBlogContent(
   if (!useSummary) return original;
   try {
     const prompt = `Summarize the following article in bullet points.\n\n${original}`;
-    const res = await openai.chat.completions.create({
+    const res = await createChatCompletion(openai, {
       model,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.5,
@@ -924,7 +924,7 @@ async function generateWithLinks(
         ]
       : [{ role: 'user' as const, content }];
 
-  let baseRes = await openai.chat.completions.create({
+  let baseRes = await createChatCompletion(openai, {
     model,
     messages: buildMessages(prompt),
     temperature: FACTUAL_TEMPERATURE,
@@ -934,7 +934,7 @@ async function generateWithLinks(
   // If the response was cut off due to max_tokens, retry once with more room
   if (baseRes.choices[0]?.finish_reason === 'length' && tokens < limit) {
     tokens = Math.min(tokens * 2, limit);
-    baseRes = await openai.chat.completions.create({
+    baseRes = await createChatCompletion(openai, {
       model,
       messages: buildMessages(prompt),
       temperature: FACTUAL_TEMPERATURE,
@@ -1450,7 +1450,7 @@ Number each heading formatted like ${listNumberingFormat}.
 List only the headings (no descriptions).
 `.trim();
 
-      const outlineRes = await openai.chat.completions.create({
+      const outlineRes = await createChatCompletion(openai, {
         model: modelVersion,
         messages: [{ role: 'user', content: outlinePrompt }],
         temperature: 0.7,
@@ -1732,7 +1732,7 @@ Create a detailed outline for an article titled:
 ${references}
 `.trim();
 
-    const outlineRes = await openai.chat.completions.create({
+    const outlineRes = await createChatCompletion(openai, {
       model: modelVersion,
       messages: [{ role: 'user', content: baseOutline }],
       temperature: 0.7,
