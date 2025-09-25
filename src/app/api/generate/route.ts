@@ -292,7 +292,6 @@ const DETAIL_INSTRUCTION =
   '- When sources include concrete facts, repeat them precisely: list full names, state exact dates with month/day/year, give unrounded figures, and preserve other specific details.\n' +
   '- Keep official names, model numbers, and other exact designations verbatim when they appear in the sources (e.g., "IL-20" instead of "plane").\n' +
   '- When summarizing, never replace explicit metrics, named individuals, or timelines with vague substitutes such as "many", "recently", or "officials"—quote the exact figures, dates, and proper nouns provided.\n' +
-  '- When sources provide exact timestamps or time zone information, quote those times verbatim alongside the events and cite them inline.\n' +
   '- Do not speculate or embellish beyond what the sources explicitly provide.\n' +
   '- Treat every "Key details" line in the reporting block as mandatory: restate those exact metrics, names, and timelines in the article body and attribute them to the correct source with an inline citation.\n' +
   '- Each paragraph that introduces a factual statement must contain at least one inline citation tied to a concrete detail such as a number, date, named person, organization, or location, and paragraphs covering multiple facts should cite each one individually.\n' +
@@ -2001,8 +2000,7 @@ function normalizeVerificationSources(
 
 async function verifyOutput(
   content: string,
-  sources: VerificationSource[],
-  outlineChecklist?: string
+  sources: VerificationSource[]
 ): Promise<VerificationResult> {
   const trimmedContent = content?.trim();
   if (!trimmedContent) {
@@ -2010,8 +2008,7 @@ async function verifyOutput(
   }
 
   const normalizedSources = normalizeVerificationSources(sources);
-  const hasOutlineChecklist = Boolean(outlineChecklist && outlineChecklist.trim());
-  if (!process.env.GROK_API_KEY || (!hasOutlineChecklist && normalizedSources.length === 0)) {
+  if (!process.env.GROK_API_KEY || normalizedSources.length === 0) {
     return { isAccurate: true, discrepancies: [] };
   }
 
@@ -2034,35 +2031,19 @@ async function verifyOutput(
     })
     .join('\n');
 
-  const promptParts = [
+  const prompt = [
     'Check if this article matches sources; list discrepancies.',
     '',
     'You are a post-generation fact-checking assistant. Compare the article HTML to the provided sources and highlight any unsupported or contradictory claims.',
     'Respond with JSON using this schema: {"discrepancies":[{"description":string,"severity":"minor"|"major"}]}.',
     'Classify issues as "major" when the article conflicts with, misstates, or omits critical facts from the sources.',
-  ];
-
-  if (hasOutlineChecklist) {
-    promptParts.push(
-      '',
-      'Treat the outline below as a mandatory factual checklist. Confirm that every concrete detail—names, titles, dates, times, locations, figures, quotes—appears in the article with the same wording and an inline citation to the source noted in the outline.',
-      'If the article dilutes, omits, or misattributes any outline detail, mark it as a MAJOR discrepancy and quote the exact outline wording that needs to be inserted with the correct citation.',
-      '',
-      'Outline factual checklist:',
-      outlineChecklist!.trim()
-    );
-  }
-
-  promptParts.push(
     '',
     'Article HTML:',
     trimmedContent,
     '',
     'Sources:',
-    formattedSources || 'No sources provided.'
-  );
-
-  const prompt = promptParts.join('\n');
+    formattedSources || 'No sources provided.',
+  ].join('\n');
 
   try {
     const response = await grokChatCompletion({
@@ -2135,32 +2116,25 @@ function applyVerificationIssuesToPrompt(basePrompt: string, issues?: string[]):
     .map((issue, index) => `${index + 1}. ${issue.replace(/\s+/g, ' ').trim()}`)
     .join('\n');
 
-  return `${basePrompt}\n\nThe previous draft was flagged for factual inaccuracies:\n${formattedIssues}\nRevise the article to resolve every issue without introducing new errors. Reinsert any missing outline specifics verbatim with the cited sources. Only output the corrected HTML article.`;
+  return `${basePrompt}\n\nThe previous draft was flagged for factual inaccuracies:\n${formattedIssues}\nRevise the article to resolve every issue without introducing new errors. Only output the corrected HTML article.`;
 }
 
 async function generateWithVerification(
   generator: (issues?: string[]) => Promise<string>,
   sources: VerificationSource[],
-  fallbackSources: string[] = [],
-  outlineChecklist?: string
+  fallbackSources: string[] = []
 ): Promise<string> {
   const combinedSources = sources.length
     ? sources
     : fallbackSources.map((url) => ({ url }));
-  const shouldVerify =
-    Boolean(process.env.GROK_API_KEY) &&
-    (combinedSources.length > 0 || Boolean(outlineChecklist && outlineChecklist.trim()));
+  const shouldVerify = Boolean(process.env.GROK_API_KEY) && combinedSources.length > 0;
 
   const initialContent = await generator();
   if (!shouldVerify) {
     return initialContent;
   }
 
-  const verification = await verifyOutput(
-    initialContent,
-    combinedSources,
-    outlineChecklist
-  );
+  const verification = await verifyOutput(initialContent, combinedSources);
   if (verification.isAccurate) {
     return initialContent;
   }
@@ -2402,7 +2376,6 @@ ${reportingContext}Requirements:
 • Provide a short clause after each numbered heading describing the key sourced insight it should cover.
 • Keep the outline tightly focused on the developments described in the reporting summaries.
 • Preserve every concrete fact from the reporting block—names, dates, figures, locations, direct quotes—and restate them verbatim inside the relevant numbered heading or bullet instead of paraphrasing generically.
-• Capture precise timelines from the reporting, including exact timestamps and time zones when provided, rather than vague references like "earlier" or "later".
 • For every bullet that uses a reporting summary, append " (Source: URL)" with the matching link.
 • Do not merge distinct facts into one bullet: break out each specific person, organization, date, or metric so it can be cited individually.
 ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond the provided sources.
@@ -2495,8 +2468,7 @@ Write the full article in valid HTML below:
             reportingSources
           ),
         reportingSources,
-        linkSources,
-        outline
+        linkSources
       );
       return NextResponse.json({
         content,
@@ -2715,7 +2687,6 @@ ${reportingContext}Outline requirements:
 • After the "INTRO:" section, ${sectionInstruction}.
 • Under each <h2>, list 2–3 bullet-point subtopics describing what evidence, examples, or angles to cover.
 • Preserve every concrete fact from the reporting block and Key details list—names, dates, figures, locations, quotes—and restate them verbatim within the relevant subtopic bullets rather than summarizing vaguely.
-• Record exact timelines and time zones cited in the reporting, and keep them tied to the corresponding events instead of replacing them with relative phrases like "recently".
 • For every bullet that draws on reporting, append " (Source: URL)" with the matching link.
 • Do not combine multiple unrelated facts in a single bullet; give each person, organization, metric, or timestamp its own bullet so it can be cited precisely.
 • Do NOT use "Introduction" or "Intro" as an <h2> heading.
@@ -2806,8 +2777,7 @@ Output raw HTML only:
           reportingSources
         ),
       reportingSources,
-      linkSources,
-      outline
+      linkSources
     );
     return NextResponse.json({
       content,
