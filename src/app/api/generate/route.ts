@@ -47,6 +47,41 @@ const FRESHNESS_TO_HOURS: Record<NewsFreshness, number> = {
   '7d': 24 * 7,
 };
 
+const MILLIS_IN_MINUTE = 60 * 1000;
+const MILLIS_IN_HOUR = 60 * MILLIS_IN_MINUTE;
+const MILLIS_IN_DAY = 24 * MILLIS_IN_HOUR;
+const MILLIS_IN_WEEK = 7 * MILLIS_IN_DAY;
+const RELATIVE_TIME_UNIT_MS: Record<string, number> = {
+  m: MILLIS_IN_MINUTE,
+  min: MILLIS_IN_MINUTE,
+  mins: MILLIS_IN_MINUTE,
+  minute: MILLIS_IN_MINUTE,
+  minutes: MILLIS_IN_MINUTE,
+  h: MILLIS_IN_HOUR,
+  hr: MILLIS_IN_HOUR,
+  hrs: MILLIS_IN_HOUR,
+  hour: MILLIS_IN_HOUR,
+  hours: MILLIS_IN_HOUR,
+  d: MILLIS_IN_DAY,
+  day: MILLIS_IN_DAY,
+  days: MILLIS_IN_DAY,
+  w: MILLIS_IN_WEEK,
+  week: MILLIS_IN_WEEK,
+  weeks: MILLIS_IN_WEEK,
+  mo: 30 * MILLIS_IN_DAY,
+  mos: 30 * MILLIS_IN_DAY,
+  month: 30 * MILLIS_IN_DAY,
+  months: 30 * MILLIS_IN_DAY,
+  y: 365 * MILLIS_IN_DAY,
+  yr: 365 * MILLIS_IN_DAY,
+  yrs: 365 * MILLIS_IN_DAY,
+  year: 365 * MILLIS_IN_DAY,
+  years: 365 * MILLIS_IN_DAY,
+};
+
+const MAX_SOURCE_WINDOW_MS = 14 * MILLIS_IN_DAY;
+const MAX_FUTURE_DRIFT_MS = 5 * MILLIS_IN_MINUTE;
+
 const sectionRanges: Record<string, [number, number]> = {
   shorter: [2, 4],
   short: [3, 5],
@@ -307,10 +342,11 @@ async function fetchSources(
   freshness?: NewsFreshness
 ): Promise<ReportingSource[]> {
   const resolvedFreshness = resolveFreshness(freshness);
+  const nowMs = Date.now();
   const seenLinks = new Set<string>();
   const seenPublishers = new Set<string>();
   const seenTitles = new Set<string>();
-  const orderedSources: ReportingSource[] = [];
+  const candidateSources: ReportingSource[] = [];
 
   const newsPromise: Promise<NewsArticle[]> = process.env.NEWS_API_KEY
     ? fetchNewsArticles(headline, resolvedFreshness, false).catch((err) => {
@@ -345,6 +381,11 @@ async function fetchSources(
       continue;
     }
 
+    const publishedTimestamp = parsePublishedTimestamp(article.publishedAt, nowMs);
+    if (publishedTimestamp === null || !isTimestampWithinWindow(publishedTimestamp, nowMs)) {
+      continue;
+    }
+
     let publisherId: string | null = null;
     try {
       publisherId = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
@@ -356,12 +397,15 @@ async function fetchSources(
       continue;
     }
 
-    orderedSources.push({
+    const summary = (article.summary || '').replace(/\s+/g, ' ').trim();
+    const reportingSource: ReportingSource = {
       title: article.title || 'Untitled',
       url,
-      summary: article.summary || '',
-      publishedAt: article.publishedAt || '',
-    });
+      summary,
+      publishedAt: normalizePublishedAt(publishedTimestamp),
+    };
+
+    candidateSources.push(reportingSource);
 
     seenLinks.add(url);
     if (publisherId) {
@@ -370,14 +414,6 @@ async function fetchSources(
     if (normalizedTitle) {
       seenTitles.add(normalizedTitle);
     }
-
-    if (orderedSources.length >= 5) {
-      break;
-    }
-  }
-
-  if (orderedSources.length >= 5) {
-    return orderedSources;
   }
 
   for (const result of serpResults) {
@@ -399,8 +435,12 @@ async function fetchSources(
     const summary = (result.snippet || result.summary || '')
       .replace(/\s+/g, ' ')
       .trim();
-    const publishedAt =
-      result.date || result.published_at || result.date_published || '';
+    const publishedAtRaw =
+      result.published_at || result.date_published || result.date || '';
+    const publishedTimestamp = parsePublishedTimestamp(publishedAtRaw, nowMs);
+    if (publishedTimestamp === null || !isTimestampWithinWindow(publishedTimestamp, nowMs)) {
+      continue;
+    }
     const title = result.title || 'Untitled';
 
     seenLinks.add(link);
@@ -409,19 +449,19 @@ async function fetchSources(
       seenTitles.add(normalizedTitle);
     }
 
-    orderedSources.push({
+    candidateSources.push({
       title,
       url: link,
       summary,
-      publishedAt,
+      publishedAt: normalizePublishedAt(publishedTimestamp),
     });
-
-    if (orderedSources.length >= 5) {
-      break;
-    }
   }
 
-  return orderedSources;
+  if (!candidateSources.length) {
+    return [];
+  }
+
+  return candidateSources.slice(0, 5);
 }
 
 function formatPublishedTimestamp(value: string): string {
@@ -493,6 +533,77 @@ function computeFreshnessIso(freshness: NewsFreshness): string {
   return from.toISOString();
 }
 
+function parseRelativeTimestamp(value: string, referenceMs: number): number | null {
+  const cleaned = value.trim().toLowerCase();
+  if (!cleaned) {
+    return null;
+  }
+
+  if (cleaned === 'yesterday') {
+    return referenceMs - MILLIS_IN_DAY;
+  }
+
+  if (cleaned === 'today') {
+    return referenceMs;
+  }
+
+  const normalized = cleaned.replace(/,/g, '');
+  const fullMatch = normalized.match(/^(\d+|an|a)\s*([a-z]+)\s+ago$/);
+  const compactMatch = normalized.match(/^(\d+)([a-z]+)\s+ago$/);
+  const match = fullMatch ?? compactMatch;
+  if (!match) {
+    return null;
+  }
+
+  const amountRaw = match[1];
+  const unitRaw = match[2];
+  const amount = amountRaw === 'a' || amountRaw === 'an' ? 1 : Number.parseInt(amountRaw, 10);
+  const unitMs = RELATIVE_TIME_UNIT_MS[unitRaw];
+
+  if (!Number.isFinite(amount) || !unitMs) {
+    return null;
+  }
+
+  return referenceMs - amount * unitMs;
+}
+
+function parsePublishedTimestamp(
+  raw: string | null | undefined,
+  referenceMs: number
+): number | null {
+  if (!raw) {
+    return null;
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Date.parse(trimmed);
+  if (!Number.isNaN(parsed)) {
+    return parsed;
+  }
+
+  return parseRelativeTimestamp(trimmed, referenceMs);
+}
+
+function isTimestampWithinWindow(timestamp: number, referenceMs: number): boolean {
+  if (!Number.isFinite(timestamp)) {
+    return false;
+  }
+
+  if (timestamp > referenceMs + MAX_FUTURE_DRIFT_MS) {
+    return false;
+  }
+
+  return referenceMs - timestamp <= MAX_SOURCE_WINDOW_MS;
+}
+
+function normalizePublishedAt(timestamp: number): string {
+  return new Date(timestamp).toISOString();
+}
+
 async function fetchNewsArticles(
   query: string,
   freshness: NewsFreshness | undefined,
@@ -500,6 +611,7 @@ async function fetchNewsArticles(
 ): Promise<NewsArticle[]> {
   const resolvedFreshness = resolveFreshness(freshness);
   const fromIso = computeFreshnessIso(resolvedFreshness);
+  const nowMs = Date.now();
   const newsKey = process.env.NEWS_API_KEY;
 
   if (newsKey) {
@@ -517,15 +629,35 @@ async function fetchNewsArticles(
         const data = await resp.json();
         if (data?.status === 'ok' && Array.isArray(data.articles)) {
           const parsed = (data.articles as any[])
-            .map((article) => ({
-              title: article?.title || article?.headline || 'Untitled',
-              url: article?.url || '',
-              summary:
-                article?.description || article?.content || article?.summary || '',
-              publishedAt:
-                article?.publishedAt || article?.updatedAt || article?.date || '',
-            }))
-            .filter((item: NewsArticle) => item.title && item.url);
+            .map((article) => {
+              const publishedRaw =
+                article?.publishedAt || article?.updatedAt || article?.date || '';
+              const publishedTimestamp = parsePublishedTimestamp(publishedRaw, nowMs);
+
+              if (
+                publishedTimestamp === null ||
+                !isTimestampWithinWindow(publishedTimestamp, nowMs)
+              ) {
+                return null;
+              }
+
+              const summaryValue =
+                article?.description || article?.content || article?.summary || '';
+
+              const summary = typeof summaryValue === 'string'
+                ? summaryValue.replace(/\s+/g, ' ').trim()
+                : '';
+
+              const mapped: NewsArticle = {
+                title: article?.title || article?.headline || 'Untitled',
+                url: article?.url || '',
+                summary,
+                publishedAt: normalizePublishedAt(publishedTimestamp),
+              };
+
+              return mapped.title && mapped.url ? mapped : null;
+            })
+            .filter((item: NewsArticle | null): item is NewsArticle => Boolean(item));
           if (parsed.length > 0) {
             return parsed.slice(0, 8);
           }
@@ -562,13 +694,24 @@ async function fetchNewsArticles(
       const article: NewsArticle = {
         title: item.title || 'Untitled',
         url: item.link || '',
-        summary: item.snippet || '',
-        publishedAt: item.date || item.published_at || '',
+        summary: (item.snippet || '').replace(/\s+/g, ' ').trim(),
+        publishedAt: '',
       };
 
       if (!article.title || !article.url) {
         continue;
       }
+
+      const publishedTimestamp = parsePublishedTimestamp(
+        item.published_at || item.date_published || item.date || '',
+        nowMs
+      );
+
+      if (publishedTimestamp === null || !isTimestampWithinWindow(publishedTimestamp, nowMs)) {
+        continue;
+      }
+
+      article.publishedAt = normalizePublishedAt(publishedTimestamp);
 
       if (normalizedTitle) {
         seenTitles.add(normalizedTitle);
