@@ -7,6 +7,9 @@ const routePath = new URL('../src/app/api/generate/route.ts', import.meta.url);
 const tsCode = fs.readFileSync(routePath, 'utf8');
 
 const minLinksMatch = tsCode.match(/const MIN_LINKS = \d+;/);
+const strictRetryMatch = tsCode.match(
+  /const STRICT_LINK_RETRY_THRESHOLD = \d+;/
+);
 const factualTempMatch = tsCode.match(/const FACTUAL_TEMPERATURE\s*=\s*[^;]+;/);
 const modelLimitsMatch = tsCode.match(/const MODEL_CONTEXT_LIMITS[\s\S]*?};/);
 const normalizeTitleMatch = tsCode.match(/function normalizeTitleValue[\s\S]*?\n\}/);
@@ -26,6 +29,7 @@ const funcMatch = tsCode.match(/async function generateWithLinks[\s\S]*?\n\}/);
 
 const snippet = `
 ${minLinksMatch[0]}
+${strictRetryMatch[0]}
 ${factualTempMatch[0]}
 ${modelLimitsMatch[0]}
 ${normalizeTitleMatch[0]}
@@ -50,18 +54,32 @@ const { generateWithLinks, MIN_LINKS, responses, calls, findMissingSources } = a
 test('generateWithLinks embeds required sources inside matching phrases', async () => {
   calls.length = 0;
   responses.length = 0;
-  responses.push({
-    choices: [
-      {
-        message: {
-          content:
-            '<p>Alpha Corp partnered with Beta Initiative on Tuesday, according to recent TechCrunch coverage.</p>' +
-            '<ul><li>Reuters reported that the Securities and Exchange Commission opened a review.</li>' +
-            '<li>Bloomberg highlighted Federal Trade Commission concerns and investor unease.</li></ul>',
+  responses.push(
+    {
+      choices: [
+        {
+          message: {
+            content:
+              '<p>Alpha Corp partnered with Beta Initiative on Tuesday, according to recent TechCrunch coverage.</p>' +
+              '<ul><li>Reuters reported that the Securities and Exchange Commission opened a review.</li>' +
+              '<li>Bloomberg highlighted Federal Trade Commission concerns and investor unease.</li></ul>',
+          },
         },
-      },
-    ],
-  });
+      ],
+    },
+    {
+      choices: [
+        {
+          message: {
+            content:
+              '<p>Alpha Corp partnered with Beta Initiative on Tuesday, according to recent <a href="https://techcrunch.com/story">TechCrunch</a> coverage.</p>' +
+              '<ul><li><a href="https://www.reuters.com/markets/idUS123">Securities and Exchange Commission review</a> reporting from Reuters.</li>' +
+              '<li><a href="https://www.bloomberg.com/news/articles/xyz">Bloomberg</a> highlighted Federal Trade Commission concerns and investor unease.</li></ul>',
+          },
+        },
+      ],
+    }
+  );
   const sources = [
     'https://techcrunch.com/story',
     'https://www.reuters.com/markets/idUS123',
@@ -95,7 +113,7 @@ test('generateWithLinks embeds required sources inside matching phrases', async 
   const linkCount = (content.match(/<a\s+href=/g) ?? []).length;
   assert.strictEqual(linkCount, 3);
   assert.strictEqual(responses.length, 0);
-  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls.length, 2);
   const techcrunchAnchor = content.match(
     /<a href="https:\/\/techcrunch.com\/story"[^>]*>(.*?)<\/a>/
   );
@@ -129,10 +147,15 @@ test('generateWithLinks embeds required sources inside matching phrases', async 
   for (const url of sources) {
     assert(!content.includes(`<p><a href="${url}`));
   }
-  const { messages } = calls[0];
-  assert.strictEqual(messages.length, 2);
-  assert.deepStrictEqual(messages[0], { role: 'system', content: systemPrompt });
-  assert.strictEqual(messages[1].role, 'user');
+  const initialMessages = calls[0].messages;
+  assert.strictEqual(initialMessages.length, 2);
+  assert.deepStrictEqual(initialMessages[0], { role: 'system', content: systemPrompt });
+  assert.strictEqual(initialMessages[1].role, 'user');
+  const retryMessages = calls[1].messages;
+  assert.deepStrictEqual(retryMessages[0], { role: 'system', content: systemPrompt });
+  assert(
+    retryMessages[retryMessages.length - 1].content.includes('Reminder:')
+  );
 });
 
 test('generateWithLinks leaves content unchanged when all required cited', async () => {
