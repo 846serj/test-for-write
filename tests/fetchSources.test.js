@@ -53,7 +53,7 @@ async function withMockedNow(callback, referenceMs = FIXED_NOW_MS) {
   }
 }
 
-test('fetchSources requests google_news with freshness filter and preserves order', async () => {
+test('fetchSources requests google_news with relevance sort when configured and preserves order', async () => {
   await withMockedNow(async () => {
     serpCalls.length = 0;
     setSerpResults([
@@ -79,12 +79,22 @@ test('fetchSources requests google_news with freshness filter and preserves orde
         snippet: '',
         date: isoDaysAgo(3),
       },
+      {
+        link: 'https://example.com/archive',
+        source: 'Archive Source',
+        title: 'Older but relevant',
+        snippet: 'Older insights',
+        date: isoDaysAgo(28),
+      },
     ]);
-    const sources = await fetchSources('breaking topic');
+    const sources = await fetchSources('breaking topic', {
+      maxAgeMs: null,
+      serpParams: { sort_by: 'relevance' },
+    });
     assert.strictEqual(serpCalls.length, 1);
     assert.strictEqual(serpCalls[0].engine, 'google_news');
     assert.strictEqual(serpCalls[0].query, 'breaking topic');
-    assert.strictEqual(serpCalls[0].extraParams?.tbs, 'qdr:d14');
+    assert.deepStrictEqual(serpCalls[0].extraParams, { sort_by: 'relevance' });
     assert.strictEqual(serpCalls[0].limit, 8);
     assert.deepStrictEqual(
       sources.map(({ url, summary, publishedAt }) => ({ url, summary, publishedAt })),
@@ -103,6 +113,11 @@ test('fetchSources requests google_news with freshness filter and preserves orde
           url: 'https://example.com/third',
           summary: '',
           publishedAt: isoDaysAgo(3),
+        },
+        {
+          url: 'https://example.com/archive',
+          summary: 'Older insights',
+          publishedAt: isoDaysAgo(28),
         },
       ]
     );
@@ -237,7 +252,7 @@ test('fetchSources dedupes titles that only differ by trailing publisher separat
   });
 });
 
-test('fetchSources drops sources older than the recency window', async () => {
+test('fetchSources keeps older sources when recency is disabled', async () => {
   await withMockedNow(async () => {
     serpCalls.length = 0;
     setSerpResults([
@@ -251,12 +266,18 @@ test('fetchSources drops sources older than the recency window', async () => {
         link: 'https://old.com/story',
         source: 'Old Archive',
         title: 'Old Story',
-        date: isoDaysAgo(20),
+        date: isoDaysAgo(45),
       },
     ]);
 
-    const sources = await fetchSources('time filtered');
-    assert.deepStrictEqual(sources.map((item) => item.url), ['https://recent.com/story']);
+    const sources = await fetchSources('time filtered', {
+      maxAgeMs: null,
+      serpParams: { sort_by: 'relevance' },
+    });
+    assert.deepStrictEqual(sources.map((item) => item.url), [
+      'https://recent.com/story',
+      'https://old.com/story',
+    ]);
   });
 });
 
