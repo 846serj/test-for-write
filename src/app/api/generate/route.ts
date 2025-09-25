@@ -2035,8 +2035,9 @@ async function verifyOutput(
     'Check if this article matches sources; list discrepancies.',
     '',
     'You are a post-generation fact-checking assistant. Compare the article HTML to the provided sources and highlight any unsupported or contradictory claims.',
-    'Respond with JSON using this schema: {"discrepancies":[{"description":string,"severity":"minor"|"major"}]}.',
-    'Classify issues as "major" when the article conflicts with, misstates, or omits critical facts from the sources.',
+    'Respond with JSON using this schema: {"discrepancies":[{"description":string,"severity":"minor"|"major"|"critical"}]}.',
+    'Only include discrepancies that materially change the accuracy of the piece. Ignore nitpicks, emphasis changes, or speculative language.',
+    'Reserve "critical" severity for issues that would seriously mislead the reader about the core facts. Use "major" for notable but non-critical gaps and "minor" for everything else.',
     '',
     'Article HTML:',
     trimmedContent,
@@ -2071,14 +2072,14 @@ async function verifyOutput(
           return null;
         }
         if (typeof item === 'string') {
-          return { description: item.trim(), severity: 'major' };
+          return { description: item.trim(), severity: 'critical' };
         }
         if (typeof item === 'object') {
           const description = typeof item.description === 'string' ? item.description.trim() : '';
           if (!description) {
             return null;
           }
-          const severity = typeof item.severity === 'string' ? item.severity.toLowerCase() : 'major';
+          const severity = typeof item.severity === 'string' ? item.severity.toLowerCase() : 'critical';
           return { description, severity };
         }
         return null;
@@ -2088,13 +2089,14 @@ async function verifyOutput(
         severity: string;
       } => Boolean(item && item.description));
 
-    const majorIssues = normalizedDiscrepancies.filter(
-      (item) => (item.severity || 'major').toLowerCase() !== 'minor'
+    const criticalSeverities = new Set(['critical', 'blocker', 'must-fix']);
+    const criticalIssues = normalizedDiscrepancies.filter((item) =>
+      criticalSeverities.has((item.severity || '').toLowerCase())
     );
 
-    if (majorIssues.length > VERIFICATION_DISCREPANCY_THRESHOLD) {
-      const summaries = majorIssues.map(
-        (item) => `[${(item.severity || 'major').toUpperCase()}] ${item.description}`
+    if (criticalIssues.length > VERIFICATION_DISCREPANCY_THRESHOLD) {
+      const summaries = criticalIssues.map(
+        (item) => `[${(item.severity || 'critical').toUpperCase()}] ${item.description}`
       );
       console.warn('Accuracy issues: ', summaries);
       return { isAccurate: false, discrepancies: summaries };
@@ -2116,7 +2118,7 @@ function applyVerificationIssuesToPrompt(basePrompt: string, issues?: string[]):
     .map((issue, index) => `${index + 1}. ${issue.replace(/\s+/g, ' ').trim()}`)
     .join('\n');
 
-  return `${basePrompt}\n\nThe previous draft was flagged for factual inaccuracies:\n${formattedIssues}\nRevise the article to resolve every issue without introducing new errors. Only output the corrected HTML article.`;
+  return `${basePrompt}\n\nThe previous draft was flagged for critical factual inaccuracies:\n${formattedIssues}\nRevise the article to resolve every issue without introducing new errors. Only output the corrected HTML article.`;
 }
 
 async function generateWithVerification(
