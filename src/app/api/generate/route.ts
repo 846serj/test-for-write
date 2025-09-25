@@ -274,7 +274,18 @@ const STRICT_LINK_RETRY_THRESHOLD = 2;
 const VERIFICATION_DISCREPANCY_THRESHOLD = 0;
 const VERIFICATION_MAX_SOURCE_FIELD_LENGTH = 600;
 const VERIFICATION_MAX_SOURCES = 8;
-const VERIFICATION_TIMEOUT_MS = 25_000;
+
+const DEFAULT_VERIFICATION_TIMEOUT_MS = 60_000;
+const VERIFICATION_TIMEOUT_MS = (() => {
+  const envValue = process.env.GROK_VERIFICATION_TIMEOUT_MS;
+  if (envValue) {
+    const parsed = Number.parseInt(envValue, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_VERIFICATION_TIMEOUT_MS;
+})();
 
 // Low temperature to encourage factual consistency for reporting prompts
 const FACTUAL_TEMPERATURE = 0.2;
