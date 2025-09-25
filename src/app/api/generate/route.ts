@@ -2,7 +2,6 @@
 import { NextResponse } from 'next/server';
 import { openai } from '../../../lib/openai';
 import { withTemperature } from '../../../lib/modelCapabilities';
-import { fetchBlogContent, fetchTranscript } from '../../../lib/sourceContent';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
@@ -228,32 +227,7 @@ const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'gpt-5-mini': 128000,
   'gpt-5-nano': 128000,
   'gpt-4.1': 8192,
-  'gpt-4.1-mini': 8192,
 };
-
-const HELPER_MODEL = 'gpt-4.1-mini';
-
-function resolveCompletionBudget(
-  key: string | undefined,
-  requested: number,
-  model: string,
-  hardCap?: number
-): number {
-  const limit = MODEL_CONTEXT_LIMITS[model] || 8000;
-  const usageStore = getCompletionUsageStore();
-  const safetyMargin = getCompletionSafetyMargin();
-  let budget = Math.min(requested, limit);
-  if (key) {
-    const historical = usageStore.get(key);
-    if (historical) {
-      budget = Math.max(budget, Math.ceil(historical * safetyMargin));
-    }
-  }
-  if (typeof hardCap === 'number') {
-    budget = Math.min(budget, hardCap);
-  }
-  return Math.min(budget, limit);
-}
 
 // Encourage more concrete examples by default
 const DETAIL_INSTRUCTION =
@@ -504,11 +478,38 @@ async function fetchNewsArticles(
   }
 }
 
+// Fetch YouTube captions
+async function fetchTranscript(videoLink: string): Promise<string> {
+  try {
+    const urlObj = new URL(videoLink);
+    const videoId = urlObj.searchParams.get('v');
+    if (!videoId) return '';
+    const resp = await fetch(
+      `https://video.google.com/timedtext?lang=en&v=${videoId}`
+    );
+    const xml = await resp.text();
+    return xml.replace(/<\/?[^>]+(>|$)/g, ' ').replace(/\s+/g, ' ').trim();
+  } catch {
+    return '';
+  }
+}
+
+// Fetch and strip a blog post's HTML
+async function fetchBlogContent(blogLink: string): Promise<string> {
+  try {
+    const resp = await fetch(blogLink);
+    const html = await resp.text();
+    return html.replace(/<\/?[^>]+(>|$)/g, ' ').replace(/\s+/g, ' ').trim();
+  } catch {
+    return '';
+  }
+}
+
 // Fetch and optionally summarize blog content
 async function summarizeBlogContent(
   blogLink: string,
   useSummary: boolean,
-  summaryModel: string = HELPER_MODEL
+  model: string
 ): Promise<string> {
   const original = await fetchBlogContent(blogLink);
   if (!original) return '';
@@ -516,9 +517,9 @@ async function summarizeBlogContent(
   try {
     const prompt = `Summarize the following article in bullet points.\n\n${original}`;
     const res = await openai.chat.completions.create({
-      model: summaryModel,
+      model,
       messages: [{ role: 'user', content: prompt }],
-      ...applyTemperature(summaryModel, 0.5),
+      ...withTemperature(model, 0.5),
       max_completion_tokens: 300,
     });
     return res.choices[0]?.message?.content?.trim() || original;
@@ -805,36 +806,6 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function getCompletionUsageStore(): Map<string, number> {
-  const globalState = globalThis as {
-    __completionUsage__?: Map<string, number>;
-  };
-  if (!globalState.__completionUsage__) {
-    globalState.__completionUsage__ = new Map<string, number>([
-      ['Blog post', 4200],
-      ['Listicle/Gallery', 3000],
-      ['News article', 2600],
-      ['Rewrite blog post', 3600],
-      ['YouTube video to blog post', 4800],
-    ]);
-  }
-  return globalState.__completionUsage__!;
-}
-
-function getCompletionSafetyMargin(): number {
-  return 1.1;
-}
-
-function applyTemperature(
-  model: string,
-  temperature: number
-): { temperature?: number } {
-  if (typeof withTemperature === 'function') {
-    return withTemperature(model, temperature);
-  }
-  return {};
-}
-
 interface SourceContext {
   url: string;
   title?: string;
@@ -940,21 +911,12 @@ async function generateWithLinks(
   minLinks: number = MIN_LINKS,
   maxTokens = 2000,
   minWords = 0,
-  contextualSources: SourceContext[] = [],
-  usageKey?: string
+  contextualSources: SourceContext[] = []
 ): Promise<string> {
   const limit = MODEL_CONTEXT_LIMITS[model] || 8000;
   const requiredCount = Math.min(Math.max(MIN_LINKS, sources.length), 7);
   const requiredSources = sources.slice(0, requiredCount);
-  const usageStore = getCompletionUsageStore();
-  const safetyMargin = getCompletionSafetyMargin();
   let tokens = Math.min(maxTokens, limit);
-  if (usageKey) {
-    const historical = usageStore.get(usageKey);
-    if (historical) {
-      tokens = Math.max(tokens, Math.min(limit, Math.ceil(historical * safetyMargin)));
-    }
-  }
   const buildMessages = (content: string) =>
     systemPrompt
       ? [
@@ -966,7 +928,7 @@ async function generateWithLinks(
   let baseRes = await openai.chat.completions.create({
     model,
     messages: buildMessages(prompt),
-    ...applyTemperature(model, FACTUAL_TEMPERATURE),
+    ...withTemperature(model, FACTUAL_TEMPERATURE),
     max_completion_tokens: tokens,
   });
 
@@ -976,26 +938,12 @@ async function generateWithLinks(
     baseRes = await openai.chat.completions.create({
       model,
       messages: buildMessages(prompt),
-      ...applyTemperature(model, FACTUAL_TEMPERATURE),
+      ...withTemperature(model, FACTUAL_TEMPERATURE),
       max_completion_tokens: tokens,
     });
   }
 
   let content = cleanModelOutput(baseRes.choices[0]?.message?.content);
-
-  const completionTokens =
-    typeof baseRes.usage?.completion_tokens === 'number'
-      ? baseRes.usage.completion_tokens
-      : undefined;
-  if (usageKey && typeof completionTokens === 'number') {
-    const previous = usageStore.get(usageKey);
-    if (previous) {
-      const blended = Math.ceil(previous * 0.6 + completionTokens * 0.4);
-      usageStore.set(usageKey, blended);
-    } else {
-      usageStore.set(usageKey, completionTokens);
-    }
-  }
 
   let linkCount = content.match(/<a\s+href=/gi)?.length || 0;
 
@@ -1475,12 +1423,7 @@ Write the full article in valid HTML below:
         !lengthOption || lengthOption === 'default'
           ? Math.min(minBound, 900)
           : minBound;
-      const maxTokens = resolveCompletionBudget(
-        'News article',
-        Math.min(baseMaxTokens, 4000),
-        modelVersion,
-        4000
-      );
+      const maxTokens = Math.min(baseMaxTokens, 4000);
 
       const content = await generateWithLinks(
         articlePrompt,
@@ -1490,8 +1433,7 @@ Write the full article in valid HTML below:
         minLinks,
         maxTokens,
         minWords,
-        articles,
-        'News article'
+        articles
       );
 
       return NextResponse.json({
@@ -1523,9 +1465,9 @@ List only the headings (no descriptions).
 `.trim();
 
       const outlineRes = await openai.chat.completions.create({
-        model: HELPER_MODEL,
+        model: modelVersion,
         messages: [{ role: 'user', content: outlinePrompt }],
-        ...applyTemperature(HELPER_MODEL, 0.7),
+        ...withTemperature(modelVersion, 0.7),
       });
       const outline = outlineRes.choices[0]?.message?.content?.trim();
       if (!outline) throw new Error('Outline generation failed');
@@ -1595,11 +1537,7 @@ Write the full article in valid HTML below:
       const desired = count * wordsPerItem + 50;
       let maxTokens = Math.ceil((desired * 1.2) / 0.75); // add 20% buffer
       const limit = MODEL_CONTEXT_LIMITS[modelVersion] || 8000;
-      maxTokens = resolveCompletionBudget(
-        'Listicle/Gallery',
-        Math.min(maxTokens, limit),
-        modelVersion
-      );
+      maxTokens = Math.min(maxTokens, limit);
       const minWords = Math.floor(count * wordsPerItem * 0.8);
 
       const content = await generateWithLinks(
@@ -1610,8 +1548,7 @@ Write the full article in valid HTML below:
         minLinks,
         maxTokens,
         minWords,
-        reportingSources,
-        'Listicle/Gallery'
+        reportingSources
       );
       return NextResponse.json({
         content,
@@ -1675,14 +1612,9 @@ Write the full article in valid HTML below:
         linkSources,
         systemPrompt,
         minLinks,
-        resolveCompletionBudget(
-          'YouTube video to blog post',
-          baseMaxTokens,
-          modelVersion
-        ),
+        baseMaxTokens,
         minWords,
-        reportingSources,
-        'YouTube video to blog post'
+        reportingSources
       );
       return NextResponse.json({
         content,
@@ -1692,12 +1624,12 @@ Write the full article in valid HTML below:
 
     // ─── Rewrite blog post ──────────────────────────────────────────────────────
     if (articleType === 'Rewrite blog post') {
-      const maxTokens = resolveCompletionBudget(
-        'Rewrite blog post',
-        calcMaxTokens(lengthOption, customSections, modelVersion),
+      const maxTokens = calcMaxTokens(lengthOption, customSections, modelVersion);
+      const sourceText = await summarizeBlogContent(
+        blogLink || '',
+        useSummary,
         modelVersion
       );
-      const sourceText = await summarizeBlogContent(blogLink || '', useSummary);
 
       const customInstruction = customInstructions?.trim();
       const customInstructionBlock = customInstruction
@@ -1771,8 +1703,7 @@ Write the full article in valid HTML below:
         minLinks,
         maxTokens,
         getWordBounds(lengthOption, customSections)[0],
-        reportingSources,
-        'Rewrite blog post'
+        reportingSources
       );
       return NextResponse.json({
         content,
@@ -1816,9 +1747,9 @@ ${references}
 `.trim();
 
     const outlineRes = await openai.chat.completions.create({
-      model: HELPER_MODEL,
+      model: modelVersion,
       messages: [{ role: 'user', content: baseOutline }],
-      ...applyTemperature(HELPER_MODEL, 0.7),
+      ...withTemperature(modelVersion, 0.7),
     });
     const outline = outlineRes.choices[0]?.message?.content?.trim();
     if (!outline) throw new Error('Outline generation failed');
@@ -1894,10 +1825,9 @@ Output raw HTML only:
       linkSources,
       systemPrompt,
       minLinks,
-      resolveCompletionBudget('Blog post', baseMaxTokens, modelVersion),
+      baseMaxTokens,
       getWordBounds(lengthOption, customSections)[0],
-      reportingSources,
-      'Blog post'
+      reportingSources
     );
     return NextResponse.json({
       content,
