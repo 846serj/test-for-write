@@ -693,7 +693,15 @@ function calcMaxTokens(
   return Math.min(tokens, limit);
 }
 
-async function fetchSources(headline: string): Promise<ReportingSource[]> {
+type FetchSourcesOptions = {
+  maxAgeMs?: number | null;
+  serpParams?: Record<string, string>;
+};
+
+async function fetchSources(
+  headline: string,
+  { maxAgeMs = MAX_SOURCE_WINDOW_MS, serpParams }: FetchSourcesOptions = {}
+): Promise<ReportingSource[]> {
   const nowMs = Date.now();
   const seenLinks = new Set<string>();
   const seenPublishers = new Set<string>();
@@ -713,7 +721,7 @@ async function fetchSources(headline: string): Promise<ReportingSource[]> {
   const serpPromise = serpapiSearch({
     query: headline,
     engine: 'google_news',
-    extraParams: { tbs: SERP_14_DAY_TBS },
+    extraParams: serpParams ?? { tbs: SERP_14_DAY_TBS },
     limit: 8,
   });
 
@@ -734,7 +742,10 @@ async function fetchSources(headline: string): Promise<ReportingSource[]> {
     }
 
     const publishedTimestamp = parsePublishedTimestamp(article.publishedAt, nowMs);
-    if (publishedTimestamp === null || !isTimestampWithinWindow(publishedTimestamp, nowMs)) {
+    if (
+      publishedTimestamp === null ||
+      !isTimestampWithinWindow(publishedTimestamp, nowMs, maxAgeMs)
+    ) {
       continue;
     }
 
@@ -790,7 +801,10 @@ async function fetchSources(headline: string): Promise<ReportingSource[]> {
     const publishedAtRaw =
       result.published_at || result.date_published || result.date || '';
     const publishedTimestamp = parsePublishedTimestamp(publishedAtRaw, nowMs);
-    if (publishedTimestamp === null || !isTimestampWithinWindow(publishedTimestamp, nowMs)) {
+    if (
+      publishedTimestamp === null ||
+      !isTimestampWithinWindow(publishedTimestamp, nowMs, maxAgeMs)
+    ) {
       continue;
     }
     const title = result.title || 'Untitled';
@@ -930,7 +944,11 @@ function parsePublishedTimestamp(
   return parseRelativeTimestamp(trimmed, referenceMs);
 }
 
-function isTimestampWithinWindow(timestamp: number, referenceMs: number): boolean {
+function isTimestampWithinWindow(
+  timestamp: number,
+  referenceMs: number,
+  maxAgeMs: number | null | undefined = MAX_SOURCE_WINDOW_MS
+): boolean {
   if (!Number.isFinite(timestamp)) {
     return false;
   }
@@ -939,7 +957,11 @@ function isTimestampWithinWindow(timestamp: number, referenceMs: number): boolea
     return false;
   }
 
-  return referenceMs - timestamp <= MAX_SOURCE_WINDOW_MS;
+  if (maxAgeMs == null) {
+    return true;
+  }
+
+  return referenceMs - timestamp <= maxAgeMs;
 }
 
 function normalizePublishedAt(timestamp: number): string {
@@ -2378,7 +2400,17 @@ export async function POST(request: Request) {
         };
       }
 
-      const reportingSources = await fetchSources(title);
+      const needsRelevanceSourcing =
+        articleType === 'Listicle/Gallery' || articleType === 'Blog post';
+      const reportingSources = await fetchSources(
+        title,
+        needsRelevanceSourcing
+          ? {
+              maxAgeMs: null,
+              serpParams: { sort_by: 'relevance' },
+            }
+          : undefined
+      );
       const reportingBlock = buildRecentReportingBlock(reportingSources);
       const groundingInstruction = reportingSources.length
         ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\n'
