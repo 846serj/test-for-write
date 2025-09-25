@@ -1268,10 +1268,26 @@ Write the full article in valid HTML below:
       const match = title.match(/\d+/);
       const count = match ? parseInt(match[0], 10) : 5;
 
+      const outlinePrompt = `
+You are a professional writer.
+Create an outline for a listicle titled "${title}".
+Use exactly ${count} items.
+Number each heading formatted like ${listNumberingFormat}.
+List only the headings (no descriptions).
+`.trim();
+
+      const outlineRes = await openai.chat.completions.create({
+        model: HELPER_MODEL,
+        messages: [{ role: 'user', content: outlinePrompt }],
+        ...applyTemperature(HELPER_MODEL, 0.7),
+      });
+      const outline = outlineRes.choices[0]?.message?.content?.trim();
+      if (!outline) throw new Error('Outline generation failed');
+
       const lengthInstruction = `- Use exactly ${count} items.\n`;
       const numberingInstruction = listNumberingFormat
-        ? `- Format each <h2> heading with numbering like ${listNumberingFormat}.\n`
-        : '- Number each <h2> heading sequentially.\n';
+        ? `- Use numbering formatted like ${listNumberingFormat}.\n`
+        : '';
       const wordCountInstruction =
         listItemWordCount
           ? `- Keep each list item around ${listItemWordCount} words.\n`
@@ -1313,10 +1329,12 @@ You are a professional journalist writing a listicle-style web article.
 Title: "${title}"
 Do NOT include the title or any <h1> tag in the HTML output.
 
+Outline:
+${outline}
+
 ${reportingSection}${toneInstruction}${povInstruction}Requirements:
-  ${lengthInstruction}${numberingInstruction}${wordCountInstruction}  - Begin with a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
-  - Create exactly ${count} <h2> headings that each describe one list item.
-  - Under every <h2>, write 2–3 paragraphs that elaborate on that list item.
+  ${lengthInstruction}${numberingInstruction}${wordCountInstruction}${customInstructionBlock}  - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
+  - For each <h2> in the outline, write 2–3 paragraphs under it.
   - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
@@ -1391,9 +1409,8 @@ Title: "${title}"
 Do NOT include the title or any <h1> tag in the HTML output.
 
 ${transcriptInstruction}${reportingSection}${toneInstruction}${povInstruction}Requirements:
-  - Write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
-  - Organize the article with clear <h2> headings that cover the main ideas from the transcript.
-  - Under each <h2>, write 2–3 paragraphs that elaborate on the key points for that section.
+  - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
+  - For each <h2> in the outline, write 2–3 paragraphs under it.
   - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
@@ -1518,17 +1535,47 @@ Write the full article in valid HTML below:
     }
 
     // ─── Blog post (default) ───────────────────────────────────────────────────
-    let headingInstruction: string;
+    let sectionInstruction: string;
     if (lengthOption === 'default') {
-      headingInstruction = '- Include around 9 <h2> headings.\n';
+      sectionInstruction = 'Include around 9 <h2> headings.';
     } else if (lengthOption === 'custom' && customSections) {
-      headingInstruction = `- Use exactly ${customSections} <h2> headings.\n`;
+      sectionInstruction = `Use exactly ${customSections} <h2> headings.`;
     } else if (sectionRanges[lengthOption || 'medium']) {
       const [minS, maxS] = sectionRanges[lengthOption || 'medium'];
-      headingInstruction = `- Include ${minS}–${maxS} <h2> headings.\n`;
+      sectionInstruction =
+        `Include ${minS}–${maxS} <h2> headings.`;
     } else {
-      headingInstruction = '- Include at least three <h2> headings.\n';
+      sectionInstruction = 'Include at least three <h2> headings.';
     }
+
+    const references =
+      linkSources.length > 0
+        ? `• Use these references:\n${linkSources
+            .map((u) => `- ${u}`)
+            .join('\n')}`
+        : '';
+
+    const baseOutline = `
+You are a professional writer.
+
+Create a detailed outline for an article titled:
+"${title}"
+
+• Begin with a section labeled "INTRO:" and include a single bullet with a 2–3 sentence introduction (no <h2>).
+• After the "INTRO:" section, ${sectionInstruction}.
+• Under each <h2>, list 2–3 bullet-point subtopics.
+• Do NOT use "Introduction" or "Intro" as an <h2> heading.
+• Do NOT use "Conclusion" or "Bottom line" as an <h2> heading.
+${references}
+`.trim();
+
+    const outlineRes = await openai.chat.completions.create({
+      model: HELPER_MODEL,
+      messages: [{ role: 'user', content: baseOutline }],
+      ...applyTemperature(HELPER_MODEL, 0.7),
+    });
+    const outline = outlineRes.choices[0]?.message?.content?.trim();
+    if (!outline) throw new Error('Outline generation failed');
 
     const customInstruction = customInstructions?.trim();
     const customInstructionBlock = customInstruction
@@ -1577,11 +1624,13 @@ You are a professional journalist writing a web article.
 Title: "${title}"
 Do NOT include the title or any <h1> tag in the HTML output.
 
+Outline:
+${outline}
+
 ${reportingSection}${toneInstruction}${povInstruction}Requirements:
-  ${lengthInstruction}${headingInstruction}
-  - Begin with a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
-  - Organize the body with <h2> headings that reflect the major themes of the topic.
-  - Under each <h2>, write 2–3 paragraphs that expand on that section's idea.
+  ${lengthInstruction}
+  - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
+  - For each <h2> in the outline, write 2–3 paragraphs under it.
   - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
