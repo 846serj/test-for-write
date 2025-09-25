@@ -687,7 +687,7 @@ async function inferKeywordsAndCategories(
     'Format: {"keywords": [..], "categories": [..]}.';
 
   const response = await client.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: 'gpt-5-mini',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
@@ -750,7 +750,7 @@ async function generateKeywordQueries(
     keywords.map((keyword, index) => `${index + 1}. ${keyword}`).join('\n');
 
   const response = await client.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: 'gpt-5-mini',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
@@ -1321,7 +1321,7 @@ Rules:
   let content = '';
   try {
     const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-mini',
       messages: [
         {
           role: 'system',
