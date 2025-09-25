@@ -237,7 +237,6 @@ function getWordBounds(
 const MIN_LINKS = 3;
 const STRICT_LINK_RETRY_THRESHOLD = 1;
 const VERIFICATION_DISCREPANCY_THRESHOLD = 0;
-const VERIFICATION_MAX_ATTEMPTS = 2;
 const VERIFICATION_MAX_SOURCE_FIELD_LENGTH = 600;
 
 // Low temperature to encourage factual consistency for reporting prompts
@@ -1608,29 +1607,33 @@ async function generateWithVerification(
     ? sources
     : fallbackSources.map((url) => ({ url }));
   const shouldVerify = Boolean(process.env.GROK_API_KEY) && combinedSources.length > 0;
-  const attempts = shouldVerify ? VERIFICATION_MAX_ATTEMPTS : 1;
 
-  let content = '';
-  let issues: string[] = [];
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    content = await generator(issues.length ? issues : undefined);
-    if (!shouldVerify) {
-      break;
-    }
-    const verification = await verifyOutput(content, combinedSources);
-    if (verification.isAccurate) {
-      break;
-    }
-    issues = Array.isArray(verification.discrepancies)
-      ? verification.discrepancies.filter((item) => typeof item === 'string' && item.trim())
-      : [];
-    if (issues.length === 0 || attempt === attempts - 1) {
-      break;
-    }
-    console.warn('Regenerating article to resolve accuracy issues', issues);
+  const initialContent = await generator();
+  if (!shouldVerify) {
+    return initialContent;
   }
 
-  return content;
+  const verification = await verifyOutput(initialContent, combinedSources);
+  if (verification.isAccurate) {
+    return initialContent;
+  }
+
+  const issues = Array.isArray(verification.discrepancies)
+    ? verification.discrepancies.filter((item) => typeof item === 'string' && item.trim())
+    : [];
+
+  if (!issues.length) {
+    return initialContent;
+  }
+
+  console.warn('Revising article once to resolve accuracy issues', issues);
+
+  try {
+    return await generator(issues);
+  } catch (err) {
+    console.warn('Revision attempt failed, returning initial article', err);
+    return initialContent;
+  }
 }
 
 export async function POST(request: Request) {
