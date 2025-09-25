@@ -13,13 +13,17 @@ const detailExtractionMatch = tsCode.match(
 const formatPublishedMatch = tsCode.match(/function formatPublishedTimestamp[\s\S]*?\n\}/);
 const normalizeSummaryMatch = tsCode.match(/function normalizeSummary[\s\S]*?\n\}/);
 const buildBlockMatch = tsCode.match(/function buildRecentReportingBlock[\s\S]*?\n\}/);
+const buildArticlePromptMatch = tsCode.match(
+  /function buildArticlePrompt[\s\S]*?`\.trim\(\);\n\}/
+);
 
 if (
   !detailInstructionMatch ||
   !detailExtractionMatch ||
   !formatPublishedMatch ||
   !normalizeSummaryMatch ||
-  !buildBlockMatch
+  !buildBlockMatch ||
+  !buildArticlePromptMatch
 ) {
   throw new Error('Failed to extract helper definitions from route.ts');
 }
@@ -48,11 +52,18 @@ function extractPromptSnippet(startMarker) {
   if (reportingStart === -1) {
     throw new Error(`Unable to locate reporting section for marker: ${startMarker}`);
   }
-  const trimIndex = tsCode.indexOf('`.trim();', reportingStart);
-  if (trimIndex === -1) {
+  const articlePromptStart = tsCode.indexOf('const articlePrompt', reportingStart);
+  if (articlePromptStart === -1) {
+    throw new Error(`Unable to locate article prompt for marker: ${startMarker}`);
+  }
+  let nextConstIndex = tsCode.indexOf('\n\n      const', articlePromptStart);
+  if (nextConstIndex === -1) {
+    nextConstIndex = tsCode.indexOf('\n\n    const', articlePromptStart);
+  }
+  if (nextConstIndex === -1) {
     throw new Error(`Unable to locate prompt terminator for marker: ${startMarker}`);
   }
-  return tsCode.slice(reportingStart, trimIndex + '`.trim();'.length);
+  return tsCode.slice(reportingStart, nextConstIndex);
 }
 
 const reportingHelpers = `
@@ -74,7 +85,7 @@ const block = buildRecentReportingBlock(items);
 export { block };
 `;
   const { block } = await transpile(snippet);
-  assert(block.includes('Recent reporting to reference:'));
+  assert(block.includes('Key reporting to reference:'));
   assert(block.includes('"Alpha" (2024-05-01T12:00:00.000Z)'));
   assert(block.includes('Summary: First summary'));
   assert(block.includes('URL: https://alpha.test'));
@@ -126,47 +137,71 @@ ${promptSnippet}
 export { articlePrompt, reportingBlock, groundingInstruction };
 `;
   const { articlePrompt, reportingBlock, groundingInstruction } = await transpile(snippet);
-  assert(articlePrompt.includes('Recent reporting to reference:'));
+  assert(articlePrompt.includes('Key reporting to reference:'));
   assert(articlePrompt.includes('Key developments about the topic.'));
   assert(articlePrompt.includes('https://news.test/sample'));
   assert(articlePrompt.includes('Base every factual statement on the reporting summaries provided and cite the matching URL'));
-  assert.strictEqual(reportingBlock.trim().startsWith('Recent reporting to reference:'), true);
+  assert(articlePrompt.includes('authoritative reporting summaries provided'));
+  assert(
+    articlePrompt.includes('accurate, highly relevant sourcing'),
+    'Listicle prompt should emphasize accurate, highly relevant sourcing.'
+  );
+  assert.strictEqual(reportingBlock.trim().startsWith('Key reporting to reference:'), true);
   assert.strictEqual(groundingInstruction.includes('cite the matching URL'), true);
 });
 
 test('blog prompt injects reporting block and grounding instruction', async () => {
-  const promptSnippet = extractPromptSnippet('// ─── Blog post (default) ───────────────────────────────────────────────────');
-  const snippet = `
-${reportingHelpers}
-const reportingSources = [
-  {
-    title: 'Blog Source',
-    summary: 'Background research summary.',
-    url: 'https://news.test/blog',
-    publishedAt: '2024-07-07T11:20:00Z',
-  },
-];
-const reportingBlock = buildRecentReportingBlock(reportingSources);
-const groundingInstruction = reportingSources.length
-  ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\\n'
-  : '';
-const linkInstruction = '';
-const toneInstruction = '';
-const povInstruction = '';
-const title = 'Default Blog';
-const outline = 'INTRO:\\n- Opening\\n\\n<h2>Section</h2>';
-const lengthInstruction = '- Aim for around 9 sections.\\n';
-const customInstructionBlock = '';
-const lengthOption = 'default';
-const customSections = 0;
-const WORD_RANGES = {};
-const sectionRanges = {};
-const DEFAULT_WORDS = 900;
-${promptSnippet}
-export { articlePrompt };
-`;
+  const snippet = [
+    reportingHelpers,
+    buildArticlePromptMatch[0],
+    "const reportingSources = [",
+    "  {",
+    "    title: 'Blog Source',",
+    "    summary: 'Background research summary.',",
+    "    url: 'https://news.test/blog',",
+    "    publishedAt: '2024-07-07T11:20:00Z',",
+    "  },",
+    "];",
+    "const reportingBlock = buildRecentReportingBlock(reportingSources);",
+    "const groundingInstruction = reportingSources.length",
+    "  ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\\\\n'",
+    "  : '';",
+    "const linkInstruction = '';",
+    "const toneInstruction = '';",
+    "const povInstruction = '';",
+    "const title = 'Default Blog';",
+    "const outline = 'INTRO:\\\\n- Opening\\\\n\\\\n<h2>Section</h2>';",
+    "const lengthInstruction = '- Aim for around 9 sections.\\\\n';",
+    "const customInstructionBlock = '';",
+    "const lengthOption = 'default';",
+    "const customSections = 0;",
+    "const WORD_RANGES = {};",
+    "const sectionRanges = {};",
+    "const DEFAULT_WORDS = 900;",
+    "const reportingSection = reportingBlock ? `${reportingBlock}\\\\n\\\\n` : '';",
+    "const articlePrompt = buildArticlePrompt({",
+    "  title,",
+    "  outline,",
+    "  reportingSection,",
+    "  toneInstruction,",
+    "  povInstruction,",
+    "  lengthInstruction,",
+    "  groundingInstruction,",
+    "  customInstructionBlock,",
+    "  linkInstruction,",
+    "});",
+    "export { articlePrompt };",
+  ].join('\n');
   const { articlePrompt } = await transpile(snippet);
-  assert(articlePrompt.includes('Recent reporting to reference:'));
+  assert(articlePrompt.includes('Key reporting to reference:'));
+  assert(
+    articlePrompt.includes('authoritative reporting summaries provided'),
+    'Blog prompt should reinforce authoritative reporting context.'
+  );
+  assert(
+    articlePrompt.includes('accurate, highly relevant sourcing'),
+    'Blog prompt should emphasize accurate, highly relevant sourcing.'
+  );
   assert(articlePrompt.includes('https://news.test/blog'));
   assert(articlePrompt.includes('cite the matching URL'));
 });
