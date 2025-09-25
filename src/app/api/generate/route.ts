@@ -1587,8 +1587,20 @@ async function verifyOutput(
   }
 }
 
+function applyVerificationIssuesToPrompt(basePrompt: string, issues?: string[]): string {
+  if (!issues || issues.length === 0) {
+    return basePrompt;
+  }
+
+  const formattedIssues = issues
+    .map((issue, index) => `${index + 1}. ${issue.replace(/\s+/g, ' ').trim()}`)
+    .join('\n');
+
+  return `${basePrompt}\n\nThe previous draft was flagged for factual inaccuracies:\n${formattedIssues}\nRevise the article to resolve every issue without introducing new errors. Only output the corrected HTML article.`;
+}
+
 async function generateWithVerification(
-  generator: () => Promise<string>,
+  generator: (issues?: string[]) => Promise<string>,
   sources: VerificationSource[],
   fallbackSources: string[] = []
 ): Promise<string> {
@@ -1599,15 +1611,23 @@ async function generateWithVerification(
   const attempts = shouldVerify ? VERIFICATION_MAX_ATTEMPTS : 1;
 
   let content = '';
+  let issues: string[] = [];
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    content = await generator();
+    content = await generator(issues.length ? issues : undefined);
     if (!shouldVerify) {
       break;
     }
     const verification = await verifyOutput(content, combinedSources);
-    if (verification.isAccurate || attempt === attempts - 1) {
+    if (verification.isAccurate) {
       break;
     }
+    issues = Array.isArray(verification.discrepancies)
+      ? verification.discrepancies.filter((item) => typeof item === 'string' && item.trim())
+      : [];
+    if (issues.length === 0 || attempt === attempts - 1) {
+      break;
+    }
+    console.warn('Regenerating article to resolve accuracy issues', issues);
   }
 
   return content;
@@ -1742,6 +1762,9 @@ ${toneInstruction}${povInstruction}Requirements:
 Write the full article in valid HTML below:
 `.trim();
 
+      const buildArticlePrompt = (issues?: string[]) =>
+        applyVerificationIssuesToPrompt(articlePrompt, issues);
+
       const [minBound] = getWordBounds(lengthOption, customSections);
       const minWords =
         !lengthOption || lengthOption === 'default'
@@ -1750,9 +1773,9 @@ Write the full article in valid HTML below:
       const maxTokens = Math.min(baseMaxTokens, 4000);
 
       const content = await generateWithVerification(
-        () =>
+        (issues) =>
           generateWithLinks(
-            articlePrompt,
+            buildArticlePrompt(issues),
             modelVersion,
             linkSources,
             systemPrompt,
@@ -1908,9 +1931,9 @@ Write the full article in valid HTML below:
       const minWords = Math.floor(count * wordsPerItem * 0.8);
 
       const content = await generateWithVerification(
-        () =>
+        (issues) =>
           generateWithLinks(
-            articlePrompt,
+            applyVerificationIssuesToPrompt(articlePrompt, issues),
             modelVersion,
             linkSources,
             systemPrompt,
@@ -1986,9 +2009,9 @@ Write the full article in valid HTML below:
       const [minWords] = getWordBounds(lengthOption, customSections);
 
       const content = await generateWithVerification(
-        () =>
+        (issues) =>
           generateWithLinks(
-            articlePrompt,
+            applyVerificationIssuesToPrompt(articlePrompt, issues),
             modelVersion,
             linkSources,
             systemPrompt,
@@ -2087,9 +2110,9 @@ Write the full article in valid HTML below:
 `.trim();
 
       const content = await generateWithVerification(
-        () =>
+        (issues) =>
           generateWithLinks(
-            articlePrompt,
+            applyVerificationIssuesToPrompt(articlePrompt, issues),
             modelVersion,
             linkSources,
             systemPrompt,
@@ -2214,9 +2237,9 @@ Output raw HTML only:
 `.trim();
 
     const content = await generateWithVerification(
-      () =>
+      (issues) =>
         generateWithLinks(
-          articlePrompt,
+          applyVerificationIssuesToPrompt(articlePrompt, issues),
           modelVersion,
           linkSources,
           systemPrompt,
