@@ -4,6 +4,7 @@ import {
   type CategoryFeedValue,
 } from '../../../constants/categoryFeeds';
 import { openai } from '../../../lib/openai';
+import type { ChatCompletionClient } from '../../../lib/openai';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
 const MIN_LIMIT = 1;
@@ -372,28 +373,7 @@ type HeadlinesRequestBody = {
   country?: unknown;
 };
 
-type OpenAIClient = {
-  chat: {
-    completions: {
-      create: (
-        options: {
-          model: string;
-          messages: { role: 'system' | 'user' | 'assistant'; content: string }[];
-          temperature?: number;
-          max_tokens?: number;
-          max_completion_tokens?: number;
-          response_format?: { type: string };
-        }
-      ) => Promise<{
-        choices?: Array<{
-          message?: {
-            content?: string | null;
-          } | null;
-        }>;
-      }>;
-    };
-  };
-};
+type OpenAIClient = ChatCompletionClient;
 
 type HeadlinesHandlerDependencies = {
   fetchImpl?: typeof fetch;
@@ -1570,7 +1550,7 @@ function createHeadlinesHandler(
   { fetchImpl, openaiClient, logger }: HeadlinesHandlerDependencies = {}
 ) {
   const requester = fetchImpl ?? fetch;
-  const aiClient = openaiClient ?? openai;
+  const aiClient: OpenAIClient = openaiClient ?? openai;
   const log = (logger ?? console) as Pick<typeof console, 'error'>;
 
   return async function handler(req: NextRequest) {
