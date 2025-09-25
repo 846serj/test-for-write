@@ -240,7 +240,7 @@ export default function GeneratePage() {
   const [recipeItemCount, setRecipeItemCount] = useState<number>(5);
 
   // ─── NEW: MODEL VERSION ───────────────────────────────────────────────────────
-  const models = ['gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4.1'];
+  const models = ['gpt-4', 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'];
   const [modelVersion, setModelVersion] = useState<string>(models[0]);
   const [useSerpApi, setUseSerpApi] = useState<boolean>(true);
   const [includeLinks, setIncludeLinks] = useState<boolean>(true);

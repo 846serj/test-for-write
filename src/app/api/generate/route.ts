@@ -222,10 +222,10 @@ const MIN_LINKS = 3;
 const FACTUAL_TEMPERATURE = 0.2;
 
 const MODEL_CONTEXT_LIMITS: Record<string, number> = {
-  'gpt-5': 200000,
-  'gpt-5-mini': 128000,
-  'gpt-5-nano': 64000,
-  'gpt-4.1': 128000,
+  'gpt-4o': 128000,
+  'gpt-4o-mini': 128000,
+  'gpt-4': 8192,
+  'gpt-3.5-turbo': 16000,
 };
 
 // Encourage more concrete examples by default
@@ -1290,7 +1290,7 @@ export async function POST(request: Request) {
       customInstructions,
       lengthOption,
       customSections,
-      modelVersion = 'gpt-5-mini',
+      modelVersion = 'gpt-4o-mini',
       useSerpApi = true,
       includeLinks = true,
       useSummary = false,
