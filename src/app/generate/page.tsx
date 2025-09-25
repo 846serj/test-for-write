@@ -51,6 +51,9 @@ const SEARCH_IN_OPTIONS = SEARCH_IN_ORDER.map((value) => ({
   label: SEARCH_IN_LABELS[value],
 }));
 
+const NO_RECENT_NEWS_MESSAGE =
+  'No recent news on this topic. Adjust your topic, keywords, or timeframe to broaden the search for relevant reporting.';
+
 const TOP_HEADLINE_COUNTRY_OPTIONS = [
   { value: '', label: 'Any country (global)' },
   { value: 'ae', label: 'United Arab Emirates' },
@@ -327,8 +330,9 @@ export default function GeneratePage() {
               const inlineMessage =
                 errorBody?.suggestion ||
                 errorBody?.error ||
-                'No recent sources were found. Try adjusting your topic or timeframe.';
-              setGenerateError(inlineMessage);
+                NO_RECENT_NEWS_MESSAGE;
+              alert(inlineMessage);
+              setGenerateError(null);
               return;
             }
           } catch {
@@ -350,7 +354,7 @@ export default function GeneratePage() {
 
         const friendlyMessage =
           message ||
-          'No recent sources were found. Try adjusting your topic or timeframe.';
+          NO_RECENT_NEWS_MESSAGE;
 
         alert(`Failed to generate article: ${friendlyMessage}`);
         return;
@@ -374,18 +378,19 @@ export default function GeneratePage() {
 
       if (!data.content) {
         if (data?.code === 'NO_RECENT_SOURCES') {
-          setGenerateError(
+          const inlineMessage =
             data?.suggestion ||
-              data?.error ||
-              'No recent sources were found. Try adjusting your topic or timeframe.'
-          );
+            data?.error ||
+            NO_RECENT_NEWS_MESSAGE;
+          alert(inlineMessage);
+          setGenerateError(null);
           return;
         }
 
         const friendlyMessage =
           data.error ||
           data.airtableError ||
-          'No recent sources were found. Try adjusting your topic or timeframe.';
+          NO_RECENT_NEWS_MESSAGE;
         alert(`Failed to generate article: ${friendlyMessage}`);
         return;
       }
