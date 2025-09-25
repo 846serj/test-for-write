@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
         const keywordRes = await openai.chat.completions.create({
           model: 'gpt-5-mini',
           messages: [{ role: 'user', content: keywordPrompt }],
-          max_completion_tokens: 50,
+          max_tokens: 50,
         });
         const keywords = keywordRes.choices[0]?.message?.content
           ?.split(',')
@@ -198,7 +198,7 @@ export async function POST(request: NextRequest) {
           { role: 'system', content: 'You are a helpful culinary assistant.' },
           { role: 'user', content: descPrompt }
         ],
-        max_completion_tokens: Math.max(100, wordsPerItem)
+        max_tokens: Math.max(100, wordsPerItem)
       });
       const description = descResponse.choices[0]?.message?.content?.trim() || '';
 
