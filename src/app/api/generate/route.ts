@@ -235,7 +235,7 @@ function getWordBounds(
 
 // Minimum number of source links to include in generated content
 const MIN_LINKS = 3;
-const STRICT_LINK_RETRY_THRESHOLD = 1;
+const STRICT_LINK_RETRY_THRESHOLD = 2;
 const VERIFICATION_DISCREPANCY_THRESHOLD = 0;
 const VERIFICATION_MAX_SOURCE_FIELD_LENGTH = 600;
 
@@ -269,6 +269,7 @@ async function generateOutlineWithGrokFallback(
     } catch (err) {
       console.warn('[api/generate] grok outline generation failed, falling back to OpenAI', err);
     }
+
   }
 
   const outlineRes = await openai.chat.completions.create({
@@ -1031,7 +1032,20 @@ async function generateWithLinks(
   const limit = MODEL_CONTEXT_LIMITS[model] || 8000;
   const requiredCount = Math.min(Math.max(MIN_LINKS, sources.length), 5);
   const requiredSources = sources.slice(0, requiredCount);
-  let tokens = Math.min(maxTokens, limit);
+  const trimmedPrompt = prompt.trim();
+  let augmentedPrompt = trimmedPrompt;
+  if (requiredSources.length > 0) {
+    const reminderList = requiredSources
+      .map((source, index) => `${index + 1}. ${source}`)
+      .join('\n');
+    const totalLinksNeeded = Math.max(minLinks, requiredSources.length);
+    augmentedPrompt = `${trimmedPrompt}\n\nCite every required source inside natural sentences exactly once. Include at least ${totalLinksNeeded} total hyperlinks and do not fabricate extra citations.\nRequired sources (one citation per URL):\n${reminderList}`;
+  }
+
+  const promptLengthTokens = Math.ceil(augmentedPrompt.length / 4);
+  const expectedFromWords = minWords > 0 ? Math.ceil(minWords * 1.6) : 0;
+  const baseBudget = Math.max(maxTokens, expectedFromWords, promptLengthTokens * 2, 800);
+  let tokens = Math.min(baseBudget, limit);
   const buildMessages = (content: string) =>
     systemPrompt
       ? [
@@ -1042,17 +1056,17 @@ async function generateWithLinks(
 
   let baseRes = await openai.chat.completions.create({
     model,
-    messages: buildMessages(prompt),
+    messages: buildMessages(augmentedPrompt),
     temperature: FACTUAL_TEMPERATURE,
     max_tokens: tokens,
   });
 
   // If the response was cut off due to max_tokens, retry once with more room
   if (baseRes.choices[0]?.finish_reason === 'length' && tokens < limit) {
-    tokens = Math.min(tokens * 2, limit);
+    tokens = limit;
     baseRes = await openai.chat.completions.create({
       model,
-      messages: buildMessages(prompt),
+      messages: buildMessages(augmentedPrompt),
       temperature: FACTUAL_TEMPERATURE,
       max_tokens: tokens,
     });
@@ -1065,39 +1079,6 @@ async function generateWithLinks(
   if (requiredSources.length > 0) {
     let missingSources = new Set(findMissingSources(content, requiredSources));
     const MAX_LINKS = 5;
-
-    if (
-      strictLinking &&
-      missingSources.size > STRICT_LINK_RETRY_THRESHOLD &&
-      requiredSources.length > 0
-    ) {
-      const reminderList = requiredSources
-        .map((source, index) => `${index + 1}. ${source}`)
-        .join('\n');
-      const reminderPrompt = `${prompt}\n\nReminder: Cite each of these sources exactly once within natural sentences:\n${reminderList}`;
-
-      let reminderTokens = tokens;
-      let retryRes = await openai.chat.completions.create({
-        model,
-        messages: buildMessages(reminderPrompt),
-        temperature: FACTUAL_TEMPERATURE,
-        max_tokens: reminderTokens,
-      });
-
-      if (retryRes.choices[0]?.finish_reason === 'length' && reminderTokens < limit) {
-        reminderTokens = Math.min(reminderTokens * 2, limit);
-        retryRes = await openai.chat.completions.create({
-          model,
-          messages: buildMessages(reminderPrompt),
-          temperature: FACTUAL_TEMPERATURE,
-          max_tokens: reminderTokens,
-        });
-      }
-
-      content = cleanModelOutput(retryRes.choices[0]?.message?.content);
-      linkCount = content.match(/<a\s+href=/gi)?.length || 0;
-      missingSources = new Set(findMissingSources(content, requiredSources));
-    }
 
     if (missingSources.size > 0) {
       const containerRegex = /<(p|li)(\b[^>]*)>([\s\S]*?)<\/\1>/gi;
@@ -1440,6 +1421,86 @@ async function generateWithLinks(
         }
         rebuilt += content.slice(lastIndex);
         content = rebuilt;
+      }
+    }
+
+    if (
+      strictLinking &&
+      missingSources.size > STRICT_LINK_RETRY_THRESHOLD &&
+      requiredSources.length > 0
+    ) {
+      const contextByUrl = new Map<string, SourceContext>();
+      for (const item of contextualSources) {
+        if (!item?.url || contextByUrl.has(item.url)) {
+          continue;
+        }
+        contextByUrl.set(item.url, item);
+      }
+
+      const missingList = requiredSources.filter((source) =>
+        missingSources.has(source)
+      );
+      if (missingList.length > 0) {
+        const summaryList = missingList
+          .map((url, index) => {
+            const context = contextByUrl.get(url);
+            const parts = [`${index + 1}. ${url}`];
+            if (context?.title) {
+              parts.push(`Title: ${context.title}`);
+            }
+            if (context?.summary) {
+              parts.push(`Summary: ${context.summary}`);
+            }
+            return parts.join('\n');
+          })
+          .join('\n\n');
+
+        const paragraphLabel =
+          missingList.length === 1 ? 'paragraph' : 'paragraphs';
+        const repairLines = [
+          `Write ${missingList.length} concise HTML ${paragraphLabel} that can be appended to an article.`,
+          'Each paragraph must naturally cite the matching source exactly once using descriptive anchor text and must not include any other links.',
+          'Keep each paragraph to two sentences or fewer.',
+        ];
+        if (summaryList) {
+          repairLines.push('', summaryList);
+        }
+        const repairPrompt = repairLines.join('\n');
+
+        let repairTokens = Math.min(
+          Math.max(400, Math.ceil(missingList.length * 220)),
+          limit
+        );
+        let retryRes = await openai.chat.completions.create({
+          model,
+          messages: buildMessages(repairPrompt),
+          temperature: FACTUAL_TEMPERATURE,
+          max_tokens: repairTokens,
+        });
+
+        if (
+          retryRes.choices[0]?.finish_reason === 'length' &&
+          repairTokens < limit
+        ) {
+          repairTokens = limit;
+          retryRes = await openai.chat.completions.create({
+            model,
+            messages: buildMessages(repairPrompt),
+            temperature: FACTUAL_TEMPERATURE,
+            max_tokens: repairTokens,
+          });
+        }
+
+        const repairContent = cleanModelOutput(
+          retryRes.choices[0]?.message?.content
+        );
+        if (repairContent) {
+          const trimmed = repairContent.trim();
+          const joiner = trimmed.startsWith('<') ? '' : '\n';
+          content = `${content}${joiner}${trimmed}`;
+        }
+        linkCount = content.match(/<a\s+href=/gi)?.length || 0;
+        missingSources = new Set(findMissingSources(content, requiredSources));
       }
     }
   }
