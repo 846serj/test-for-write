@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
       try {
         const keywordPrompt = `Extract 3-5 key categories, tags, flavors, or dish types from this recipe roundup title: '${title}'. Focus on the main theme, such as flavors (e.g., chocolate, vanilla) and types (e.g., desserts, cakes). Output as a comma-separated list.`;
         const keywordRes = await openai.chat.completions.create({
-          model: 'gpt-5-mini',
+          model: 'gpt-4o-mini',
           messages: [{ role: 'user', content: keywordPrompt }],
           max_tokens: 50,
         });
@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
     if (title) {
       const introPrompt = `Write a short introductory paragraph for a blog post titled "${title}".`;
       const introResponse = await openai.chat.completions.create({
-        model: 'gpt-5-nano',
+        model: 'gpt-3.5-turbo',
         messages: [
           { role: 'system', content: 'You are an expert blog writer.' },
           { role: 'user', content: introPrompt }
@@ -193,7 +193,7 @@ export async function POST(request: NextRequest) {
         descPrompt += ` Conclude with a short transitional sentence introducing the next recipe, "${nextName}".`;
       }
       const descResponse = await openai.chat.completions.create({
-        model: 'gpt-5-nano',
+        model: 'gpt-3.5-turbo',
         messages: [
           { role: 'system', content: 'You are a helpful culinary assistant.' },
           { role: 'user', content: descPrompt }
