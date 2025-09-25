@@ -214,6 +214,72 @@ test('fetchSources dedupes titles that only differ by trailing publisher separat
   ]);
 });
 
+test('fetchSources merges NewsAPI and SERP results while deduplicating', async () => {
+  const originalNewsKey = process.env.NEWS_API_KEY;
+  const originalFetch = globalThis.fetch;
+
+  try {
+    process.env.NEWS_API_KEY = 'news-key';
+    globalThis.fetch = async () => ({
+      ok: true,
+      async json() {
+        return {
+          status: 'ok',
+          articles: [
+            {
+              title: 'AI Launch Announced',
+              description: 'Summary from news api',
+              url: 'https://example.com/news-ai',
+              publishedAt: '2024-03-01T00:00:00Z',
+            },
+            {
+              title: 'Space Station Update',
+              description: 'Space summary',
+              url: 'https://space.com/update',
+              publishedAt: '2024-03-02T00:00:00Z',
+            },
+          ],
+        };
+      },
+      async text() {
+        return JSON.stringify({ status: 'ok', articles: [] });
+      },
+    });
+
+    serpCalls.length = 0;
+    setSerpResults([
+      {
+        link: 'https://example.com/duplicate',
+        source: 'Example News',
+        title: 'AI Launch Announced - Example News',
+        snippet: 'Duplicate summary',
+      },
+      {
+        link: 'https://different.com/story',
+        source: 'Different Daily',
+        title: 'Different Angle',
+        snippet: 'Different summary',
+      },
+    ]);
+
+    const sources = await fetchSources('tech space mix', '6h');
+    assert.strictEqual(serpCalls.length, 1);
+    assert.deepStrictEqual(
+      sources.map((item) => item.url),
+      [
+        'https://example.com/news-ai',
+        'https://space.com/update',
+        'https://different.com/story',
+      ]
+    );
+    assert.strictEqual(sources[0].summary, 'Summary from news api');
+    assert.strictEqual(sources[1].summary, 'Space summary');
+  } finally {
+    process.env.NEWS_API_KEY = originalNewsKey;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('fetchNewsArticles serp fallback dedupes repeated SERP headlines', async () => {
   const originalNewsKey = process.env.NEWS_API_KEY;
   const originalSerpKey = process.env.SERPAPI_KEY;
