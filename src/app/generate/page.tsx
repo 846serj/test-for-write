@@ -160,12 +160,11 @@ export default function GeneratePage() {
   const [articleType, setArticleType] = useState<
     | 'Blog post'
     | 'Listicle/Gallery'
-    | 'Rewrite blog post'
     | 'Recipe article'
     | 'News article'
   >('Blog post');
 
-  // for blog‐post & rewrite
+  // for blog posts
   const [lengthOption, setLengthOption] = useState<
     | 'default'
     | 'custom'
@@ -199,10 +198,6 @@ export default function GeneratePage() {
   const [excludeDomainsInput, setExcludeDomainsInput] = useState('');
   const [headlineCategory, setHeadlineCategory] = useState('');
   const [headlineCountry, setHeadlineCountry] = useState('');
-
-  // Rewrite link
-  const [blogLink, setBlogLink] = useState('');
-  const [useSummary, setUseSummary] = useState<boolean>(false);
 
   // Tone of Voice
   const [toneOfVoice, setToneOfVoice] = useState<
@@ -262,15 +257,7 @@ export default function GeneratePage() {
       alert('Enter a title first');
       return;
     }
-    if (articleType === 'Rewrite blog post' && !blogLink.trim()) {
-      alert('Enter a blog post URL to rewrite');
-      return;
-    }
-    if (
-      (articleType === 'Blog post' || articleType === 'Rewrite blog post') &&
-      lengthOption === 'custom' &&
-      customSections < 1
-    ) {
+    if (articleType === 'Blog post' && lengthOption === 'custom' && customSections < 1) {
       alert('Enter a valid number of sections');
       return;
     }
@@ -303,12 +290,6 @@ export default function GeneratePage() {
         payload.numberingFormat = numberingFormat;
         payload.wordsPerItem = itemWordCount;
         payload.itemCount = recipeItemCount;
-      } else if (articleType === 'Rewrite blog post') {
-        payload.blogLink = blogLink;
-        payload.useSummary = useSummary;
-        payload.lengthOption = lengthOption;
-        payload.customSections =
-          lengthOption === 'custom' ? customSections : undefined;
       } else {
         payload.lengthOption = lengthOption;
         payload.customSections =
@@ -607,7 +588,6 @@ export default function GeneratePage() {
               <option value="Blog post">Blog post</option>
               <option value="Listicle/Gallery">Listicle/Gallery</option>
               <option value="Recipe article">Recipe article</option>
-              <option value="Rewrite blog post">Rewrite blog post</option>
               <option value="News article">News article</option>
             </select>
           </div>
@@ -694,75 +674,7 @@ export default function GeneratePage() {
                   onChange={(e) => setItemWordCount(Number(e.target.value))}
                 />
               </div>
-            </div>
-          ) : articleType === 'Rewrite blog post' ? (
-            <>
-              <div>
-                <label className={labelStyle}>Blog Post URL</label>
-                <input
-                  type="text"
-                  className={inputStyle}
-                  placeholder="https://example.com/your-post"
-                  value={blogLink}
-                  onChange={(e) => setBlogLink(e.target.value)}
-                />
-                <div className="flex items-center mt-2">
-                  <input
-                    id="use-summary"
-                    type="checkbox"
-                    checked={useSummary}
-                    onChange={(e) => setUseSummary(e.target.checked)}
-                    className="mr-2 h-4 w-4"
-                  />
-                  <label
-                    htmlFor="use-summary"
-                    className="text-sm font-medium text-gray-700 dark:text-gray-300"
-                  >
-                    Summarize source before rewriting
-                  </label>
-                </div>
               </div>
-              <div>
-                <label className={labelStyle}>Article Length / Sections</label>
-                <select
-                  className={clsx(inputStyle, 'mb-2')}
-                  value={lengthOption}
-                  onChange={(e) => setLengthOption(e.target.value as any)}
-                >
-                  <option value="default">
-                    Default (AI chooses ~9 sections / ~{DEFAULT_WORDS.toLocaleString()} words)
-                  </option>
-                  <option value="custom">Custom Number of Sections</option>
-                  <option value="shorter">Shorter (2–3 sections, {WORD_RANGES.shorter[0]}–{WORD_RANGES.shorter[1]} words)</option>
-                  <option value="short">Short (3–5 sections, {WORD_RANGES.short[0]}–{WORD_RANGES.short[1]} words)</option>
-                  <option value="medium">Medium (5–7 sections, {WORD_RANGES.medium[0]}–{WORD_RANGES.medium[1]} words)</option>
-                  <option value="longForm">
-                    Long Form (7–10 sections, {WORD_RANGES.longForm[0]}–{WORD_RANGES.longForm[1]} words)
-                  </option>
-                  <option value="longer">
-                    Longer (10–12 sections, {WORD_RANGES.longer[0]}–{WORD_RANGES.longer[1]} words)
-                  </option>
-                </select>
-                {lengthOption === 'default' && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                  AI will choose how comprehensive the article should be (~9 sections /
-                    {DEFAULT_WORDS.toLocaleString()} words avg).
-                  </p>
-                )}
-                {lengthOption === 'custom' && (
-                  <div className="mt-2">
-                    <input
-                      type="number"
-                      min={1}
-                      className={inputStyle + ' w-1/2'}
-                      placeholder="Number of sections"
-                      value={customSections}
-                      onChange={(e) => setCustomSections(Number(e.target.value))}
-                    />
-                  </div>
-                )}
-              </div>
-            </>
           ) : (
             <div>
               <label className={labelStyle}>Article Length / Sections</label>

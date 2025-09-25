@@ -134,43 +134,6 @@ export { articlePrompt, reportingBlock, groundingInstruction };
   assert.strictEqual(groundingInstruction.includes('cite the matching URL'), true);
 });
 
-test('rewrite prompt injects reporting block and grounding instruction', async () => {
-  const promptSnippet = extractPromptSnippet("if (articleType === 'Rewrite blog post')");
-  const snippet = `
-${reportingHelpers}
-const reportingSources = [
-  {
-    title: 'Blog Rewrite Source',
-    summary: 'Important details to incorporate.',
-    url: 'https://news.test/rewrite',
-    publishedAt: '2024-07-06T08:45:00Z',
-  },
-];
-const reportingBlock = buildRecentReportingBlock(reportingSources);
-const groundingInstruction = reportingSources.length
-  ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\\n'
-  : '';
-const linkInstruction = '';
-const rewriteInstruction = '';
-const toneInstruction = '';
-const povInstruction = '';
-const title = 'Rewrite Blog';
-const lengthInstruction = '- Use exactly 3 sections.\\n';
-const customInstructionBlock = '';
-const lengthOption = 'default';
-const customSections = 0;
-const WORD_RANGES = {};
-const sectionRanges = {};
-const DEFAULT_WORDS = 900;
-${promptSnippet}
-export { articlePrompt };
-`;
-  const { articlePrompt } = await transpile(snippet);
-  assert(articlePrompt.includes('Recent reporting to reference:'));
-  assert(articlePrompt.includes('https://news.test/rewrite'));
-  assert(articlePrompt.includes('cite the matching URL'));
-});
-
 test('blog prompt injects reporting block and grounding instruction', async () => {
   const promptSnippet = extractPromptSnippet('// ─── Blog post (default) ───────────────────────────────────────────────────');
   const snippet = `
