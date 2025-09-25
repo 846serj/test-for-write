@@ -231,35 +231,6 @@ const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'gpt-4.1-mini': 8192,
 };
 
-const MODEL_COMPLETION_CAPS: Record<string, number> = {
-  'gpt-5': 3600,
-  'gpt-5-mini': 3200,
-  'gpt-5-nano': 2800,
-};
-
-const USAGE_KEY_COMPLETION_CAPS: Record<string, number> = {
-  'Blog post': 3400,
-  'Listicle/Gallery': 2600,
-  'News article': 2800,
-  'Rewrite blog post': 3200,
-  'YouTube video to blog post': 3400,
-};
-
-function getModelCompletionCeiling(model: string, usageKey?: string): number {
-  let limit = MODEL_CONTEXT_LIMITS[model] || 8000;
-  const modelCap = MODEL_COMPLETION_CAPS[model];
-  if (typeof modelCap === 'number') {
-    limit = Math.min(limit, modelCap);
-  }
-  if (usageKey) {
-    const keyCap = USAGE_KEY_COMPLETION_CAPS[usageKey];
-    if (typeof keyCap === 'number') {
-      limit = Math.min(limit, keyCap);
-    }
-  }
-  return limit;
-}
-
 const HELPER_MODEL = 'gpt-4.1-mini';
 
 function resolveCompletionBudget(
@@ -268,26 +239,18 @@ function resolveCompletionBudget(
   model: string,
   hardCap?: number
 ): number {
-  let limit = getModelCompletionCeiling(model, key);
-  if (typeof hardCap === 'number') {
-    limit = Math.min(limit, hardCap);
-  }
+  const limit = MODEL_CONTEXT_LIMITS[model] || 8000;
   const usageStore = getCompletionUsageStore();
   const safetyMargin = getCompletionSafetyMargin();
-  const paddedRequest = Math.min(
-    limit,
-    Math.max(Math.ceil(requested * 1.1), requested + 256)
-  );
-  let budget = Math.min(paddedRequest, limit);
+  let budget = Math.min(requested, limit);
   if (key) {
     const historical = usageStore.get(key);
     if (historical) {
-      const historicalBudget = Math.min(
-        limit,
-        Math.ceil(historical * safetyMargin)
-      );
-      budget = Math.max(budget, historicalBudget);
+      budget = Math.max(budget, Math.ceil(historical * safetyMargin));
     }
+  }
+  if (typeof hardCap === 'number') {
+    budget = Math.min(budget, hardCap);
   }
   return Math.min(budget, limit);
 }
@@ -314,7 +277,7 @@ function calcMaxTokens(
     desiredWords = DEFAULT_WORDS;
   }
   const tokens = Math.ceil(desiredWords / 0.75);
-  const limit = getModelCompletionCeiling(model);
+  const limit = MODEL_CONTEXT_LIMITS[model] || 8000;
   return Math.min(tokens, limit);
 }
 
@@ -848,11 +811,11 @@ function getCompletionUsageStore(): Map<string, number> {
   };
   if (!globalState.__completionUsage__) {
     globalState.__completionUsage__ = new Map<string, number>([
-      ['Blog post', 2600],
-      ['Listicle/Gallery', 2100],
-      ['News article', 2000],
-      ['Rewrite blog post', 2800],
-      ['YouTube video to blog post', 3200],
+      ['Blog post', 4200],
+      ['Listicle/Gallery', 3000],
+      ['News article', 2600],
+      ['Rewrite blog post', 3600],
+      ['YouTube video to blog post', 4800],
     ]);
   }
   return globalState.__completionUsage__!;
@@ -980,7 +943,7 @@ async function generateWithLinks(
   contextualSources: SourceContext[] = [],
   usageKey?: string
 ): Promise<string> {
-  const limit = getModelCompletionCeiling(model, usageKey);
+  const limit = MODEL_CONTEXT_LIMITS[model] || 8000;
   const requiredCount = Math.min(Math.max(MIN_LINKS, sources.length), 7);
   const requiredSources = sources.slice(0, requiredCount);
   const usageStore = getCompletionUsageStore();
@@ -1367,13 +1330,10 @@ Write the full article in valid HTML below:
       const wordsPerItem = listItemWordCount || 100;
       const desired = count * wordsPerItem + 50;
       let maxTokens = Math.ceil((desired * 1.2) / 0.75); // add 20% buffer
-      const listicleLimit = getModelCompletionCeiling(
-        modelVersion,
-        'Listicle/Gallery'
-      );
+      const limit = MODEL_CONTEXT_LIMITS[modelVersion] || 8000;
       maxTokens = resolveCompletionBudget(
         'Listicle/Gallery',
-        Math.min(maxTokens, listicleLimit),
+        Math.min(maxTokens, limit),
         modelVersion
       );
       const minWords = Math.floor(count * wordsPerItem * 0.8);
