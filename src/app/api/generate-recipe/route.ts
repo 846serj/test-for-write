@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
-import { createChatCompletion, openai } from '../../../lib/openai';
+import { openai } from '../../../lib/openai';
 import { getCenterCropRegion, getCroppedImg } from '../../../utils/imageCrop';
 import { findRecipes } from '../../../lib/findRecipes';
 import type { RecipeResult } from '../../../types/api';
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
 
       try {
         const keywordPrompt = `Extract 3-5 key categories, tags, flavors, or dish types from this recipe roundup title: '${title}'. Focus on the main theme, such as flavors (e.g., chocolate, vanilla) and types (e.g., desserts, cakes). Output as a comma-separated list.`;
-        const keywordRes = await createChatCompletion(openai, {
+        const keywordRes = await openai.chat.completions.create({
           model: 'gpt-5-mini',
           messages: [{ role: 'user', content: keywordPrompt }],
           max_tokens: 50,
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
     // Optionally generate an introduction using OpenAI, based on the given title
     if (title) {
       const introPrompt = `Write a short introductory paragraph for a blog post titled "${title}".`;
-      const introResponse = await createChatCompletion(openai, {
+      const introResponse = await openai.chat.completions.create({
         model: 'gpt-5-nano',
         messages: [
           { role: 'system', content: 'You are an expert blog writer.' },
@@ -192,7 +192,7 @@ export async function POST(request: NextRequest) {
       if (nextName) {
         descPrompt += ` Conclude with a short transitional sentence introducing the next recipe, "${nextName}".`;
       }
-      const descResponse = await createChatCompletion(openai, {
+      const descResponse = await openai.chat.completions.create({
         model: 'gpt-5-nano',
         messages: [
           { role: 'system', content: 'You are a helpful culinary assistant.' },
