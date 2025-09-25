@@ -7,6 +7,7 @@ import { grokChatCompletion } from '../../../lib/grok';
 
 export const runtime = 'edge';
 export const revalidate = 0;
+export const maxDuration = 300;
 
 type NewsFreshness = '1h' | '6h' | '7d';
 
