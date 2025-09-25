@@ -1010,40 +1010,6 @@ async function fetchNewsArticles(
   }
 }
 
-// Fetch and strip a blog post's HTML
-async function fetchBlogContent(blogLink: string): Promise<string> {
-  try {
-    const resp = await fetch(blogLink);
-    const html = await resp.text();
-    return html.replace(/<\/?[^>]+(>|$)/g, ' ').replace(/\s+/g, ' ').trim();
-  } catch {
-    return '';
-  }
-}
-
-// Fetch and optionally summarize blog content
-async function summarizeBlogContent(
-  blogLink: string,
-  useSummary: boolean,
-  model: string
-): Promise<string> {
-  const original = await fetchBlogContent(blogLink);
-  if (!original) return '';
-  if (!useSummary) return original;
-  try {
-    const prompt = `Summarize the following article in bullet points.\n\n${original}`;
-    const res = await openai.chat.completions.create({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.5,
-      max_tokens: 300,
-    });
-    return res.choices[0]?.message?.content?.trim() || original;
-  } catch {
-    return original;
-  }
-}
-
 function normalizeHrefValue(url: string): string {
   return url.replace(/&amp;/g, '&').trim();
 }
@@ -2150,7 +2116,6 @@ export async function POST(request: Request) {
       title,
       listNumberingFormat,
       listItemWordCount = 100,
-      blogLink,
       toneOfVoice,
       customTone,
       pointOfView,
@@ -2160,14 +2125,12 @@ export async function POST(request: Request) {
       modelVersion = 'gpt-4o-mini',
       useSerpApi = true,
       includeLinks = true,
-      useSummary = false,
       newsFreshness,
     }: {
       articleType: string;
       title: string;
       listNumberingFormat?: string;
       listItemWordCount?: number;
-      blogLink?: string;
       toneOfVoice?: string;
       customTone?: string;
       pointOfView?: string;
@@ -2177,7 +2140,6 @@ export async function POST(request: Request) {
       modelVersion?: string;
       useSerpApi?: boolean;
       includeLinks?: boolean;
-      useSummary?: boolean;
       newsFreshness?: NewsFreshness;
     } = await request.json();
 
@@ -2460,107 +2422,7 @@ Write the full article in valid HTML below:
       });
     }
 
-    // ─── Rewrite blog post ──────────────────────────────────────────────────────
-    if (articleType === 'Rewrite blog post') {
-      const maxTokens = calcMaxTokens(lengthOption, customSections, modelVersion);
-      const sourceTextPromise = summarizeBlogContent(
-        blogLink || '',
-        useSummary,
-        modelVersion
-      );
-      const {
-        reportingSources,
-        reportingBlock,
-        groundingInstruction,
-        linkSources,
-      } = await reportingContextPromise;
-      const sourceText = await sourceTextPromise;
-
-      const customInstruction = customInstructions?.trim();
-      const customInstructionBlock = customInstruction
-        ? `- ${customInstruction}\n`
-        : '';
-      const requiredLinks = linkSources.slice(
-        0,
-        Math.min(Math.max(MIN_LINKS, linkSources.length), 5)
-      );
-      const minLinks = requiredLinks.length; // how many links to require
-      const optionalLinks = linkSources.slice(requiredLinks.length);
-      const optionalInstruction = optionalLinks.length
-        ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
-            .map((u) => `    - ${u}`)
-            .join('\n')}`
-        : '';
-      const linkInstruction = requiredLinks.length
-        ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
-            .map((u) => `  - ${u}`)
-            .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
-        : '';
-      const rewriteInstruction = sourceText
-        ? `- Rewrite the following content completely to avoid plagiarism:\n\n${sourceText}\n\n`
-        : `- Rewrite the blog post at this URL completely to avoid plagiarism: ${blogLink}\n`;
-
-      const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
-
-      let lengthInstruction: string;
-      if (lengthOption === 'default') {
-        lengthInstruction =
-          `- Aim for around 9 sections (~${DEFAULT_WORDS.toLocaleString()} words total, ~220 words per section), but feel free to adjust based on the topic.\n`;
-      } else if (lengthOption === 'custom' && customSections) {
-        const approx = customSections * 220;
-        lengthInstruction = `- Use exactly ${customSections} sections (~${approx} words total).\n`;
-      } else if (WORD_RANGES[lengthOption || 'medium']) {
-        const [minW, maxW] = WORD_RANGES[lengthOption || 'medium'];
-        const [minS, maxS] = sectionRanges[lengthOption || 'medium'];
-        lengthInstruction =
-          `- Include ${minS}–${maxS} sections and write between ${minW} and ${maxW} words.\n`;
-      } else {
-        lengthInstruction =
-          '- Aim for around 9 sections (~1,900 words total, ~220 words per section), but feel free to adjust based on the topic.\n';
-      }
-
-      const articlePrompt = `
-You are a professional journalist rewriting an existing blog post into a fresh, original article.
-
-Title: "${title}"
-Do NOT include the title or any <h1> tag in the HTML output.
-
-${rewriteInstruction}${reportingSection}${toneInstruction}${povInstruction}Requirements:
-  ${lengthInstruction}
-  - Begin with a 2–3 sentence introduction (no <h2> tags).
-  - Organize the article with <h2> headings similar to the original structure.
-  - Under each <h2>, write 2–3 paragraphs.
-  - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
-  - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
-  - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
-  - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
-  - Do NOT invent sources or links.
-
-Write the full article in valid HTML below:
-`.trim();
-
-      const content = await generateWithVerification(
-        (issues) =>
-          generateWithLinks(
-            applyVerificationIssuesToPrompt(articlePrompt, issues),
-            modelVersion,
-            linkSources,
-            systemPrompt,
-            minLinks,
-            maxTokens,
-            getWordBounds(lengthOption, customSections)[0],
-            reportingSources
-          ),
-        reportingSources,
-        linkSources
-      );
-      return NextResponse.json({
-        content,
-        sources: linkSources,
-      });
-    }
-
+    
     // ─── Blog post (default) ───────────────────────────────────────────────────
     const {
       reportingSources,
