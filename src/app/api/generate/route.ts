@@ -924,49 +924,25 @@ async function generateWithLinks(
         ]
       : [{ role: 'user' as const, content }];
 
-  const requestCompletion = async (tokenBudget: number) => {
-    const response = await createChatCompletion(openai, {
+  let baseRes = await createChatCompletion(openai, {
+    model,
+    messages: buildMessages(prompt),
+    temperature: FACTUAL_TEMPERATURE,
+    max_tokens: tokens,
+  });
+
+  // If the response was cut off due to max_tokens, retry once with more room
+  if (baseRes.choices[0]?.finish_reason === 'length' && tokens < limit) {
+    tokens = Math.min(tokens * 2, limit);
+    baseRes = await createChatCompletion(openai, {
       model,
       messages: buildMessages(prompt),
       temperature: FACTUAL_TEMPERATURE,
-      max_tokens: tokenBudget,
+      max_tokens: tokens,
     });
-
-    if (response.choices[0]?.finish_reason === 'length' && tokenBudget < limit) {
-      const expandedBudget = Math.min(tokenBudget * 2, limit);
-      return createChatCompletion(openai, {
-        model,
-        messages: buildMessages(prompt),
-        temperature: FACTUAL_TEMPERATURE,
-        max_tokens: expandedBudget,
-      });
-    }
-
-    return response;
-  };
-
-  const extractContent = (raw: Awaited<ReturnType<typeof requestCompletion>>) =>
-    cleanModelOutput(raw.choices[0]?.message?.content);
-
-  let baseRes = await requestCompletion(tokens);
-  let content = extractContent(baseRes);
-
-  if (!content) {
-    let attempts = 0;
-    while (!content && attempts < 2) {
-      attempts += 1;
-      const nextTokens = Math.min(Math.round(tokens * 1.5) || tokens + 1, limit);
-      if (nextTokens !== tokens) {
-        tokens = nextTokens;
-      }
-      baseRes = await requestCompletion(tokens);
-      content = extractContent(baseRes);
-    }
   }
 
-  if (!content) {
-    throw new Error('The language model returned no content.');
-  }
+  let content = cleanModelOutput(baseRes.choices[0]?.message?.content);
 
   let linkCount = content.match(/<a\s+href=/gi)?.length || 0;
 
