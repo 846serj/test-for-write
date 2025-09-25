@@ -12,7 +12,7 @@ import { NormalizedSiteProfile } from '../../../types/profile';
 const EXTRACTION_PROMPT =
   'From the following user text, extract: language, taxonomy (IAB/IPTC-like tags), must_include_keywords, nice_to_have_keywords, must_exclude_keywords, entities_focus, audience, tone, and a per-category quota summing to 50 headlines. Return valid JSON.';
 
-const MODEL = process.env.HEADLINE_PROFILE_MODEL || 'gpt-5-mini';
+const MODEL = process.env.HEADLINE_PROFILE_MODEL || 'gpt-4o-mini';
 
 type PostBody = {
   userId?: string;
