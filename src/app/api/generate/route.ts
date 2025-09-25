@@ -83,6 +83,97 @@ const sectionRanges: Record<string, [number, number]> = {
   longer: [6, 8],
 };
 
+type OutlinePromptOptions = {
+  title: string;
+  reportingContext: string;
+  sectionInstruction: string;
+  referenceBlock: string;
+  extraBullets?: string[];
+};
+
+function buildOutlinePrompt({
+  title,
+  reportingContext,
+  sectionInstruction,
+  referenceBlock,
+  extraBullets = [],
+}: OutlinePromptOptions): string {
+  const extraBulletBlock = extraBullets.length
+    ? `${extraBullets.map((bullet) => `• ${bullet}`).join('\n')}\n`
+    : '';
+  const referenceSection = referenceBlock ? `${referenceBlock}\n` : '';
+
+  return `
+You are a professional writer creating a factually accurate, well-structured outline for the article titled "${title}".
+
+${reportingContext}Outline requirements:
+• Begin with a section labeled "INTRO:" and include a single bullet with a 2–3 sentence introduction (no <h2>).
+• The INTRO bullet must highlight the most newsworthy concrete facts—names, dates, figures, locations—from the reporting summaries and cite the matching sources instead of offering generic context.
+• After the "INTRO:" section, ${sectionInstruction}.
+${extraBulletBlock}• Under each <h2>, list 2–3 bullet-point subtopics describing what evidence, examples, or angles to cover.
+• Preserve every concrete fact from the reporting block and Key details list—names, dates, figures, locations, quotes—and restate them verbatim within the relevant subtopic bullets rather than summarizing vaguely.
+• For every bullet that draws on reporting, append " (Source: URL)" with the matching link.
+• Do not combine multiple unrelated facts in a single bullet; give each person, organization, metric, or timestamp its own bullet so it can be cited precisely.
+• Do NOT use "Introduction" or "Intro" as an <h2> heading.
+• Do NOT use "Conclusion" or "Bottom line" as an <h2> heading.
+${referenceSection}• Do not invent information beyond the provided reporting.
+`.trim();
+}
+
+type ArticlePromptOptions = {
+  title: string;
+  outline: string;
+  reportingSection: string;
+  toneInstruction: string;
+  povInstruction: string;
+  lengthInstruction: string;
+  groundingInstruction: string;
+  customInstructionBlock: string;
+  linkInstruction: string;
+  extraRequirements?: string[];
+};
+
+function buildArticlePrompt({
+  title,
+  outline,
+  reportingSection,
+  toneInstruction,
+  povInstruction,
+  lengthInstruction,
+  groundingInstruction,
+  customInstructionBlock,
+  linkInstruction,
+  extraRequirements = [],
+}: ArticlePromptOptions): string {
+  const extraRequirementBlock = extraRequirements.length
+    ? `${extraRequirements.map((item) => `  - ${item}`).join('\n')}\n`
+    : '';
+
+  return `
+You are a professional journalist writing a web article.
+
+Title: "${title}"
+Do NOT include the title or any <h1> tag in the HTML output.
+
+Outline:
+${outline}
+
+${reportingSection}${toneInstruction}${povInstruction}Requirements:
+  ${lengthInstruction}
+  - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
+  - For each <h2> in the outline, write 2–3 paragraphs under it.
+${extraRequirementBlock}  - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
+  - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
+  - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
+  - Do NOT wrap your output in markdown code fences or extra <p> tags.
+  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}
+  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
+  - Do NOT invent sources, links, or information not present in the provided reporting.
+
+Output raw HTML only:
+`.trim();
+}
+
 function normalizeTitleValue(title: string | undefined | null): string {
   const holder = normalizeTitleValue as unknown as {
     _publisherData?: {
@@ -2183,25 +2274,19 @@ export async function POST(request: Request) {
       }
 
       const reportingContext = reportingBlock ? `${reportingBlock}\n\n` : '';
-      const outlinePrompt = `
-You are a professional news editor planning a factually grounded article titled "${title}".
-
-${reportingContext}Outline requirements:
-• Begin with a section labeled "INTRO:" and include a single bullet with a 2–3 sentence lead (no <h2>) that spotlights the newest developments, why they matter now, and cites the matching sources.
-• After the "INTRO:" section, ${sectionInstruction}
-• Arrange the remaining sections chronologically or by major stakeholder impact so the story flows like a news report.
-• Under each <h2>, list 2–3 bullet-point subtopics describing the reported developments, reactions, figures, and context to cover.
-• Preserve every concrete fact from the reporting block and Key details list—names, dates, figures, locations, quotes—and restate them verbatim within the relevant subtopic bullets instead of summarizing vaguely.
-• For every bullet that draws on reporting, append " (Source: URL)" with the matching link.
-• Do not combine multiple unrelated facts in a single bullet; give each person, organization, metric, or timestamp its own bullet so it can be cited precisely.
-• Emphasize the time-sensitive angles and signal what has changed compared with previous updates.
-• Do NOT use "Introduction" or "Intro" as an <h2> heading.
-• Do NOT use "Conclusion" or "Bottom line" as an <h2> heading.
-${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent information beyond the provided reporting.
-`.trim();
+      const baseOutline = buildOutlinePrompt({
+        title,
+        reportingContext,
+        sectionInstruction,
+        referenceBlock,
+        extraBullets: [
+          'Arrange the remaining sections chronologically or by major stakeholder impact so the story flows like a news report.',
+          'Emphasize the time-sensitive angles and signal what has changed compared with previous updates.',
+        ],
+      });
 
       const outline = await generateOutlineWithGrokFallback(
-        outlinePrompt,
+        baseOutline,
         modelVersion,
         0.6
       );
@@ -2228,32 +2313,23 @@ ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent information beyo
 
       const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
 
-      const articlePrompt = `
-You are a professional news reporter writing a fast-turnaround article about "${title}".
+      const articlePrompt = buildArticlePrompt({
+        title,
+        outline,
+        reportingSection,
+        toneInstruction,
+        povInstruction,
+        lengthInstruction,
+        groundingInstruction,
+        customInstructionBlock,
+        linkInstruction,
+        extraRequirements: [
+          'Keep the pacing focused on timely developments, clarifying what happened, when, and why it matters now.',
+          'Attribute key facts to the appropriate source by linking the relevant URL directly in the text.',
+        ],
+      });
 
-Do NOT include the title or any <h1> tag in the HTML output.
-
-Outline:
-${outline}
-
-${reportingSection}${toneInstruction}${povInstruction}Requirements:
-  ${lengthInstruction}
-  - Use the outline's introduction bullet to write a 2–3 sentence lead (no <h2> tags) without including the words "INTRO:" or "Introduction".
-  - For each <h2> in the outline, write 2–3 paragraphs under it.
-  - Keep the pacing focused on timely developments, clarifying what happened, when, and why it matters now.
-  - Attribute key facts to the appropriate source by linking the relevant URL directly in the text.
-  - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
-  - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
-  - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
-  - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}
-  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
-  - Do NOT invent sources or information not present in the listed reporting.
-
-Write the full article in valid HTML below:
-`.trim();
-
-      const buildArticlePrompt = (issues?: string[]) =>
+      const applyArticleIssues = (issues?: string[]) =>
         applyVerificationIssuesToPrompt(articlePrompt, issues);
 
       const [minBound] = getWordBounds(lengthOption, customSections);
@@ -2266,7 +2342,7 @@ Write the full article in valid HTML below:
       const content = await generateWithVerification(
         (issues) =>
           generateWithLinks(
-            buildArticlePrompt(issues),
+            applyArticleIssues(issues),
             modelVersion,
             linkSources,
             systemPrompt,
@@ -2468,21 +2544,12 @@ Write the full article in valid HTML below:
     }
 
     const reportingContext = reportingBlock ? `${reportingBlock}\n\n` : '';
-    const baseOutline = `
-You are a professional writer creating a factually accurate, well-structured outline for the article titled "${title}".
-
-${reportingContext}Outline requirements:
-• Begin with a section labeled "INTRO:" and include a single bullet with a 2–3 sentence introduction (no <h2>).
-• The INTRO bullet must highlight the most newsworthy concrete facts—names, dates, figures, locations—from the reporting summaries and cite the matching sources instead of offering generic context.
-• After the "INTRO:" section, ${sectionInstruction}.
-• Under each <h2>, list 2–3 bullet-point subtopics describing what evidence, examples, or angles to cover.
-• Preserve every concrete fact from the reporting block and Key details list—names, dates, figures, locations, quotes—and restate them verbatim within the relevant subtopic bullets rather than summarizing vaguely.
-• For every bullet that draws on reporting, append " (Source: URL)" with the matching link.
-• Do not combine multiple unrelated facts in a single bullet; give each person, organization, metric, or timestamp its own bullet so it can be cited precisely.
-• Do NOT use "Introduction" or "Intro" as an <h2> heading.
-• Do NOT use "Conclusion" or "Bottom line" as an <h2> heading.
-${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent information beyond the provided reporting.
-`.trim();
+    const baseOutline = buildOutlinePrompt({
+      title,
+      reportingContext,
+      sectionInstruction,
+      referenceBlock,
+    });
 
     const outline = await generateOutlineWithGrokFallback(
       baseOutline,
@@ -2530,29 +2597,17 @@ ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent information beyo
 
     const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
 
-    const articlePrompt = `
-You are a professional journalist writing a web article.
-
-Title: "${title}"
-Do NOT include the title or any <h1> tag in the HTML output.
-
-Outline:
-${outline}
-
-${reportingSection}${toneInstruction}${povInstruction}Requirements:
-  ${lengthInstruction}
-  - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
-  - For each <h2> in the outline, write 2–3 paragraphs under it.
-  - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
-  - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
-  - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
-  - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}
-  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
-  - Do NOT invent sources or links.
-
-Output raw HTML only:
-`.trim();
+    const articlePrompt = buildArticlePrompt({
+      title,
+      outline,
+      reportingSection,
+      toneInstruction,
+      povInstruction,
+      lengthInstruction,
+      groundingInstruction,
+      customInstructionBlock,
+      linkInstruction,
+    });
 
     const content = await generateWithVerification(
       (issues) =>
