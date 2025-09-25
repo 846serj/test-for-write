@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { openai } from '../../../lib/openai';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
+import { grokChatCompletion } from '../../../lib/grok';
 
 export const runtime = 'edge';
 export const revalidate = 0;
@@ -235,6 +236,30 @@ const DETAIL_INSTRUCTION =
   '- Keep official names, model numbers, and other exact designations verbatim when they appear in the sources (e.g., "IL-20" instead of "plane").\n' +
   '- Do not speculate or embellish beyond what the sources explicitly provide.\n';
 
+async function generateOutlineWithGrokFallback(
+  prompt: string,
+  fallbackModel: string,
+  temperature = 0.7
+): Promise<string> {
+  if (process.env.GROK_API_KEY) {
+    try {
+      return await grokChatCompletion({ prompt, temperature });
+    } catch (err) {
+      console.warn('[api/generate] grok outline generation failed, falling back to OpenAI', err);
+    }
+  }
+
+  const outlineRes = await openai.chat.completions.create({
+    model: fallbackModel,
+    messages: [{ role: 'user', content: prompt }],
+    temperature,
+  });
+
+  const outline = outlineRes.choices[0]?.message?.content?.trim();
+  if (!outline) throw new Error('Outline generation failed');
+  return outline;
+}
+
 function calcMaxTokens(
   lengthOption: string | undefined,
   customSections: number | undefined,
@@ -259,58 +284,121 @@ async function fetchSources(
   freshness?: NewsFreshness
 ): Promise<ReportingSource[]> {
   const resolvedFreshness = resolveFreshness(freshness);
-  const results = await serpapiSearch({
-    query: headline,
-    engine: 'google_news',
-    extraParams: { tbs: mapFreshnessToSerpTbs(resolvedFreshness) },
-    limit: 8,
-  });
-
   const seenLinks = new Set<string>();
   const seenPublishers = new Set<string>();
   const seenTitles = new Set<string>();
   const orderedSources: ReportingSource[] = [];
 
-  for (const result of results) {
-    const normalizedTitle = normalizeTitleValue(result.title);
-    if (normalizedTitle && seenTitles.has(normalizedTitle)) {
-      continue;
-    }
+  const handleNews = process.env.NEWS_API_KEY
+    ? fetchNewsArticles(headline, resolvedFreshness, false)
+        .then((articles) => {
+          for (const article of articles) {
+            const url = article.url;
+            const normalizedTitle = normalizeTitleValue(article.title);
+            if (!url || seenLinks.has(url)) {
+              continue;
+            }
 
-    const link = result.link;
-    if (!link || seenLinks.has(link)) {
-      continue;
-    }
+            if (normalizedTitle && seenTitles.has(normalizedTitle)) {
+              continue;
+            }
 
-    const publisherId = normalizePublisher(result);
-    if (!publisherId || seenPublishers.has(publisherId)) {
-      continue;
-    }
+            let publisherId: string | null = null;
+            try {
+              publisherId = new URL(url).hostname
+                .toLowerCase()
+                .replace(/^www\./, '');
+            } catch {
+              publisherId = null;
+            }
 
-    const summary = (result.snippet || result.summary || '').replace(/\s+/g, ' ').trim();
-    const publishedAt =
-      result.date || result.published_at || result.date_published || '';
-    const title = result.title || 'Untitled';
+            if (publisherId && seenPublishers.has(publisherId)) {
+              continue;
+            }
 
-    seenLinks.add(link);
-    seenPublishers.add(publisherId);
-    if (normalizedTitle) {
-      seenTitles.add(normalizedTitle);
-    }
+            orderedSources.push({
+              title: article.title || 'Untitled',
+              url,
+              summary: article.summary || '',
+              publishedAt: article.publishedAt || '',
+            });
 
-    orderedSources.push({
-      title,
-      url: link,
-      summary,
-      publishedAt,
-    });
+            seenLinks.add(url);
+            if (publisherId) {
+              seenPublishers.add(publisherId);
+            }
+            if (normalizedTitle) {
+              seenTitles.add(normalizedTitle);
+            }
 
+            if (orderedSources.length >= 5) {
+              break;
+            }
+          }
+        })
+        .catch((err) => {
+          console.warn(
+            '[api/generate] news api sourcing failed, continuing with SERP',
+            err
+          );
+        })
+    : Promise.resolve();
+
+  return handleNews.then(() => {
     if (orderedSources.length >= 5) {
-      break;
+      return orderedSources;
     }
-  }
 
-  return orderedSources;
+    return serpapiSearch({
+      query: headline,
+      engine: 'google_news',
+      extraParams: { tbs: mapFreshnessToSerpTbs(resolvedFreshness) },
+      limit: 8,
+    }).then((results) => {
+      for (const result of results) {
+        const normalizedTitle = normalizeTitleValue(result.title);
+        if (normalizedTitle && seenTitles.has(normalizedTitle)) {
+          continue;
+        }
+
+        const link = result.link;
+        if (!link || seenLinks.has(link)) {
+          continue;
+        }
+
+        const publisherId = normalizePublisher(result);
+        if (!publisherId || seenPublishers.has(publisherId)) {
+          continue;
+        }
+
+        const summary = (result.snippet || result.summary || '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const publishedAt =
+          result.date || result.published_at || result.date_published || '';
+        const title = result.title || 'Untitled';
+
+        seenLinks.add(link);
+        seenPublishers.add(publisherId);
+        if (normalizedTitle) {
+          seenTitles.add(normalizedTitle);
+        }
+
+        orderedSources.push({
+          title,
+          url: link,
+          summary,
+          publishedAt,
+        });
+
+        if (orderedSources.length >= 5) {
+          break;
+        }
+      }
+
+      return orderedSources;
+    });
+  });
 }
 
 function formatPublishedTimestamp(value: string): string {
@@ -1436,27 +1524,37 @@ Write the full article in valid HTML below:
       ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\n'
       : '';
     const linkSources = reportingSources.map((item) => item.url).filter(Boolean);
+    const referenceBlock =
+      linkSources.length > 0
+        ? `• Use these references:\n${linkSources
+            .map((u) => `- ${u}`)
+            .join('\n')}`
+        : '';
 
     // ─── Listicle/Gallery ────────────────────────────────────────────────────────
     if (articleType === 'Listicle/Gallery') {
       const match = title.match(/\d+/);
       const count = match ? parseInt(match[0], 10) : 5;
 
+      const reportingContext = reportingBlock ? `${reportingBlock}\n\n` : '';
       const outlinePrompt = `
-You are a professional writer.
-Create an outline for a listicle titled "${title}".
-Use exactly ${count} items.
-Number each heading formatted like ${listNumberingFormat}.
-List only the headings (no descriptions).
+You are a professional writer tasked with planning a factual, source-grounded listicle outline.
+
+Title: "${title}"
+
+${reportingContext}Requirements:
+• Use exactly ${count} items.
+• Number each heading formatted like ${listNumberingFormat}.
+• Provide a short clause after each numbered heading describing the key sourced insight it should cover.
+• Keep the outline tightly focused on the developments described in the reporting summaries.
+${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond the provided sources.
 `.trim();
 
-      const outlineRes = await openai.chat.completions.create({
-        model: modelVersion,
-        messages: [{ role: 'user', content: outlinePrompt }],
-        temperature: 0.7,
-      });
-      const outline = outlineRes.choices[0]?.message?.content?.trim();
-      if (!outline) throw new Error('Outline generation failed');
+      const outline = await generateOutlineWithGrokFallback(
+        outlinePrompt,
+        modelVersion,
+        0.6
+      );
 
       const lengthInstruction = `- Use exactly ${count} items.\n`;
       const numberingInstruction = listNumberingFormat
@@ -1711,34 +1809,24 @@ Write the full article in valid HTML below:
       sectionInstruction = 'Include at least three <h2> headings.';
     }
 
-    const references =
-      linkSources.length > 0
-        ? `• Use these references:\n${linkSources
-            .map((u) => `- ${u}`)
-            .join('\n')}`
-        : '';
-
+    const reportingContext = reportingBlock ? `${reportingBlock}\n\n` : '';
     const baseOutline = `
-You are a professional writer.
+You are a professional writer creating a factually accurate, well-structured outline for the article titled "${title}".
 
-Create a detailed outline for an article titled:
-"${title}"
-
+${reportingContext}Outline requirements:
 • Begin with a section labeled "INTRO:" and include a single bullet with a 2–3 sentence introduction (no <h2>).
 • After the "INTRO:" section, ${sectionInstruction}.
-• Under each <h2>, list 2–3 bullet-point subtopics.
+• Under each <h2>, list 2–3 bullet-point subtopics describing what evidence, examples, or angles to cover.
+• Clearly indicate which referenced source(s) inform each major bullet when relevant.
 • Do NOT use "Introduction" or "Intro" as an <h2> heading.
 • Do NOT use "Conclusion" or "Bottom line" as an <h2> heading.
-${references}
+${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent information beyond the provided reporting.
 `.trim();
 
-    const outlineRes = await openai.chat.completions.create({
-      model: modelVersion,
-      messages: [{ role: 'user', content: baseOutline }],
-      temperature: 0.7,
-    });
-    const outline = outlineRes.choices[0]?.message?.content?.trim();
-    if (!outline) throw new Error('Outline generation failed');
+    const outline = await generateOutlineWithGrokFallback(
+      baseOutline,
+      modelVersion
+    );
 
     const customInstruction = customInstructions?.trim();
     const customInstructionBlock = customInstruction
