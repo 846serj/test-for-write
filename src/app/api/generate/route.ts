@@ -307,8 +307,6 @@ async function fetchSources(
   freshness?: NewsFreshness
 ): Promise<ReportingSource[]> {
   const resolvedFreshness = resolveFreshness(freshness);
-  const freshnessThresholdMs = Date.parse(computeFreshnessIso(resolvedFreshness));
-  const hasFreshnessThreshold = !Number.isNaN(freshnessThresholdMs);
   const seenLinks = new Set<string>();
   const seenPublishers = new Set<string>();
   const seenTitles = new Set<string>();
@@ -347,11 +345,6 @@ async function fetchSources(
       continue;
     }
 
-    const publishedTimestamp = parsePublishedTimestamp(article.publishedAt);
-    if (hasFreshnessThreshold && publishedTimestamp !== null && publishedTimestamp < freshnessThresholdMs) {
-      continue;
-    }
-
     let publisherId: string | null = null;
     try {
       publisherId = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
@@ -367,7 +360,7 @@ async function fetchSources(
       title: article.title || 'Untitled',
       url,
       summary: article.summary || '',
-      publishedAt: publishedTimestamp ? new Date(publishedTimestamp).toISOString() : article.publishedAt || '',
+      publishedAt: article.publishedAt || '',
     });
 
     seenLinks.add(url);
@@ -406,15 +399,8 @@ async function fetchSources(
     const summary = (result.snippet || result.summary || '')
       .replace(/\s+/g, ' ')
       .trim();
-    const rawPublishedAt =
+    const publishedAt =
       result.date || result.published_at || result.date_published || '';
-    const publishedTimestamp = parsePublishedTimestamp(rawPublishedAt);
-    if (hasFreshnessThreshold && publishedTimestamp !== null && publishedTimestamp < freshnessThresholdMs) {
-      continue;
-    }
-    const publishedAt = publishedTimestamp
-      ? new Date(publishedTimestamp).toISOString()
-      : normalizePublishedAt(rawPublishedAt);
     const title = result.title || 'Untitled';
 
     seenLinks.add(link);
@@ -505,110 +491,6 @@ function computeFreshnessIso(freshness: NewsFreshness): string {
   const hours = FRESHNESS_TO_HOURS[freshness] ?? FRESHNESS_TO_HOURS['6h'];
   const from = new Date(Date.now() - hours * 60 * 60 * 1000);
   return from.toISOString();
-}
-
-function parseQuantity(raw: string): number | null {
-  if (!raw) {
-    return null;
-  }
-
-  const normalized = raw.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-
-  if (normalized === 'a' || normalized === 'an') {
-    return 1;
-  }
-
-  const parsed = Number.parseInt(normalized, 10);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-function parsePublishedTimestamp(value: string | null | undefined): number | null {
-  if (!value) {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const lower = trimmed.toLowerCase();
-
-  if (lower === 'just now' || lower === 'now' || lower === 'today') {
-    return Date.now();
-  }
-
-  if (lower === 'yesterday') {
-    return Date.now() - 24 * 60 * 60 * 1000;
-  }
-
-  const relativeMatch = lower.match(/^(\d+|an|a)\s+([a-z]+)s?\s+ago$/);
-  if (relativeMatch) {
-    const [, rawQuantity, rawUnit] = relativeMatch;
-    const quantity = parseQuantity(rawQuantity);
-    if (quantity !== null) {
-      const rawLetters = rawUnit.replace(/[^a-z]/g, '');
-      const normalizedUnit = rawLetters.replace(/s$/, '');
-      const multipliers: Record<string, number> = {
-        second: 1000,
-        sec: 1000,
-        min: 60 * 1000,
-        minute: 60 * 1000,
-        hr: 60 * 60 * 1000,
-        hour: 60 * 60 * 1000,
-        day: 24 * 60 * 60 * 1000,
-        week: 7 * 24 * 60 * 60 * 1000,
-        month: 30 * 24 * 60 * 60 * 1000,
-        mo: 30 * 24 * 60 * 60 * 1000,
-        yr: 365 * 24 * 60 * 60 * 1000,
-        year: 365 * 24 * 60 * 60 * 1000,
-      };
-
-      const multiplier =
-        multipliers[normalizedUnit] || multipliers[rawLetters] || multipliers[rawUnit];
-      if (multiplier) {
-        return Date.now() - quantity * multiplier;
-      }
-    }
-  }
-
-  const shortRelativeMatch = lower.match(/^(\d+)([smhdw])\s+ago$/);
-  if (shortRelativeMatch) {
-    const [, rawQuantity, shorthand] = shortRelativeMatch;
-    const quantity = Number.parseInt(rawQuantity, 10);
-    if (!Number.isNaN(quantity)) {
-      const shorthandMultipliers: Record<string, number> = {
-        s: 1000,
-        m: 60 * 1000,
-        h: 60 * 60 * 1000,
-        d: 24 * 60 * 60 * 1000,
-        w: 7 * 24 * 60 * 60 * 1000,
-      };
-      const multiplier = shorthandMultipliers[shorthand];
-      if (multiplier) {
-        return Date.now() - quantity * multiplier;
-      }
-    }
-  }
-
-  const cleaned = trimmed.replace(/^updated\s+/i, '').replace(/^last updated\s+/i, '');
-  const parsed = Date.parse(cleaned);
-  if (!Number.isNaN(parsed)) {
-    return parsed;
-  }
-
-  return null;
-}
-
-function normalizePublishedAt(value: string | null | undefined): string {
-  const timestamp = parsePublishedTimestamp(value);
-  if (timestamp === null) {
-    return (value || '').trim();
-  }
-  return new Date(timestamp).toISOString();
 }
 
 async function fetchNewsArticles(
