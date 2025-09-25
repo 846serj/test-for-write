@@ -4,7 +4,6 @@ import {
   type CategoryFeedValue,
 } from '../../../constants/categoryFeeds';
 import { openai } from '../../../lib/openai';
-import { withTemperature } from '../../../lib/modelCapabilities';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
 const MIN_LIMIT = 1;
@@ -693,7 +692,7 @@ async function inferKeywordsAndCategories(
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ],
-    ...withTemperature('gpt-5-mini', 0.5),
+    temperature: 0.5,
     max_tokens: 400,
   });
 
@@ -756,7 +755,7 @@ async function generateKeywordQueries(
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ],
-    ...withTemperature('gpt-5-mini', 0.4),
+    temperature: 0.4,
     max_tokens: 200,
   });
 
@@ -1336,7 +1335,7 @@ Rules:
             serialized,
         },
       ],
-      ...withTemperature('gpt-5-mini', 0.2),
+      temperature: 0.2,
       max_tokens: 600,
     });
 

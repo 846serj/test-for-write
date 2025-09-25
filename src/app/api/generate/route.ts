@@ -1,7 +1,6 @@
 // route.ts
 import { NextResponse } from 'next/server';
 import { openai } from '../../../lib/openai';
-import { withTemperature } from '../../../lib/modelCapabilities';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
@@ -519,7 +518,7 @@ async function summarizeBlogContent(
     const res = await openai.chat.completions.create({
       model,
       messages: [{ role: 'user', content: prompt }],
-      ...withTemperature(model, 0.5),
+      temperature: 0.5,
       max_tokens: 300,
     });
     return res.choices[0]?.message?.content?.trim() || original;
@@ -928,7 +927,7 @@ async function generateWithLinks(
   let baseRes = await openai.chat.completions.create({
     model,
     messages: buildMessages(prompt),
-    ...withTemperature(model, FACTUAL_TEMPERATURE),
+    temperature: FACTUAL_TEMPERATURE,
     max_tokens: tokens,
   });
 
@@ -938,7 +937,7 @@ async function generateWithLinks(
     baseRes = await openai.chat.completions.create({
       model,
       messages: buildMessages(prompt),
-      ...withTemperature(model, FACTUAL_TEMPERATURE),
+      temperature: FACTUAL_TEMPERATURE,
       max_tokens: tokens,
     });
   }
@@ -1454,7 +1453,7 @@ List only the headings (no descriptions).
       const outlineRes = await openai.chat.completions.create({
         model: modelVersion,
         messages: [{ role: 'user', content: outlinePrompt }],
-        ...withTemperature(modelVersion, 0.7),
+        temperature: 0.7,
       });
       const outline = outlineRes.choices[0]?.message?.content?.trim();
       if (!outline) throw new Error('Outline generation failed');
@@ -1736,7 +1735,7 @@ ${references}
     const outlineRes = await openai.chat.completions.create({
       model: modelVersion,
       messages: [{ role: 'user', content: baseOutline }],
-      ...withTemperature(modelVersion, 0.7),
+      temperature: 0.7,
     });
     const outline = outlineRes.choices[0]?.message?.content?.trim();
     if (!outline) throw new Error('Outline generation failed');

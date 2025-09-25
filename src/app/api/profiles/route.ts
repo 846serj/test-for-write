@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { openai } from '../../../lib/openai';
-import { withTemperature } from '../../../lib/modelCapabilities';
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
 import {
   buildProfileHeadlineQuery,
@@ -55,7 +54,7 @@ function mapSupabaseError(code: string | undefined) {
 async function extractProfile(rawText: string): Promise<NormalizedSiteProfile> {
   const response = await openai.chat.completions.create({
     model: MODEL,
-    ...withTemperature(MODEL, 0),
+    temperature: 0,
     response_format: { type: 'json_object' },
     messages: [
       {
