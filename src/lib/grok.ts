@@ -6,6 +6,23 @@ type GrokChatCompletionOptions = {
 };
 
 const DEFAULT_GROK_MODEL = 'grok-4';
+const DEFAULT_TIMEOUT_MS = 45_000;
+
+function resolveTimeout(requested?: number): number {
+  if (typeof requested === 'number' && Number.isFinite(requested) && requested > 0) {
+    return requested;
+  }
+
+  const envValue = process.env.GROK_TIMEOUT_MS;
+  if (envValue) {
+    const parsed = Number.parseInt(envValue, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return DEFAULT_TIMEOUT_MS;
+}
 
 interface GrokChatCompletionResponse {
   choices?: Array<{
@@ -19,15 +36,16 @@ export async function grokChatCompletion({
   prompt,
   model = DEFAULT_GROK_MODEL,
   temperature = 0.7,
-  timeoutMs = 25_000,
+  timeoutMs,
 }: GrokChatCompletionOptions): Promise<string> {
   const apiKey = process.env.GROK_API_KEY;
   if (!apiKey) {
     throw new Error('Missing GROK_API_KEY');
   }
 
+  const resolvedTimeout = resolveTimeout(timeoutMs);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), resolvedTimeout);
 
   let response: Response;
   try {
