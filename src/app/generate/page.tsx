@@ -160,7 +160,6 @@ export default function GeneratePage() {
   const [articleType, setArticleType] = useState<
     | 'Blog post'
     | 'Listicle/Gallery'
-    | 'YouTube video to blog post'
     | 'Rewrite blog post'
     | 'Recipe article'
     | 'News article'
@@ -200,9 +199,6 @@ export default function GeneratePage() {
   const [excludeDomainsInput, setExcludeDomainsInput] = useState('');
   const [headlineCategory, setHeadlineCategory] = useState('');
   const [headlineCountry, setHeadlineCountry] = useState('');
-
-  // YouTube link
-  const [videoLink, setVideoLink] = useState('');
 
   // Rewrite link
   const [blogLink, setBlogLink] = useState('');
@@ -278,10 +274,6 @@ export default function GeneratePage() {
       alert('Enter a valid number of sections');
       return;
     }
-    if (articleType === 'YouTube video to blog post' && !videoLink.trim()) {
-      alert('Enter a YouTube video link');
-      return;
-    }
     if (articleType === 'Recipe article' && recipeItemCount < 1) {
       alert('Enter a valid number of recipes');
       return;
@@ -311,8 +303,6 @@ export default function GeneratePage() {
         payload.numberingFormat = numberingFormat;
         payload.wordsPerItem = itemWordCount;
         payload.itemCount = recipeItemCount;
-      } else if (articleType === 'YouTube video to blog post') {
-        payload.videoLink = videoLink;
       } else if (articleType === 'Rewrite blog post') {
         payload.blogLink = blogLink;
         payload.useSummary = useSummary;
@@ -617,9 +607,6 @@ export default function GeneratePage() {
               <option value="Blog post">Blog post</option>
               <option value="Listicle/Gallery">Listicle/Gallery</option>
               <option value="Recipe article">Recipe article</option>
-              <option value="YouTube video to blog post">
-                YouTube video to blog post
-              </option>
               <option value="Rewrite blog post">Rewrite blog post</option>
               <option value="News article">News article</option>
             </select>
@@ -707,17 +694,6 @@ export default function GeneratePage() {
                   onChange={(e) => setItemWordCount(Number(e.target.value))}
                 />
               </div>
-            </div>
-          ) : articleType === 'YouTube video to blog post' ? (
-            <div>
-              <label className={labelStyle}>YouTube Video Link</label>
-              <input
-                type="text"
-                className={inputStyle}
-                placeholder="https://youtube.com/..."
-                value={videoLink}
-                onChange={(e) => setVideoLink(e.target.value)}
-              />
             </div>
           ) : articleType === 'Rewrite blog post' ? (
             <>
