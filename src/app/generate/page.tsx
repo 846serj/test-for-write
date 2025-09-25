@@ -4,7 +4,6 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
-import { readJsonResponse } from '../../lib/readJsonResponse';
 import clsx from 'clsx';
 import {
   CATEGORY_FEED_OPTIONS,
@@ -338,41 +337,22 @@ export default function GeneratePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      const data = await res.json();
 
-      const { data, rawBody } = await readJsonResponse<{
-        content?: string;
-        sources?: string[];
-        error?: string;
-        airtableError?: string;
-        message?: string;
-      }>(res, 'generate');
-
-      if (!res.ok || !data || !data.content) {
-        const errorDetail =
-          data?.error ||
-          data?.message ||
-          (!res.ok ? `${res.status} ${res.statusText}` : 'No content returned');
-        const extraDetail =
-          data?.airtableError ||
-          (!data?.error && rawBody ? rawBody.slice(0, 200) : '');
-
-        if (rawBody && !data?.error) {
-          console.error('[generate] unexpected response body:', rawBody);
-        }
-
-        const extraMessage = extraDetail ? ` - ${extraDetail}` : '';
-        alert(`Failed to generate article: ${errorDetail}${extraMessage}`);
+      if (!res.ok || !data.content) {
+        alert(
+          `Failed to generate article: ${
+            data.error || res.statusText || 'no content returned'
+          }${data.airtableError ? ` - ${data.airtableError}` : ''}`
+        );
         return;
       }
 
-      const { content, sources: responseSources } = data;
-      const sources = Array.isArray(responseSources) ? responseSources : [];
-
       try {
-        localStorage.setItem('lastArticleContent', content);
+        localStorage.setItem('lastArticleContent', data.content);
         localStorage.setItem(
           'lastArticleSources',
-          JSON.stringify(sources)
+          JSON.stringify(data.sources || [])
         );
       } catch {}
 

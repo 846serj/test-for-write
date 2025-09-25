@@ -5,7 +5,6 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
-import { readJsonResponse } from '../../lib/readJsonResponse';
 import { Editor } from '@tinymce/tinymce-react';
 import WordPressIntegration from '../../components/WordPressIntegration';
 
@@ -97,46 +96,26 @@ export default function EditorPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      const data = await res.json();
+      if (data.content) {
+        setContent(data.content);
+        const text = data.content.replace(/<[^>]+>/g, ' ');
+        setWordCount(text.split(/\s+/).filter(Boolean).length);
+        setSources(Array.isArray(data.sources) ? data.sources : []);
 
-      const { data, rawBody } = await readJsonResponse<{
-        content?: string;
-        sources?: string[];
-        error?: string;
-        message?: string;
-      }>(res, 'regenerate');
-
-      if (!res.ok || !data || !data.content) {
-        const errorDetail =
-          data?.error ||
-          data?.message ||
-          (!res.ok ? `${res.status} ${res.statusText}` : 'No content returned');
-        const extraDetail = !data?.error && rawBody ? rawBody.slice(0, 200) : '';
-
-        if (rawBody && !data?.error) {
-          console.error('[editor] unexpected response body:', rawBody);
-        }
-
-        const extraMessage = extraDetail ? ` - ${extraDetail}` : '';
-        alert(`Regeneration failed: ${errorDetail}${extraMessage}`);
-        return;
+        // Persist regeneration payload and results
+        try {
+          localStorage.setItem('lastPrompt', JSON.stringify(payload));
+          localStorage.setItem('lastArticleContent', data.content);
+          localStorage.setItem(
+            'lastArticleSources',
+            JSON.stringify(data.sources || [])
+          );
+        } catch {}
+        setOriginalPrompt(payload);
+      } else {
+        alert('Regeneration failed');
       }
-
-      setContent(data.content);
-      const text = data.content.replace(/<[^>]+>/g, ' ');
-      setWordCount(text.split(/\s+/).filter(Boolean).length);
-      const responseSources = Array.isArray(data.sources) ? data.sources : [];
-      setSources(responseSources);
-
-      // Persist regeneration payload and results
-      try {
-        localStorage.setItem('lastPrompt', JSON.stringify(payload));
-        localStorage.setItem('lastArticleContent', data.content);
-        localStorage.setItem(
-          'lastArticleSources',
-          JSON.stringify(responseSources)
-        );
-      } catch {}
-      setOriginalPrompt(payload);
     } catch (err) {
       console.error(err);
       alert('Regeneration failed');
