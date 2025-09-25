@@ -7,10 +7,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { Editor } from '@tinymce/tinymce-react';
 import WordPressIntegration from '../../components/WordPressIntegration';
-import {
-  readJsonOrText,
-  summarizeRawResponse,
-} from '../../utils/readJsonOrText';
 
 export default function EditorPage() {
   const router       = useRouter();
@@ -100,38 +96,26 @@ export default function EditorPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const { data, raw } = await readJsonOrText(res, 'regenerate');
+      const data = await res.json();
+      if (data.content) {
+        setContent(data.content);
+        const text = data.content.replace(/<[^>]+>/g, ' ');
+        setWordCount(text.split(/\s+/).filter(Boolean).length);
+        setSources(Array.isArray(data.sources) ? data.sources : []);
 
-      if (!res.ok || !data?.content) {
-        if (raw) {
-          console.error('[regenerate] non-JSON response body:', raw);
-        }
-
-        const fallbackMessage =
-          data?.error ||
-          summarizeRawResponse(raw) ||
-          res.statusText ||
-          'no content returned';
-
-        alert(`Regeneration failed: ${fallbackMessage}`);
-        return;
+        // Persist regeneration payload and results
+        try {
+          localStorage.setItem('lastPrompt', JSON.stringify(payload));
+          localStorage.setItem('lastArticleContent', data.content);
+          localStorage.setItem(
+            'lastArticleSources',
+            JSON.stringify(data.sources || [])
+          );
+        } catch {}
+        setOriginalPrompt(payload);
+      } else {
+        alert('Regeneration failed');
       }
-
-      setContent(data.content);
-      const text = data.content.replace(/<[^>]+>/g, ' ');
-      setWordCount(text.split(/\s+/).filter(Boolean).length);
-      setSources(Array.isArray(data.sources) ? data.sources : []);
-
-      // Persist regeneration payload and results
-      try {
-        localStorage.setItem('lastPrompt', JSON.stringify(payload));
-        localStorage.setItem('lastArticleContent', data.content);
-        localStorage.setItem(
-          'lastArticleSources',
-          JSON.stringify(data.sources || [])
-        );
-      } catch {}
-      setOriginalPrompt(payload);
     } catch (err) {
       console.error(err);
       alert('Regeneration failed');
