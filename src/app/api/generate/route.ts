@@ -1010,22 +1010,6 @@ async function fetchNewsArticles(
   }
 }
 
-// Fetch YouTube captions
-async function fetchTranscript(videoLink: string): Promise<string> {
-  try {
-    const urlObj = new URL(videoLink);
-    const videoId = urlObj.searchParams.get('v');
-    if (!videoId) return '';
-    const resp = await fetch(
-      `https://video.google.com/timedtext?lang=en&v=${videoId}`
-    );
-    const xml = await resp.text();
-    return xml.replace(/<\/?[^>]+(>|$)/g, ' ').replace(/\s+/g, ' ').trim();
-  } catch {
-    return '';
-  }
-}
-
 // Fetch and strip a blog post's HTML
 async function fetchBlogContent(blogLink: string): Promise<string> {
   try {
@@ -2166,7 +2150,6 @@ export async function POST(request: Request) {
       title,
       listNumberingFormat,
       listItemWordCount = 100,
-      videoLink,
       blogLink,
       toneOfVoice,
       customTone,
@@ -2184,7 +2167,6 @@ export async function POST(request: Request) {
       title: string;
       listNumberingFormat?: string;
       listItemWordCount?: number;
-      videoLink?: string;
       blogLink?: string;
       toneOfVoice?: string;
       customTone?: string;
@@ -2466,84 +2448,6 @@ Write the full article in valid HTML below:
             systemPrompt,
             minLinks,
             maxTokens,
-            minWords,
-            reportingSources
-          ),
-        reportingSources,
-        linkSources
-      );
-      return NextResponse.json({
-        content,
-        sources: linkSources,
-      });
-    }
-
-    // ─── YouTube Transcript → Blog ─────────────────────────────────────────────
-    if (articleType === 'YouTube video to blog post') {
-      const transcriptPromise = fetchTranscript(videoLink || '');
-      const {
-        reportingSources,
-        reportingBlock,
-        groundingInstruction,
-        linkSources,
-      } = await reportingContextPromise;
-      const transcript = await transcriptPromise;
-      const transcriptInstruction = transcript
-        ? `- Use the following transcript as source material:\n\n${transcript}\n\n`
-        : `- Use the transcript from this video link as source material: ${videoLink}\n`;
-      const customInstruction = customInstructions?.trim();
-      const customInstructionBlock = customInstruction
-        ? `- ${customInstruction}\n`
-        : '';
-      const requiredLinks = linkSources.slice(
-        0,
-        Math.min(Math.max(MIN_LINKS, linkSources.length), 5)
-      );
-      const minLinks = requiredLinks.length; // how many links to require
-      const optionalLinks = linkSources.slice(requiredLinks.length);
-      const optionalInstruction = optionalLinks.length
-        ? `\n  - You may also cite these optional sources if they add value:\n${optionalLinks
-            .map((u) => `    - ${u}`)
-            .join('\n')}`
-        : '';
-      const linkInstruction = requiredLinks.length
-        ? `- Integrate clickable HTML links for at least the following required sources within relevant keywords or phrases.\n${requiredLinks
-            .map((u) => `  - ${u}`)
-            .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
-        : '';
-
-      const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
-
-      const articlePrompt = `
-You are a professional journalist writing a web article from a YouTube transcript.
-
-Title: "${title}"
-Do NOT include the title or any <h1> tag in the HTML output.
-
-${transcriptInstruction}${reportingSection}${toneInstruction}${povInstruction}Requirements:
-  - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
-  - For each <h2> in the outline, write 2–3 paragraphs under it.
-  - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
-  - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
-  - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
-  - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
-  - Do NOT invent sources or links.
-
-Write the full article in valid HTML below:
-`.trim();
-
-      const [minWords] = getWordBounds(lengthOption, customSections);
-
-      const content = await generateWithVerification(
-        (issues) =>
-          generateWithLinks(
-            applyVerificationIssuesToPrompt(articlePrompt, issues),
-            modelVersion,
-            linkSources,
-            systemPrompt,
-            minLinks,
-            baseMaxTokens,
             minWords,
             reportingSources
           ),

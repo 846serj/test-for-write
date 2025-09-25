@@ -134,37 +134,6 @@ export { articlePrompt, reportingBlock, groundingInstruction };
   assert.strictEqual(groundingInstruction.includes('cite the matching URL'), true);
 });
 
-test('YouTube prompt injects reporting block and grounding instruction', async () => {
-  const promptSnippet = extractPromptSnippet("if (articleType === 'YouTube video to blog post')");
-  const snippet = `
-${reportingHelpers}
-const reportingSources = [
-  {
-    title: 'Video Analysis',
-    summary: 'Highlights from investigative reporters.',
-    url: 'https://news.test/video',
-    publishedAt: '2024-07-05T15:30:00Z',
-  },
-];
-const reportingBlock = buildRecentReportingBlock(reportingSources);
-const groundingInstruction = reportingSources.length
-  ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\\n'
-  : '';
-const linkInstruction = '';
-const transcriptInstruction = '';
-const toneInstruction = '';
-const povInstruction = '';
-const title = 'Video to Blog';
-const customInstructionBlock = '';
-${promptSnippet}
-export { articlePrompt };
-`;
-  const { articlePrompt } = await transpile(snippet);
-  assert(articlePrompt.includes('Recent reporting to reference:'));
-  assert(articlePrompt.includes('https://news.test/video'));
-  assert(articlePrompt.includes('cite the matching URL'));
-});
-
 test('rewrite prompt injects reporting block and grounding instruction', async () => {
   const promptSnippet = extractPromptSnippet("if (articleType === 'Rewrite blog post')");
   const snippet = `
