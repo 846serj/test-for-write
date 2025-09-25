@@ -1350,6 +1350,30 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function buildFallbackSummary(summary: string | undefined): string {
+  if (!summary) {
+    return '';
+  }
+
+  const normalized = summary.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  const MAX_LENGTH = 220;
+  if (normalized.length <= MAX_LENGTH) {
+    return normalized;
+  }
+
+  const truncated = normalized.slice(0, MAX_LENGTH);
+  const lastSentenceEnd = truncated.lastIndexOf('.');
+  if (lastSentenceEnd >= 120) {
+    return `${truncated.slice(0, lastSentenceEnd + 1).trim()}…`;
+  }
+
+  return `${truncated.trimEnd()}…`;
+}
+
 interface SourceContext {
   url: string;
   title?: string;
@@ -1875,66 +1899,34 @@ async function generateWithLinks(
         missingSources.has(source)
       );
       if (missingList.length > 0) {
-        const summaryList = missingList
-          .map((url, index) => {
-            const context = contextByUrl.get(url);
-            const parts = [`${index + 1}. ${url}`];
-            if (context?.title) {
-              parts.push(`Title: ${context.title}`);
-            }
-            if (context?.summary) {
-              parts.push(`Summary: ${context.summary}`);
-            }
-            return parts.join('\n');
-          })
-          .join('\n\n');
+        const availableSlots = Math.max(0, MAX_LINKS - linkCount);
+        if (availableSlots > 0) {
+          const limited = missingList.slice(0, availableSlots);
+          const fallbackParagraphs = limited
+            .map((url) => {
+              const context = contextByUrl.get(url);
+              const safeUrl = escapeHtml(url);
+              const anchorLabel = context?.title?.replace(/\s+/g, ' ').trim();
+              const safeLabel = anchorLabel
+                ? escapeHtml(anchorLabel)
+                : 'Read the full report';
+              const summary = buildFallbackSummary(context?.summary);
+              const preface = summary
+                ? escapeHtml(summary)
+                : 'Further coverage is available from this source.';
+              return `<p>${preface} <a href="${safeUrl}" target="_blank" rel="noopener">${safeLabel}</a>.</p>`;
+            })
+            .join('\n');
 
-        const paragraphLabel =
-          missingList.length === 1 ? 'paragraph' : 'paragraphs';
-        const repairLines = [
-          `Write ${missingList.length} concise HTML ${paragraphLabel} that can be appended to an article.`,
-          'Each paragraph must naturally cite the matching source exactly once using descriptive anchor text and must not include any other links.',
-          'Keep each paragraph to two sentences or fewer.',
-        ];
-        if (summaryList) {
-          repairLines.push('', summaryList);
+          if (fallbackParagraphs) {
+            const separator = /\S$/.test(content) ? '\n\n' : '';
+            content = `${content}${separator}${fallbackParagraphs}`;
+            linkCount = content.match(/<a\s+href=/gi)?.length || 0;
+            missingSources = new Set(
+              findMissingSources(content, requiredSources)
+            );
+          }
         }
-        const repairPrompt = repairLines.join('\n');
-
-        let repairTokens = Math.min(
-          Math.max(400, Math.ceil(missingList.length * 220)),
-          limit
-        );
-        let retryRes = await openai.chat.completions.create({
-          model,
-          messages: buildMessages(repairPrompt),
-          temperature: FACTUAL_TEMPERATURE,
-          max_tokens: repairTokens,
-        });
-
-        if (
-          retryRes.choices[0]?.finish_reason === 'length' &&
-          repairTokens < limit
-        ) {
-          repairTokens = limit;
-          retryRes = await openai.chat.completions.create({
-            model,
-            messages: buildMessages(repairPrompt),
-            temperature: FACTUAL_TEMPERATURE,
-            max_tokens: repairTokens,
-          });
-        }
-
-        const repairContent = cleanModelOutput(
-          retryRes.choices[0]?.message?.content
-        );
-        if (repairContent) {
-          const trimmed = repairContent.trim();
-          const joiner = trimmed.startsWith('<') ? '' : '\n';
-          content = `${content}${joiner}${trimmed}`;
-        }
-        linkCount = content.match(/<a\s+href=/gi)?.length || 0;
-        missingSources = new Set(findMissingSources(content, requiredSources));
       }
     }
   }
