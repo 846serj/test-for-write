@@ -91,10 +91,10 @@ const details = formatKeyDetails(summary);
 export { details };
 `;
   const { details } = await transpile(snippet);
-  assert(details.includes('Metrics: 72%, 1,500-person'));
-  assert(details.includes('Timeline: March 3, 2024'));
-  assert(details.includes('Methods: randomized controlled trial'));
-  assert(details.includes('Entities: Pfizer'));
+  assert(details.includes('Cite these metrics verbatim: 72%, 1,500-person'));
+  assert(details.includes('State these reported timelines exactly: March 3, 2024'));
+  assert(details.includes('Reference the research methods noted: randomized controlled trial'));
+  assert(details.includes('Name these entities precisely: Pfizer'));
 });
 
 test('listicle prompt injects reporting block and grounding instruction', async () => {

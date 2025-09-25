@@ -299,6 +299,8 @@ const DETAIL_INSTRUCTION =
   '- Enumerate every figure, location, and named stakeholder the sources mention instead of collapsing them into a single vague summary—spell them out verbatim and cite them inline.\n' +
   '- Explicitly reference the titles or roles that identify key people or organizations when the sources provide them, and cite the matching link.\n' +
   '- When a source explains impact or stakes (e.g., job losses, funding amounts, geographic coverage), restate those outcomes verbatim with citations rather than summarizing them abstractly.\n' +
+  '- Treat the outline as a factual checklist: every specific name, title, figure, location, quote, and date it contains must appear in the article body with identical wording and an inline citation to the same source noted in the outline.\n' +
+  '- If the outline introduction bullet includes concrete facts, repeat them in the article introduction with the same explicit data points and citations instead of replacing them with generic framing.\n' +
   '- If a potentially important fact cannot be verified in the provided sources, omit it and instead note "Unverified based on available sources."\n';
 
 const TIMELINE_REGEX =
@@ -2373,7 +2375,9 @@ ${reportingContext}Requirements:
 • Number each heading formatted like ${listNumberingFormat}.
 • Provide a short clause after each numbered heading describing the key sourced insight it should cover.
 • Keep the outline tightly focused on the developments described in the reporting summaries.
+• Preserve every concrete fact from the reporting block—names, dates, figures, locations, direct quotes—and restate them verbatim inside the relevant numbered heading or bullet instead of paraphrasing generically.
 • For every bullet that uses a reporting summary, append " (Source: URL)" with the matching link.
+• Do not merge distinct facts into one bullet: break out each specific person, organization, date, or metric so it can be cited individually.
 ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond the provided sources.
 `.trim();
 
@@ -2679,9 +2683,12 @@ You are a professional writer creating a factually accurate, well-structured out
 
 ${reportingContext}Outline requirements:
 • Begin with a section labeled "INTRO:" and include a single bullet with a 2–3 sentence introduction (no <h2>).
+• The INTRO bullet must highlight the most newsworthy concrete facts—names, dates, figures, locations—from the reporting summaries and cite the matching sources instead of offering generic context.
 • After the "INTRO:" section, ${sectionInstruction}.
 • Under each <h2>, list 2–3 bullet-point subtopics describing what evidence, examples, or angles to cover.
+• Preserve every concrete fact from the reporting block and Key details list—names, dates, figures, locations, quotes—and restate them verbatim within the relevant subtopic bullets rather than summarizing vaguely.
 • For every bullet that draws on reporting, append " (Source: URL)" with the matching link.
+• Do not combine multiple unrelated facts in a single bullet; give each person, organization, metric, or timestamp its own bullet so it can be cited precisely.
 • Do NOT use "Introduction" or "Intro" as an <h2> heading.
 • Do NOT use "Conclusion" or "Bottom line" as an <h2> heading.
 ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent information beyond the provided reporting.
