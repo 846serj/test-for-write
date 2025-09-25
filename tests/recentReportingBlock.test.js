@@ -7,11 +7,20 @@ const routePath = new URL('../src/app/api/generate/route.ts', import.meta.url);
 const tsCode = fs.readFileSync(routePath, 'utf8');
 
 const detailInstructionMatch = tsCode.match(/const DETAIL_INSTRUCTION[\s\S]*?';/);
+const detailExtractionMatch = tsCode.match(
+  /const TIMELINE_REGEX[\s\S]*?function formatKeyDetails[\s\S]*?\n\}/
+);
 const formatPublishedMatch = tsCode.match(/function formatPublishedTimestamp[\s\S]*?\n\}/);
 const normalizeSummaryMatch = tsCode.match(/function normalizeSummary[\s\S]*?\n\}/);
 const buildBlockMatch = tsCode.match(/function buildRecentReportingBlock[\s\S]*?\n\}/);
 
-if (!detailInstructionMatch || !formatPublishedMatch || !normalizeSummaryMatch || !buildBlockMatch) {
+if (
+  !detailInstructionMatch ||
+  !detailExtractionMatch ||
+  !formatPublishedMatch ||
+  !normalizeSummaryMatch ||
+  !buildBlockMatch
+) {
   throw new Error('Failed to extract helper definitions from route.ts');
 }
 
@@ -48,6 +57,7 @@ function extractPromptSnippet(startMarker) {
 
 const reportingHelpers = `
 ${detailInstructionMatch[0]}
+${detailExtractionMatch[0]}
 ${formatPublishedMatch[0]}
 ${normalizeSummaryMatch[0]}
 ${buildBlockMatch[0]}
@@ -70,6 +80,21 @@ export { block };
   assert(block.includes('URL: https://alpha.test'));
   assert(block.includes('"Untitled" (Unknown publication time)'));
   assert(block.includes('Summary: No summary provided.'));
+  assert.strictEqual(block.includes('Key details:'), false);
+});
+
+test('formatKeyDetails surfaces metrics, timelines, methods, and entities', async () => {
+  const snippet = `
+${reportingHelpers}
+const summary = 'Pfizer reported 72% efficacy in a 1,500-person randomized controlled trial completed on March 3, 2024.';
+const details = formatKeyDetails(summary);
+export { details };
+`;
+  const { details } = await transpile(snippet);
+  assert(details.includes('Metrics: 72%, 1,500-person'));
+  assert(details.includes('Timeline: March 3, 2024'));
+  assert(details.includes('Methods: randomized controlled trial'));
+  assert(details.includes('Entities: Pfizer'));
 });
 
 test('listicle prompt injects reporting block and grounding instruction', async () => {

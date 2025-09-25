@@ -291,9 +291,272 @@ const DETAIL_INSTRUCTION =
   '- Provide specific real-world examples (e.g., car model years or actual app names) instead of generic placeholders like "App 1".\n' +
   '- When sources include concrete facts, repeat them precisely: list full names, state exact dates with month/day/year, give unrounded figures, and preserve other specific details.\n' +
   '- Keep official names, model numbers, and other exact designations verbatim when they appear in the sources (e.g., "IL-20" instead of "plane").\n' +
+  '- When summarizing, never replace explicit metrics, named individuals, or timelines with vague substitutes such as "many", "recently", or "officials"—quote the exact figures, dates, and proper nouns provided.\n' +
   '- Do not speculate or embellish beyond what the sources explicitly provide.\n' +
   '- For every factual claim (including dates, names, statistics, or described benefits), cite a supporting source URL inline using <a href="URL" target="_blank">anchor text</a>.\n' +
   '- If a potentially important fact cannot be verified in the provided sources, omit it and instead note "Unverified based on available sources."\n';
+
+const TIMELINE_REGEX =
+  /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+\d{1,2}(?:st|nd|rd|th)?)?(?:,\s*\d{4})?\b/gi;
+const QUARTER_REGEX = /\b(?:Q[1-4]|H[12])\s*(?:\d{4})?\b/gi;
+const ISO_DATE_REGEX = /\b\d{4}[-\/](?:0?[1-9]|1[0-2])[-\/](?:0?[1-9]|[12]\d|3[01])\b/g;
+const YEAR_WITH_CONTEXT_REGEX = /\b(?:in|by|during|through|since|from)\s+(19\d{2}|20\d{2})\b/gi;
+const NUMERIC_METRIC_REGEX =
+  /(?:[$£€]\s?)?\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b(?:\s?(?:%|percent|percentage|pp|basis points|people|patients|respondents|cases|votes|points|miles|mile|kilometers|kilometres|km|meters|metres|m|kilograms|kg|grams|g|pounds|lbs|°f|°c|usd|dollars|euros|pounds|yen|yuan|won|rupees|million|billion|trillion|k|units|devices|users|students|employees|samples|tests|surveys|mg|ml|gwh|mwh|kw|mw|gw|tons|tonnes|barrels|gallons|liters|litres|ppm|ppb|per\s+capita|per\s+share|per\s+day|per\s+hour))?/gi;
+const METHOD_KEYWORDS = [
+  'randomized controlled trial',
+  'double-blind trial',
+  'placebo-controlled trial',
+  'longitudinal study',
+  'cross-sectional study',
+  'pilot study',
+  'observational study',
+  'clinical trial',
+  'survey',
+  'poll',
+  'census',
+  'analysis',
+  'benchmark',
+  'simulation',
+  'prototype',
+  'sensor',
+  'algorithm',
+  'dataset',
+  'measurement',
+  'sampling',
+  'methodology',
+  'technique',
+  'audit',
+  'assessment',
+  'evaluation',
+  'regression model',
+  'machine learning model',
+  'laboratory test',
+  'peer-reviewed'
+];
+const ENTITY_STOPWORDS = new Set([
+  'Recent',
+  'Reporting',
+  'Summary',
+  'URL',
+  'The',
+  'A',
+  'An',
+  'And',
+  'For',
+  'With',
+  'From',
+  'This',
+  'That',
+  'These',
+  'Those',
+  'First',
+  'Second',
+  'Third',
+  'Fourth',
+  'Fifth',
+  'Sixth',
+  'Seventh',
+  'Eighth',
+  'Ninth',
+  'Tenth',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December'
+]);
+
+interface StructuredFacts {
+  metrics: string[];
+  timelines: string[];
+  methods: string[];
+  entities: string[];
+}
+
+function dedupeDetails(values: string[], limit: number): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(normalized);
+    if (result.length >= limit) {
+      break;
+    }
+  }
+  return result;
+}
+
+function extractMethodPhrases(text: string): string[] {
+  if (!text) {
+    return [];
+  }
+  const lowered = text.toLowerCase();
+  const phrases: string[] = [];
+  for (const keyword of METHOD_KEYWORDS) {
+    const index = lowered.indexOf(keyword);
+    if (index === -1) {
+      continue;
+    }
+    const snippet = text.slice(index, index + keyword.length);
+    phrases.push(snippet);
+  }
+  return phrases;
+}
+
+function extractProperNouns(text: string): string[] {
+  if (!text) {
+    return [];
+  }
+  const matches = text.match(/\b(?:[A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}|of|and|the|for|de|la|di|van|von|da|der|del|du|le))*|[A-Z]{3,})\b/g);
+  if (!matches) {
+    return [];
+  }
+  const filtered = matches.filter((match) => {
+    const cleaned = match.replace(/\s+/g, ' ').trim();
+    if (!cleaned) {
+      return false;
+    }
+    if (ENTITY_STOPWORDS.has(cleaned)) {
+      return false;
+    }
+    const wordCount = cleaned.split(/\s+/g).length;
+    if (wordCount === 1) {
+      if (/^[A-Z]{3,}$/.test(cleaned)) {
+        return true;
+      }
+      if (/^[A-Z][a-z]+(?:['-][A-Za-z]+)?$/.test(cleaned) && cleaned.length > 2) {
+        return true;
+      }
+      return false;
+    }
+    return true;
+  });
+  return filtered;
+}
+
+function collectMetricTokens(text: string): string[] {
+  if (!text) {
+    return [];
+  }
+  const metrics: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = NUMERIC_METRIC_REGEX.exec(text))) {
+    let token = match[0];
+    const after = text.slice(match.index + match[0].length, match.index + match[0].length + 30);
+    const hyphenMatch = after.match(/^-[A-Za-z]+(?:-[A-Za-z]+)?/);
+    if (hyphenMatch) {
+      token += hyphenMatch[0];
+    }
+    const perMatch = after.match(/^\s+(?:per|each)\s+[A-Za-z%°/$-]+/i);
+    if (perMatch) {
+      token += perMatch[0];
+    }
+    metrics.push(token);
+  }
+  const currencyMatches = text.match(/[$£€]\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?(?:\s*(?:million|billion|trillion))?/gi);
+  if (currencyMatches) {
+    metrics.push(...currencyMatches);
+  }
+  return metrics;
+}
+
+function collectTimelineTokens(text: string): string[] {
+  if (!text) {
+    return [];
+  }
+  const timelines: string[] = [];
+  const monthMatches = text.match(TIMELINE_REGEX);
+  if (monthMatches) {
+    timelines.push(...monthMatches);
+  }
+  const quarterMatches = text.match(QUARTER_REGEX);
+  if (quarterMatches) {
+    timelines.push(...quarterMatches);
+  }
+  const isoMatches = text.match(ISO_DATE_REGEX);
+  if (isoMatches) {
+    timelines.push(...isoMatches);
+  }
+  let contextualMatch: RegExpExecArray | null;
+  while ((contextualMatch = YEAR_WITH_CONTEXT_REGEX.exec(text))) {
+    timelines.push(contextualMatch[0]);
+  }
+  return timelines;
+}
+
+function extractStructuredFacts(summary: string | undefined | null): StructuredFacts {
+  if (!summary) {
+    return { metrics: [], timelines: [], methods: [], entities: [] };
+  }
+  const normalized = summary.replace(/\s+/g, ' ').trim();
+  if (!normalized || /^no summary provided\.?$/i.test(normalized)) {
+    return { metrics: [], timelines: [], methods: [], entities: [] };
+  }
+
+  const metrics = dedupeDetails(collectMetricTokens(normalized), 6);
+  const timelinesRaw = collectTimelineTokens(normalized);
+  const timelines = dedupeDetails(timelinesRaw, 5);
+  const methods = dedupeDetails(extractMethodPhrases(normalized), 4);
+  const entities = dedupeDetails(extractProperNouns(normalized), 6);
+
+  const timelineSet = new Set(timelines.map((item) => item.toLowerCase()));
+  const filteredMetrics = metrics.filter((item) => !timelineSet.has(item.toLowerCase()));
+  const refinedMetrics = filteredMetrics.filter((item) => {
+    const numeric = item.replace(/[^0-9.]/g, '');
+    if (!numeric) {
+      return true;
+    }
+    const numericValue = Number.parseFloat(numeric);
+    if (!Number.isFinite(numericValue)) {
+      return true;
+    }
+    if (Number.isInteger(numericValue) && numericValue <= 31 && item.replace(/[^0-9]/g, '').length <= 2) {
+      return false;
+    }
+    return true;
+  });
+
+  return {
+    metrics: refinedMetrics,
+    timelines,
+    methods,
+    entities,
+  };
+}
+
+function formatKeyDetails(summary: string | undefined | null): string | null {
+  const facts = extractStructuredFacts(summary);
+  const segments: string[] = [];
+  if (facts.metrics.length) {
+    segments.push(`Metrics: ${facts.metrics.join(', ')}`);
+  }
+  if (facts.timelines.length) {
+    segments.push(`Timeline: ${facts.timelines.join(', ')}`);
+  }
+  if (facts.methods.length) {
+    segments.push(`Methods: ${facts.methods.join('; ')}`);
+  }
+  if (facts.entities.length) {
+    segments.push(`Entities: ${facts.entities.join(', ')}`);
+  }
+  return segments.length ? segments.join(' | ') : null;
+}
 
 async function generateOutlineWithGrokFallback(
   prompt: string,
@@ -491,8 +754,10 @@ function buildRecentReportingBlock(sources: ReportingSource[]): string {
     .map((item) => {
       const timestamp = formatPublishedTimestamp(item.publishedAt);
       const summary = normalizeSummary(item.summary);
+      const keyDetails = formatKeyDetails(item.summary);
       const title = item.title || 'Untitled';
-      return `- "${title}" (${timestamp})\n  Summary: ${summary}\n  URL: ${item.url}`;
+      const detailLine = keyDetails ? `\n  Key details: ${keyDetails}` : '';
+      return `- "${title}" (${timestamp})\n  Summary: ${summary}${detailLine}\n  URL: ${item.url}`;
     })
     .join('\n');
 
