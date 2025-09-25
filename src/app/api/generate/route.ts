@@ -8,8 +8,6 @@ import { grokChatCompletion } from '../../../lib/grok';
 export const runtime = 'edge';
 export const revalidate = 0;
 
-type NewsFreshness = '1h' | '6h' | '7d';
-
 interface NewsArticle {
   title: string;
   url: string;
@@ -40,12 +38,6 @@ type VerificationSource =
       summary?: string | null;
       publishedAt?: string | null;
     };
-
-const FRESHNESS_TO_HOURS: Record<NewsFreshness, number> = {
-  '1h': 1,
-  '6h': 6,
-  '7d': 24 * 7,
-};
 
 const MILLIS_IN_MINUTE = 60 * 1000;
 const MILLIS_IN_HOUR = 60 * MILLIS_IN_MINUTE;
@@ -80,6 +72,7 @@ const RELATIVE_TIME_UNIT_MS: Record<string, number> = {
 };
 
 const MAX_SOURCE_WINDOW_MS = 14 * MILLIS_IN_DAY;
+const SERP_14_DAY_TBS = 'qdr:d14';
 const MAX_FUTURE_DRIFT_MS = 5 * MILLIS_IN_MINUTE;
 
 const sectionRanges: Record<string, [number, number]> = {
@@ -609,11 +602,7 @@ function calcMaxTokens(
   return Math.min(tokens, limit);
 }
 
-async function fetchSources(
-  headline: string,
-  freshness?: NewsFreshness
-): Promise<ReportingSource[]> {
-  const resolvedFreshness = resolveFreshness(freshness);
+async function fetchSources(headline: string): Promise<ReportingSource[]> {
   const nowMs = Date.now();
   const seenLinks = new Set<string>();
   const seenPublishers = new Set<string>();
@@ -621,7 +610,7 @@ async function fetchSources(
   const candidateSources: ReportingSource[] = [];
 
   const newsPromise: Promise<NewsArticle[]> = process.env.NEWS_API_KEY
-    ? fetchNewsArticles(headline, resolvedFreshness, false).catch((err) => {
+    ? fetchNewsArticles(headline, false).catch((err) => {
         console.warn(
           '[api/generate] news api sourcing failed, continuing with SERP',
           err
@@ -633,7 +622,7 @@ async function fetchSources(
   const serpPromise = serpapiSearch({
     query: headline,
     engine: 'google_news',
-    extraParams: { tbs: mapFreshnessToSerpTbs(resolvedFreshness) },
+    extraParams: { tbs: SERP_14_DAY_TBS },
     limit: 8,
   });
 
@@ -795,23 +784,6 @@ function normalizePublisher(result: SerpApiResult): string | null {
   }
 }
 
-function resolveFreshness(freshness: NewsFreshness | undefined): NewsFreshness {
-  if (!freshness) return '6h';
-  return freshness;
-}
-
-function mapFreshnessToSerpTbs(freshness: NewsFreshness): string {
-  if (freshness === '1h') return 'qdr:h';
-  if (freshness === '6h') return 'qdr:h6';
-  return 'qdr:w';
-}
-
-function computeFreshnessIso(freshness: NewsFreshness): string {
-  const hours = FRESHNESS_TO_HOURS[freshness] ?? FRESHNESS_TO_HOURS['6h'];
-  const from = new Date(Date.now() - hours * 60 * 60 * 1000);
-  return from.toISOString();
-}
-
 function parseRelativeTimestamp(value: string, referenceMs: number): number | null {
   const cleaned = value.trim().toLowerCase();
   if (!cleaned) {
@@ -885,12 +857,10 @@ function normalizePublishedAt(timestamp: number): string {
 
 async function fetchNewsArticles(
   query: string,
-  freshness: NewsFreshness | undefined,
   serpFallbackEnabled: boolean
 ): Promise<NewsArticle[]> {
-  const resolvedFreshness = resolveFreshness(freshness);
-  const fromIso = computeFreshnessIso(resolvedFreshness);
   const nowMs = Date.now();
+  const fromIso = new Date(nowMs - MAX_SOURCE_WINDOW_MS).toISOString();
   const newsKey = process.env.NEWS_API_KEY;
 
   if (newsKey) {
@@ -951,13 +921,11 @@ async function fetchNewsArticles(
     return [];
   }
 
-  const freshnessParam = mapFreshnessToSerpTbs(resolvedFreshness);
-
   try {
     const serpResults = await serpapiSearch({
       query,
       engine: 'google_news',
-      extraParams: { tbs: freshnessParam },
+      extraParams: { tbs: SERP_14_DAY_TBS },
       limit: 8,
     });
 
@@ -2125,7 +2093,6 @@ export async function POST(request: Request) {
       modelVersion = 'gpt-4o-mini',
       useSerpApi = true,
       includeLinks = true,
-      newsFreshness,
     }: {
       articleType: string;
       title: string;
@@ -2140,7 +2107,6 @@ export async function POST(request: Request) {
       modelVersion?: string;
       useSerpApi?: boolean;
       includeLinks?: boolean;
-      newsFreshness?: NewsFreshness;
     } = await request.json();
 
     if (!title?.trim()) {
@@ -2161,7 +2127,7 @@ export async function POST(request: Request) {
       : '';
 
     if (articleType === 'News article') {
-      const articles = await fetchNewsArticles(title, newsFreshness, serpEnabled);
+      const articles = await fetchNewsArticles(title, serpEnabled);
       if (!articles.length) {
         return NextResponse.json(
           { error: 'No recent news articles found for that topic.' },
@@ -2330,7 +2296,7 @@ Write the full article in valid HTML below:
         };
       }
 
-      const reportingSources = await fetchSources(title, newsFreshness);
+      const reportingSources = await fetchSources(title);
       const reportingBlock = buildRecentReportingBlock(reportingSources);
       const groundingInstruction = reportingSources.length
         ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\n'
