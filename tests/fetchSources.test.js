@@ -6,40 +6,28 @@ import { test } from 'node:test';
 const routePath = new URL('../src/app/api/generate/route.ts', import.meta.url);
 const tsCode = fs.readFileSync(routePath, 'utf8');
 
-const typeMatch = tsCode.match(/type NewsFreshness[^;]+;/);
-const resolveFreshnessMatch = tsCode.match(/function resolveFreshness[\s\S]*?\n\}/);
-const mapFreshnessMatch = tsCode.match(/function mapFreshnessToSerpTbs[\s\S]*?\n\}/);
-const funcMatch = tsCode.match(/async function fetchSources[\s\S]*?\n\}/);
-const normalizePublisherMatch = tsCode.match(/function normalizePublisher[\s\S]*?\n\}/);
-const normalizeTitleMatch = tsCode.match(/function normalizeTitleValue[\s\S]*?\n\}/);
-const freshnessHoursMatch = tsCode.match(/const FRESHNESS_TO_HOURS[\s\S]*?\n\};/);
-const computeFreshnessMatch = tsCode.match(/function computeFreshnessIso[\s\S]*?\n\}/);
-const fetchNewsArticlesMatch = tsCode.match(/async function fetchNewsArticles[\s\S]*?\n\}/);
-const parseRelativeMatch = tsCode.match(/function parseRelativeTimestamp[\s\S]*?\n\}/);
-const parsePublishedMatch = tsCode.match(/function parsePublishedTimestamp[\s\S]*?\n\}/);
-const timestampWindowMatch = tsCode.match(/function isTimestampWithinWindow[\s\S]*?\n\}/);
-const normalizePublishedMatch = tsCode.match(/function normalizePublishedAt[\s\S]*?\n\}/);
-const timeConstantsMatch = tsCode.match(/const MILLIS_IN_MINUTE[\s\S]*?const MAX_FUTURE_DRIFT_MS[^;]*;/);
+function extract(regex, description) {
+  const match = tsCode.match(regex);
+  if (!match) {
+    throw new Error(`Failed to extract ${description}`);
+  }
+  return match[0];
+}
 
 const snippet = `
-${typeMatch[0]}
-${freshnessHoursMatch ? freshnessHoursMatch[0] : ''}
-${timeConstantsMatch ? timeConstantsMatch[0] : ''}
+${extract(/const MILLIS_IN_MINUTE[\s\S]*?const MAX_FUTURE_DRIFT_MS[^;]*;/, 'time constants')}
 const serpCalls = [];
 let serpResults = [];
 function setSerpResults(results) { serpResults = results; }
 async function serpapiSearch(params) { serpCalls.push(params); return serpResults; }
-${normalizeTitleMatch ? normalizeTitleMatch[0] : ''}
-${resolveFreshnessMatch[0]}
-${mapFreshnessMatch[0]}
-${parseRelativeMatch ? parseRelativeMatch[0] : ''}
-${parsePublishedMatch ? parsePublishedMatch[0] : ''}
-${timestampWindowMatch ? timestampWindowMatch[0] : ''}
-${normalizePublishedMatch ? normalizePublishedMatch[0] : ''}
-${funcMatch[0]}
-${normalizePublisherMatch ? normalizePublisherMatch[0] : ''}
-${computeFreshnessMatch ? computeFreshnessMatch[0] : ''}
-${fetchNewsArticlesMatch ? fetchNewsArticlesMatch[0] : ''}
+${extract(/function normalizeTitleValue[\s\S]*?\n\}/, 'normalizeTitleValue')}
+${extract(/function parseRelativeTimestamp[\s\S]*?\n\}/, 'parseRelativeTimestamp')}
+${extract(/function parsePublishedTimestamp[\s\S]*?\n\}/, 'parsePublishedTimestamp')}
+${extract(/function isTimestampWithinWindow[\s\S]*?\n\}/, 'isTimestampWithinWindow')}
+${extract(/function normalizePublishedAt[\s\S]*?\n\}/, 'normalizePublishedAt')}
+${extract(/async function fetchSources[\s\S]*?\n\}/, 'fetchSources')}
+${extract(/function normalizePublisher[\s\S]*?\n\}/, 'normalizePublisher')}
+${extract(/async function fetchNewsArticles[\s\S]*?\n\}/, 'fetchNewsArticles')}
 export { fetchSources, serpCalls, setSerpResults, fetchNewsArticles };
 `;
 
@@ -92,11 +80,11 @@ test('fetchSources requests google_news with freshness filter and preserves orde
         date: isoDaysAgo(3),
       },
     ]);
-    const sources = await fetchSources('breaking topic', '1h');
+    const sources = await fetchSources('breaking topic');
     assert.strictEqual(serpCalls.length, 1);
     assert.strictEqual(serpCalls[0].engine, 'google_news');
     assert.strictEqual(serpCalls[0].query, 'breaking topic');
-    assert.strictEqual(serpCalls[0].extraParams?.tbs, 'qdr:h');
+    assert.strictEqual(serpCalls[0].extraParams?.tbs, 'qdr:d14');
     assert.strictEqual(serpCalls[0].limit, 8);
     assert.deepStrictEqual(
       sources.map(({ url, summary, publishedAt }) => ({ url, summary, publishedAt })),
@@ -119,24 +107,6 @@ test('fetchSources requests google_news with freshness filter and preserves orde
       ]
     );
     assert.strictEqual(sources[0].title, 'Latest Update');
-  });
-});
-
-test('fetchSources defaults to 6h freshness when none provided', async () => {
-  await withMockedNow(async () => {
-    serpCalls.length = 0;
-    setSerpResults([{ link: 'https://example.com', date: isoDaysAgo(1) }]);
-    await fetchSources('another topic');
-    assert.strictEqual(serpCalls[0].extraParams?.tbs, 'qdr:h6');
-  });
-});
-
-test('fetchSources uses past 7 days filter when requested', async () => {
-  await withMockedNow(async () => {
-    serpCalls.length = 0;
-    setSerpResults([{ link: 'https://example.com', source: 'Example', date: isoDaysAgo(1) }]);
-    await fetchSources('weekly topic', '7d');
-    assert.strictEqual(serpCalls[0].extraParams?.tbs, 'qdr:w');
   });
 });
 
@@ -341,7 +311,7 @@ test('fetchSources merges NewsAPI and SERP results while deduplicating', async (
         },
       ]);
 
-      const sources = await fetchSources('tech space mix', '6h');
+      const sources = await fetchSources('tech space mix');
       assert.strictEqual(serpCalls.length, 1);
       assert.deepStrictEqual(
         sources.map((item) => item.url),
@@ -395,8 +365,9 @@ test('fetchNewsArticles serp fallback dedupes repeated SERP headlines', async ()
         },
       ]);
 
-      const articles = await fetchNewsArticles('markets', '6h', true);
+      const articles = await fetchNewsArticles('markets', true);
       assert.strictEqual(articles.length, 2);
+      assert.strictEqual(serpCalls[0].extraParams?.tbs, 'qdr:d14');
       assert.deepStrictEqual(
         articles.map((item) => item.url),
         ['https://site-a.com/story', 'https://site-c.com/story']
