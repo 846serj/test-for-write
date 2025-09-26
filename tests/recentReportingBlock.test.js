@@ -66,6 +66,20 @@ function extractPromptSnippet(startMarker) {
   return tsCode.slice(reportingStart, nextConstIndex);
 }
 
+function extractNewsBlock() {
+  const startMarker = "if (articleType === 'News article')";
+  const start = tsCode.indexOf(startMarker);
+  if (start === -1) {
+    throw new Error('Unable to locate News article branch.');
+  }
+  const endMarker = 'return NextResponse.json({';
+  const end = tsCode.indexOf(endMarker, start);
+  if (end === -1) {
+    throw new Error('Unable to locate News article branch terminator.');
+  }
+  return tsCode.slice(start, end);
+}
+
 const reportingHelpers = `
 ${detailInstructionMatch[0]}
 ${detailExtractionMatch[0]}
@@ -204,4 +218,20 @@ test('blog prompt injects reporting block and grounding instruction', async () =
   );
   assert(articlePrompt.includes('https://news.test/blog'));
   assert(articlePrompt.includes('cite the matching URL'));
+});
+
+test('news prompt default references DEFAULT_WORDS and keeps full min bound', () => {
+  const newsBlock = extractNewsBlock();
+  assert(
+    /~\$\{DEFAULT_WORDS\.toLocaleString\(\)\} words total/.test(newsBlock),
+    'News default length instruction should reference DEFAULT_WORDS.'
+  );
+  const minWordsMatch = newsBlock.match(/const minWords =([^;]+);/);
+  assert(minWordsMatch, 'News branch should set a minWords value.');
+  const minWordsExpression = minWordsMatch[1].replace(/\s+/g, ' ').trim();
+  assert.strictEqual(
+    minWordsExpression,
+    'minBound',
+    'News minWords should equal the lower bound from getWordBounds.'
+  );
 });
