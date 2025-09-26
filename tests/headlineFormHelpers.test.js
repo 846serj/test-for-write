@@ -76,9 +76,8 @@ test('normalizeSummaryBullets returns empty array for non-list values', () => {
   assert.deepStrictEqual(normalizeSummaryBullets(null), []);
 });
 
-test('buildHeadlineRequest enforces keywords or prompt', () => {
+test('buildHeadlineRequest enforces keywords or category', () => {
   const result = buildHeadlineRequest({
-    prompt: '   ',
     keywords: [],
     profileQuery: '',
     profileLanguage: null,
@@ -96,10 +95,7 @@ test('buildHeadlineRequest enforces keywords or prompt', () => {
   });
 
   assert.strictEqual(result.ok, false);
-  assert.strictEqual(
-    result.error,
-    'Provide at least one keyword, choose a category feed, or describe the article to fetch headlines.'
-  );
+  assert.strictEqual(result.error, 'Provide at least one keyword or choose a category feed to fetch headlines.');
 });
 
 test('buildHeadlineRequest creates keyword-only payloads', () => {
@@ -108,7 +104,6 @@ test('buildHeadlineRequest creates keyword-only payloads', () => {
   );
 
   const result = buildHeadlineRequest({
-    prompt: '',
     keywords,
     profileQuery: '',
     profileLanguage: null,
@@ -135,11 +130,10 @@ test('buildHeadlineRequest creates keyword-only payloads', () => {
   });
 });
 
-test('buildHeadlineRequest prefers prompt language and surfaces conflicts', () => {
+test('buildHeadlineRequest surfaces conflicts and normalizes language for profile queries', () => {
   const conflict = buildHeadlineRequest({
-    prompt: 'Tech policy updates',
     keywords: [],
-    profileQuery: '',
+    profileQuery: 'Tech policy updates',
     profileLanguage: 'ES',
     limit: 4,
     sortBy: 'publishedAt',
@@ -163,9 +157,8 @@ test('buildHeadlineRequest prefers prompt language and surfaces conflicts', () =
   assert.deepStrictEqual(conflict.sanitizedDomains, ['example.com']);
 
   const success = buildHeadlineRequest({
-    prompt: '  Tech policy updates  ',
     keywords: [],
-    profileQuery: '',
+    profileQuery: '  Tech policy updates  ',
     profileLanguage: 'ES',
     limit: 4,
     sortBy: 'publishedAt',
@@ -181,15 +174,12 @@ test('buildHeadlineRequest prefers prompt language and surfaces conflicts', () =
   });
 
   assert.strictEqual(success.ok, true);
-  assert.strictEqual(success.payload.description, 'Tech policy updates');
-  assert.ok(!('query' in success.payload));
+  assert.strictEqual(success.payload.query, 'Tech policy updates');
   assert.strictEqual(success.payload.language, 'es');
-  assert.strictEqual(success.resolvedPrompt, 'Tech policy updates');
 });
 
-test('buildHeadlineRequest falls back to profile query when no description is provided', () => {
+test('buildHeadlineRequest accepts profile queries without keywords', () => {
   const result = buildHeadlineRequest({
-    prompt: '   ',
     keywords: [],
     profileQuery: 'Space station maintenance',
     profileLanguage: null,
@@ -209,13 +199,11 @@ test('buildHeadlineRequest falls back to profile query when no description is pr
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.payload.query, 'Space station maintenance');
   assert.ok(!('description' in result.payload));
-  assert.strictEqual(result.resolvedPrompt, 'Space station maintenance');
 });
 
 test('buildHeadlineRequest accepts every configured category feed', () => {
   for (const feed of CATEGORY_FEED_CONFIG) {
     const result = buildHeadlineRequest({
-      prompt: '',
       keywords: [],
       profileQuery: '',
       profileLanguage: null,
@@ -242,7 +230,6 @@ test('buildHeadlineRequest rejects unsupported categories', () => {
   assert.ok(!CATEGORY_FEED_VALUES.includes(unsupported));
 
   const result = buildHeadlineRequest({
-    prompt: '',
     keywords: [],
     profileQuery: '',
     profileLanguage: null,
