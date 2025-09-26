@@ -3,7 +3,7 @@ import {
   CATEGORY_FEED_SET,
   type CategoryFeedValue,
 } from '../../../constants/categoryFeeds';
-import { openai } from '../../../lib/openai';
+import { getOpenAI } from '../../../lib/openai';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
 const MIN_LIMIT = 1;
@@ -1150,11 +1150,12 @@ function createHeadlinesHandler(
   { fetchImpl, openaiClient, logger }: HeadlinesHandlerDependencies = {}
 ) {
   const requester = fetchImpl ?? fetch;
-  const aiClient = openaiClient ?? openai;
   const log = (logger ?? console) as Pick<typeof console, 'error'>;
 
   return async function handler(req: NextRequest) {
-  let body: HeadlinesRequestBody;
+    const aiClient = openaiClient ?? getOpenAI();
+
+    let body: HeadlinesRequestBody;
   try {
     body = await req.json();
   } catch {

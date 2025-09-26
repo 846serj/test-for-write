@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
-import { openai } from '../../../lib/openai';
+import { getOpenAI } from '../../../lib/openai';
 import { getCenterCropRegion, getCroppedImg } from '../../../utils/imageCrop';
 import { findRecipes } from '../../../lib/findRecipes';
 import type { RecipeResult } from '../../../types/api';
@@ -19,6 +19,8 @@ export async function POST(request: NextRequest) {
     if (!process.env.AIRTABLE_API_KEY || !process.env.AIRTABLE_BASE_ID || !process.env.AIRTABLE_TABLE_NAME) {
       return NextResponse.json({ error: 'Airtable environment variables not configured' }, { status: 500 });
     }
+
+    const openai = getOpenAI();
 
       const baseUrl = `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/${encodeURIComponent(
         process.env.AIRTABLE_TABLE_NAME as string

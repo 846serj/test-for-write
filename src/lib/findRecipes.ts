@@ -1,4 +1,4 @@
-import { openai } from './openai';
+import { getOpenAI } from './openai';
 import { getCachedRecipeEmbeddings } from './recipeEmbeddings';
 import type { RecipeResult } from '../types/api';
 
@@ -16,6 +16,7 @@ export async function findRecipes(
   }
 
   const recipes = await getCachedRecipeEmbeddings();
+  const openai = getOpenAI();
 
   const {
     data: [{ embedding: queryEmbedding }],
