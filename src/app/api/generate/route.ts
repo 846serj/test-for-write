@@ -356,6 +356,7 @@ function getWordBounds(
 // Minimum number of source links to include in generated content
 const MIN_LINKS = 3;
 const STRICT_LINK_RETRY_THRESHOLD = 2;
+const LENGTH_EXPANSION_ATTEMPTS = 2;
 const VERIFICATION_DISCREPANCY_THRESHOLD = 0;
 const VERIFICATION_MAX_SOURCE_FIELD_LENGTH = 600;
 const VERIFICATION_MAX_SOURCES = 8;
@@ -1370,6 +1371,22 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function countWordsFromHtml(html: string): number {
+  if (!html) {
+    return 0;
+  }
+  const withoutTags = html
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&(nbsp|#160);/gi, ' ');
+  const normalized = withoutTags.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return 0;
+  }
+  return normalized.split(' ').length;
+}
+
 interface SourceContext {
   url: string;
   title?: string;
@@ -1481,7 +1498,8 @@ async function generateWithLinks(
   maxTokens = 2000,
   minWords = 0,
   contextualSources: SourceContext[] = [],
-  strictLinking = true
+  strictLinking = true,
+  lengthRetryCount = 0
 ): Promise<string> {
   const limit = MODEL_CONTEXT_LIMITS[model] || 8000;
   const requiredCount = Math.min(Math.max(MIN_LINKS, sources.length), 5);
@@ -1526,7 +1544,7 @@ async function generateWithLinks(
     });
   }
 
-  let content = cleanModelOutput(baseRes.choices[0]?.message?.content);
+  let content = cleanModelOutput(baseRes.choices[0]?.message?.content) || '';
 
   let linkCount = content.match(/<a\s+href=/gi)?.length || 0;
 
@@ -1956,6 +1974,28 @@ async function generateWithLinks(
         linkCount = content.match(/<a\s+href=/gi)?.length || 0;
         missingSources = new Set(findMissingSources(content, requiredSources));
       }
+    }
+  }
+
+  if (minWords > 0) {
+    const wordCount = countWordsFromHtml(content);
+    if (
+      wordCount < minWords &&
+      lengthRetryCount < LENGTH_EXPANSION_ATTEMPTS - 1
+    ) {
+      const expansionPrompt = `${trimmedPrompt}\n\nThe previous draft contained approximately ${wordCount} words, which is below the required minimum of ${minWords}. Regenerate the full article so it meets every instruction above while expanding the coverage to at least ${minWords} words. Add substantive detail and context grounded in the provided sources rather than filler.`;
+      return generateWithLinks(
+        expansionPrompt,
+        model,
+        sources,
+        systemPrompt,
+        minLinks,
+        maxTokens,
+        minWords,
+        contextualSources,
+        strictLinking,
+        lengthRetryCount + 1
+      );
     }
   }
 
