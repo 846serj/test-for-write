@@ -367,7 +367,16 @@ const LENGTH_EXPANSION_ATTEMPTS = 2;
 const VERIFICATION_DISCREPANCY_THRESHOLD = 0;
 const VERIFICATION_MAX_SOURCE_FIELD_LENGTH = 600;
 const VERIFICATION_MAX_SOURCES = 8;
-const VERIFICATION_TIMEOUT_MS = 25_000;
+
+const DEFAULT_GROK_VERIFICATION_TIMEOUT_MS = 9_000;
+const GROK_VERIFICATION_TIMEOUT_MS = (() => {
+  const raw = process.env.GROK_VERIFICATION_TIMEOUT_MS;
+  const parsed = raw ? Number(raw) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : DEFAULT_GROK_VERIFICATION_TIMEOUT_MS;
+})();
+
+const GROK_VERIFICATION_MODEL =
+  process.env.GROK_VERIFICATION_MODEL ?? 'grok-4-mini';
 
 // Low temperature to encourage factual consistency for reporting prompts
 const FACTUAL_TEMPERATURE = 0.2;
@@ -659,13 +668,18 @@ function formatKeyDetails(summary: string | undefined | null): string[] {
   return segments;
 }
 
+type OutlineGenerationResult = {
+  outline: string;
+  grokTimedOut: boolean;
+};
+
 async function generateOutlineWithGrokFallback(
   prompt: string,
   fallbackModel: string,
   temperature = 0.7
-): Promise<string> {
+): Promise<OutlineGenerationResult> {
+  let grokTimedOut = false;
   if (process.env.GROK_API_KEY) {
-    let grokTimedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const grokPromise = grokChatCompletion({
       prompt,
@@ -685,7 +699,8 @@ async function generateOutlineWithGrokFallback(
     });
 
     try {
-      return await Promise.race([grokPromise, timeoutPromise]);
+      const outline = await Promise.race([grokPromise, timeoutPromise]);
+      return { outline, grokTimedOut };
     } catch (err) {
       console.warn('[api/generate] grok outline generation failed, falling back to OpenAI', err);
       if (grokTimedOut) {
@@ -703,7 +718,7 @@ async function generateOutlineWithGrokFallback(
 
   const outline = outlineRes.choices[0]?.message?.content?.trim();
   if (!outline) throw new Error('Outline generation failed');
-  return outline;
+  return { outline, grokTimedOut };
 }
 
 function calcMaxTokens(
@@ -2339,6 +2354,42 @@ function normalizeVerificationSources(
   return normalized;
 }
 
+function isRetriableGrokError(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const match = err.message.match(/status\s+(\d{3})/i);
+  if (!match) {
+    return false;
+  }
+  const status = Number.parseInt(match[1], 10);
+  return Number.isFinite(status) && status >= 500 && status < 600;
+}
+
+async function runGrokVerificationWithRetry(prompt: string): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      return await grokChatCompletion({
+        prompt,
+        temperature: 0,
+        timeoutMs: GROK_VERIFICATION_TIMEOUT_MS,
+        model: GROK_VERIFICATION_MODEL,
+      });
+    } catch (err) {
+      lastError = err;
+      if (attempt < 2 && isRetriableGrokError(err)) {
+        console.warn('[api/generate] verification attempt failed, retrying', err);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Grok verification failed unexpectedly');
+}
+
 async function verifyOutput(
   content: string,
   sources: VerificationSource[]
@@ -2388,12 +2439,7 @@ async function verifyOutput(
   ].join('\n');
 
   try {
-    const response = await grokChatCompletion({
-      prompt,
-      temperature: 0,
-      timeoutMs: VERIFICATION_TIMEOUT_MS,
-      model: process.env.GROK_MODEL,
-    });
+    const response = await runGrokVerificationWithRetry(prompt);
     let parsed: any;
     try {
       parsed = JSON.parse(response);
@@ -2463,15 +2509,23 @@ function applyVerificationIssuesToPrompt(basePrompt: string, issues?: string[]):
   return `${basePrompt}\n\nThe previous draft was flagged for critical factual inaccuracies:\n${formattedIssues}\nRevise the article to resolve every issue without introducing new errors. Only output the corrected HTML article.`;
 }
 
+type VerificationOptions = {
+  skipGrokVerification?: boolean;
+};
+
 async function generateWithVerification(
   generator: (issues?: string[]) => Promise<string>,
   sources: VerificationSource[],
-  fallbackSources: string[] = []
+  fallbackSources: string[] = [],
+  { skipGrokVerification = false }: VerificationOptions = {}
 ): Promise<string> {
   const combinedSources = sources.length
     ? sources
     : fallbackSources.map((url) => ({ url }));
-  const shouldVerify = Boolean(process.env.GROK_API_KEY) && combinedSources.length > 0;
+  const shouldVerify =
+    Boolean(process.env.GROK_API_KEY) &&
+    combinedSources.length > 0 &&
+    !skipGrokVerification;
 
   const initialContent = await generator();
   if (!shouldVerify) {
@@ -2624,7 +2678,7 @@ export async function POST(request: Request) {
         ],
       });
 
-      const outline = await generateOutlineWithGrokFallback(
+      const { outline, grokTimedOut } = await generateOutlineWithGrokFallback(
         baseOutline,
         modelVersion,
         0.6
@@ -2688,7 +2742,8 @@ export async function POST(request: Request) {
             articles
           ),
         articles,
-        newsSources
+        newsSources,
+        { skipGrokVerification: grokTimedOut }
       );
 
       return NextResponse.json({
@@ -2771,7 +2826,7 @@ ${reportingContext}Requirements:
 ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond the provided sources.
 `.trim();
 
-      const outline = await generateOutlineWithGrokFallback(
+      const { outline, grokTimedOut } = await generateOutlineWithGrokFallback(
         outlinePrompt,
         modelVersion,
         0.6
@@ -2868,7 +2923,8 @@ Write the full article in valid HTML below:
             reportingSources
           ),
         reportingSources,
-        linkSources
+        linkSources,
+        { skipGrokVerification: grokTimedOut }
       );
       return NextResponse.json({
         content,
@@ -2907,7 +2963,7 @@ Write the full article in valid HTML below:
       referenceBlock,
     });
 
-    const outline = await generateOutlineWithGrokFallback(
+    const { outline, grokTimedOut } = await generateOutlineWithGrokFallback(
       baseOutline,
       modelVersion
     );
@@ -2981,7 +3037,8 @@ Write the full article in valid HTML below:
           reportingSources
         ),
       reportingSources,
-      linkSources
+      linkSources,
+      { skipGrokVerification: grokTimedOut }
     );
     return NextResponse.json({
       content,
