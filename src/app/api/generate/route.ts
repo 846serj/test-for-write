@@ -108,7 +108,7 @@ You are a professional writer creating a factually accurate, well-structured out
 
 ${reportingContext}Outline requirements:
 • Begin with a section labeled "INTRO:" and include a single bullet with a 2–3 sentence introduction (no <h2>).
-• The INTRO bullet must highlight the most newsworthy concrete facts—names, dates, figures, locations—from the reporting summaries and cite the matching sources instead of offering generic context.
+• The INTRO bullet must highlight the most newsworthy concrete facts—names, figures, locations, and only dates that materially change the story—from the reporting summaries and cite the matching sources instead of offering generic context; if a date is essential, weave it in after the subject rather than opening the intro with it.
 • After the "INTRO:" section, ${sectionInstruction}.
 ${extraBulletBlock}• Under each <h2>, list 2–3 bullet-point subtopics describing what evidence, examples, or angles to cover.
 • Preserve every concrete fact from the reporting block and Key details list—names, dates, figures, locations, quotes—and restate them verbatim within the relevant subtopic bullets rather than summarizing vaguely.
@@ -375,13 +375,14 @@ const MODEL_CONTEXT_LIMITS: Record<string, number> = {
 // Encourage more concrete examples by default
 const DETAIL_INSTRUCTION =
   '- Provide specific real-world examples (e.g., car model years or actual app names) instead of generic placeholders like "App 1".\n' +
-  '- When sources include concrete facts, repeat them precisely: list full names, state exact dates with month/day/year, give unrounded figures, and preserve other specific details.\n' +
+  '- When sources include concrete facts, repeat them precisely: list full names, give unrounded figures, and preserve other specific details; include exact dates only when they materially affect the narrative and are required for clarity.\n' +
   '- Keep official names, model numbers, and other exact designations verbatim when they appear in the sources (e.g., "IL-20" instead of "plane").\n' +
-  '- When summarizing, never replace explicit metrics, named individuals, or timelines with vague substitutes such as "many", "recently", or "officials"—quote the exact figures, dates, and proper nouns provided.\n' +
+  '- When summarizing, never replace explicit metrics, named individuals, or timelines with vague substitutes such as "many", "recently", or "officials"—quote the exact figures, crucial dates, and proper nouns provided.\n' +
+  '- Integrate any necessary dates into sentences after the lead clause (e.g., "Company X said on March 3, 2024") instead of starting paragraphs or sentences with the date.\n' +
   '- Do not speculate or embellish beyond what the sources explicitly provide.\n' +
   '- Treat every "Key details" line in the reporting block as mandatory: restate those exact metrics, names, and timelines in the article body and attribute them to the correct source with an inline citation.\n' +
   '- Each paragraph that introduces a factual statement must contain at least one inline citation tied to a concrete detail such as a number, date, named person, organization, or location, and paragraphs covering multiple facts should cite each one individually.\n' +
-  '- When outlining developments over time, pair each milestone with the exact date or timeframe reported in the sources (e.g., "on March 3, 2024") and cite it inline.\n' +
+  '- When outlining developments over time, pair each essential milestone with the exact date or timeframe reported in the sources (e.g., "on March 3, 2024") and cite it inline while keeping the date after the subject.\n' +
   '- Enumerate every figure, location, and named stakeholder the sources mention instead of collapsing them into a single vague summary—spell them out verbatim and cite them inline.\n' +
   '- Explicitly reference the titles or roles that identify key people or organizations when the sources provide them, and cite the matching link.\n' +
   '- When a source explains impact or stakes (e.g., job losses, funding amounts, geographic coverage), restate those outcomes verbatim with citations rather than summarizing them abstractly.\n' +
@@ -2394,6 +2395,7 @@ export async function POST(request: Request) {
         customInstructionBlock,
         linkInstruction,
         extraRequirements: [
+          'Avoid starting paragraphs with dates and omit dates unless they add essential context; when a date is necessary, place it after the subject rather than leading with it.',
           'Keep the pacing focused on timely developments, clarifying what happened, when, and why it matters now.',
           'Attribute key facts to the appropriate source by linking the relevant URL directly in the text.',
         ],
@@ -2674,6 +2676,9 @@ Write the full article in valid HTML below:
       : '';
 
     const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
+    const extraRequirements = [
+      'Avoid starting paragraphs with dates and omit dates unless they add essential context; when a date is necessary, place it after the subject rather than leading with it.',
+    ];
 
     const articlePrompt = buildArticlePrompt({
       title,
@@ -2685,6 +2690,7 @@ Write the full article in valid HTML below:
       groundingInstruction,
       customInstructionBlock,
       linkInstruction,
+      extraRequirements,
     });
 
     const content = await generateWithVerification(
