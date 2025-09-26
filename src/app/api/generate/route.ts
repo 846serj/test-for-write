@@ -745,6 +745,72 @@ type FetchSourcesOptions = {
   serpParams?: Record<string, string>;
 };
 
+const SOURCE_TOKEN_MIN_LENGTH = 3;
+const SOURCE_MAX_TOKEN_COUNT = 64;
+const SOURCE_MIN_SCORE = 0.2;
+
+function buildSourceTokenSet(
+  ...fields: Array<string | null | undefined>
+): Set<string> {
+  const combined = fields
+    .filter((field): field is string => typeof field === 'string')
+    .join(' ')
+    .toLowerCase();
+
+  if (!combined) {
+    return new Set();
+  }
+
+  const rawTokens = combined
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length >= SOURCE_TOKEN_MIN_LENGTH);
+
+  const tokenSet = new Set<string>();
+  for (const token of rawTokens) {
+    if (!token) {
+      continue;
+    }
+    tokenSet.add(token);
+    if (tokenSet.size >= SOURCE_MAX_TOKEN_COUNT) {
+      break;
+    }
+  }
+
+  return tokenSet;
+}
+
+function computeSourceOverlapScore(
+  headlineTokens: Set<string>,
+  candidateTokens: Set<string>
+): number {
+  if (headlineTokens.size === 0 || candidateTokens.size === 0) {
+    return 0;
+  }
+
+  let intersection = 0;
+  candidateTokens.forEach((token) => {
+    if (headlineTokens.has(token)) {
+      intersection += 1;
+    }
+  });
+
+  if (intersection === 0) {
+    return 0;
+  }
+
+  const precision = intersection / Math.max(1, candidateTokens.size);
+  const recall = intersection / Math.max(1, headlineTokens.size);
+
+  return (2 * precision * recall) / Math.max(precision + recall, Number.EPSILON);
+}
+
+type ScoredReportingSource = ReportingSource & {
+  score: number;
+  publishedTimestamp: number;
+};
+
 async function fetchSources(
   headline: string,
   { maxAgeMs = MAX_SOURCE_WINDOW_MS, serpParams }: FetchSourcesOptions = {}
@@ -753,7 +819,8 @@ async function fetchSources(
   const seenLinks = new Set<string>();
   const seenPublishers = new Set<string>();
   const seenTitles = new Set<string>();
-  const candidateSources: ReportingSource[] = [];
+  const headlineTokens = buildSourceTokenSet(headline);
+  const candidateSources: ScoredReportingSource[] = [];
 
   const newsPromise: Promise<NewsArticle[]> = process.env.NEWS_API_KEY
     ? fetchNewsArticles(headline, false).catch((err) => {
@@ -769,7 +836,7 @@ async function fetchSources(
     query: headline,
     engine: 'google_news',
     extraParams: serpParams ?? { tbs: SERP_14_DAY_TBS },
-    limit: 8,
+    limit: 12,
   });
 
   const [newsArticles, serpResults] = await Promise.all([
@@ -808,11 +875,29 @@ async function fetchSources(
     }
 
     const summary = (article.summary || '').replace(/\s+/g, ' ').trim();
-    const reportingSource: ReportingSource = {
-      title: article.title || 'Untitled',
+    const rawTitle = article.title;
+    const title = rawTitle || 'Untitled';
+    const candidateTokens = buildSourceTokenSet(rawTitle, summary);
+    const hasCandidateTokens = candidateTokens.size > 0;
+    const score = hasCandidateTokens
+      ? computeSourceOverlapScore(headlineTokens, candidateTokens)
+      : 0;
+
+    if (
+      headlineTokens.size > 0 &&
+      hasCandidateTokens &&
+      score < SOURCE_MIN_SCORE
+    ) {
+      continue;
+    }
+
+    const reportingSource: ScoredReportingSource = {
+      title,
       url,
       summary,
       publishedAt: normalizePublishedAt(publishedTimestamp),
+      score,
+      publishedTimestamp,
     };
 
     candidateSources.push(reportingSource);
@@ -854,7 +939,21 @@ async function fetchSources(
     ) {
       continue;
     }
-    const title = result.title || 'Untitled';
+    const rawTitle = result.title;
+    const title = rawTitle || 'Untitled';
+    const candidateTokens = buildSourceTokenSet(rawTitle, summary);
+    const hasCandidateTokens = candidateTokens.size > 0;
+    const score = hasCandidateTokens
+      ? computeSourceOverlapScore(headlineTokens, candidateTokens)
+      : 0;
+
+    if (
+      headlineTokens.size > 0 &&
+      hasCandidateTokens &&
+      score < SOURCE_MIN_SCORE
+    ) {
+      continue;
+    }
 
     seenLinks.add(link);
     seenPublishers.add(publisherId);
@@ -867,6 +966,8 @@ async function fetchSources(
       url: link,
       summary,
       publishedAt: normalizePublishedAt(publishedTimestamp),
+      score,
+      publishedTimestamp,
     });
   }
 
@@ -874,7 +975,19 @@ async function fetchSources(
     return [];
   }
 
-  return candidateSources.slice(0, 5);
+  candidateSources.sort((a, b) => {
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+
+    return b.publishedTimestamp - a.publishedTimestamp;
+  });
+
+  return candidateSources.slice(0, 5).map((candidate) => {
+    const { score: _score, publishedTimestamp: _publishedTimestamp, ...source } =
+      candidate;
+    return source;
+  });
 }
 
 function formatPublishedTimestamp(value: string): string {
@@ -1030,7 +1143,7 @@ async function fetchNewsArticles(
       url.searchParams.set('from', fromIso);
       url.searchParams.set('sortBy', 'publishedAt');
       url.searchParams.set('language', 'en');
-      url.searchParams.set('pageSize', '8');
+      url.searchParams.set('pageSize', '12');
       const resp = await fetch(url, {
         headers: { 'X-Api-Key': newsKey },
       });
