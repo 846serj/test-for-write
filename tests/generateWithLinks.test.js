@@ -45,6 +45,7 @@ ${helperBlock}
 let responses = [];
 let calls = [];
 const openai = { chat: { completions: { create: async (opts) => { calls.push(opts); return responses.shift(); } } } };
+function getOpenAI() { return openai; }
 ${funcMatch[0]}
 export { generateWithLinks, MIN_LINKS, responses, calls, findMissingSources };
 `;

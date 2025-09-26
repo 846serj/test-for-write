@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { openai } from '../../../lib/openai';
+import { getOpenAI } from '../../../lib/openai';
 import { supabaseAdmin } from '../../../lib/supabaseAdmin';
 import {
   buildProfileHeadlineQuery,
@@ -52,6 +52,7 @@ function mapSupabaseError(code: string | undefined) {
 }
 
 async function extractProfile(rawText: string): Promise<NormalizedSiteProfile> {
+  const openai = getOpenAI();
   const response = await openai.chat.completions.create({
     model: MODEL,
     temperature: 0,

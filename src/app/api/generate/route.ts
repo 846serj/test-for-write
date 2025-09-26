@@ -1,6 +1,6 @@
 // route.ts
 import { NextResponse } from 'next/server';
-import { openai } from '../../../lib/openai';
+import { getOpenAI } from '../../../lib/openai';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 import { grokChatCompletion } from '../../../lib/grok';
@@ -710,6 +710,7 @@ async function generateOutlineWithGrokFallback(
 
   }
 
+  const openai = getOpenAI();
   const outlineRes = await openai.chat.completions.create({
     model: fallbackModel,
     messages: [{ role: 'user', content: prompt }],
@@ -1839,6 +1840,7 @@ async function generateWithLinks(
         ]
       : [{ role: 'user' as const, content }];
 
+  const openai = getOpenAI();
   let baseRes = await openai.chat.completions.create({
     model,
     messages: buildMessages(augmentedPrompt),

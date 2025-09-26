@@ -17,6 +17,7 @@ if (!funcMatch) {
 const snippet = `
 let queryEmbedding = [];
 const openai = { embeddings: { create: async () => ({ data: [{ embedding: queryEmbedding }] }) } };
+function getOpenAI() { return openai; }
 let embeddings = [];
 async function getCachedRecipeEmbeddings() { return embeddings; }
 ${funcMatch[0]}

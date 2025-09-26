@@ -20,7 +20,7 @@ import {
   type HeadlineClipboardColumn,
   type HeadlineClipboardFormat,
 } from './headlineClipboardHelpers';
-import type { HeadlineItem } from './types';
+import type { HeadlineItem, RelatedArticle } from './types';
 
 const LANGUAGE_OPTIONS = [
   { value: 'all', label: 'All languages' },

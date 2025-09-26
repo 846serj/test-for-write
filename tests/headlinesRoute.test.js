@@ -10,7 +10,7 @@ const categorySource = fs.readFileSync(categoryConfigPath, 'utf8');
 
 const sanitizedSource = tsSource
   .replace("import { NextRequest, NextResponse } from 'next/server';", '')
-  .replace("import { openai } from '../../../lib/openai';", '')
+  .replace("import { getOpenAI } from '../../../lib/openai';", '')
   .replace(
     "import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';",
     ''
@@ -23,7 +23,7 @@ const sanitizedSource = tsSource
 const snippet = `
 ${categorySource}
 const NextResponse = globalThis.__nextResponse;
-const openai = globalThis.__openai;
+const getOpenAI = () => globalThis.__openai;
 const fetch = globalThis.__fetch;
 const serpapiSearch = (...args) => globalThis.__serpapiSearch(...args);
 type SerpApiResult = any;
