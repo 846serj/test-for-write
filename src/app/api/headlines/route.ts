@@ -697,8 +697,6 @@ async function inferKeywordsAndCategories(
   return { keywords, categories };
 }
 
-type HeadlineSummary = string[];
-
 type RelatedArticle = {
   title: string;
   description: string;
@@ -716,7 +714,6 @@ type NormalizedHeadline = {
 };
 
 type HeadlineResponseEntry = NormalizedHeadline & {
-  summary?: HeadlineSummary;
   relatedArticles?: RelatedArticle[];
   ranking?: HeadlineRankingMetadata;
 };
@@ -1064,300 +1061,19 @@ function rankHeadlineCandidates(
   return scored.map(({ index: _index, ...rest }) => rest);
 }
 
-function condenseText(value: string, maxLength = 400): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  if (!normalized) {
-    return '';
-  }
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
-}
-
-type SummaryClusterArticle = {
-  title: string;
-  source: string;
-  publishedAt: string;
-  url: string;
-  summary: string;
-};
-
-type SummaryClusterInput = {
-  id: string;
-  headline: string;
-  articles: SummaryClusterArticle[];
-};
-
-function buildFallbackBullets(input: SummaryClusterInput): string[] {
-  const seen = new Set<string>();
-  const bullets: string[] = [];
-
-  const pushBullet = (raw: string | undefined, { allowDuplicate = false } = {}) => {
-    if (!raw || bullets.length >= 5) {
-      return;
-    }
-
-    const normalized = raw.replace(/\s+/g, ' ').trim();
-    if (!normalized) {
-      return;
-    }
-
-    const words = normalized.split(/\s+/).filter(Boolean);
-    if (words.length === 0) {
-      return;
-    }
-
-    const truncated = words.slice(0, 30).join(' ');
-    if (!truncated) {
-      return;
-    }
-
-    const key = truncated.toLowerCase();
-    if (!allowDuplicate) {
-      if (seen.has(key)) {
-        return;
-      }
-      seen.add(key);
-    }
-
-    bullets.push(truncated);
-  };
-
-  for (const article of input.articles) {
-    pushBullet(article.summary);
-    if (bullets.length >= 5) {
-      break;
-    }
-  }
-
-  if (bullets.length < 3) {
-    for (const article of input.articles) {
-      pushBullet(article.title);
-      if (bullets.length >= 5) {
-        break;
-      }
-    }
-  }
-
-  const placeholders = [
-    'Detail not provided in source.',
-    'Additional detail not provided in source.',
-    'Further detail not provided in source.',
-  ];
-
-  let placeholderIndex = 0;
-  while (bullets.length < 3 && placeholderIndex < placeholders.length) {
-    pushBullet(placeholders[placeholderIndex], { allowDuplicate: true });
-    placeholderIndex += 1;
-  }
-
-  while (bullets.length < 3 && bullets.length < 5) {
-    pushBullet('Detail not provided in source.', { allowDuplicate: true });
-  }
-
-  return bullets.slice(0, 5);
-}
-
-async function generateClusterSummaries(
-  client: OpenAIClient,
-  clusters: HeadlineCandidate[],
-  log: Pick<typeof console, 'error'>
-): Promise<Record<string, HeadlineSummary>> {
-  if (clusters.length === 0) {
-    return {};
-  }
-
-  const inputs: SummaryClusterInput[] = clusters.map((cluster, index) => {
-    const id = `item-${index}`;
-    const collected: SummaryClusterArticle[] = [];
-    const sources: RelatedArticle[] = [
-      {
-        title: cluster.data.title,
-        description: cluster.data.description,
-        url: cluster.data.url,
-        source: cluster.data.source,
-        publishedAt: cluster.data.publishedAt,
-      },
-      ...cluster.related,
-    ];
-
-    for (const article of sources) {
-      const snippet = condenseText(article.description || article.title || '');
-      if (!snippet) {
-        continue;
-      }
-      collected.push({
-        title: article.title,
-        source: article.source,
-        publishedAt: article.publishedAt,
-        url: article.url,
-        summary: snippet,
-      });
-      if (collected.length >= 6) {
-        break;
-      }
-    }
-
-    if (collected.length === 0) {
-      const fallbackTitle = cluster.data.title.trim() || 'Untitled report';
-      collected.push({
-        title: fallbackTitle,
-        source: cluster.data.source,
-        publishedAt: cluster.data.publishedAt,
-        url: cluster.data.url,
-        summary:
-          condenseText(cluster.data.description) ||
-          condenseText(fallbackTitle) ||
-          fallbackTitle,
-      });
-    }
-
-    return {
-      id,
-      headline: cluster.data.title,
-      articles: collected,
-    };
-  });
-
-  const serialized = JSON.stringify(inputs, null, 2);
-
-  const fallbackSummaries = new Map<string, string[]>();
-  for (const input of inputs) {
-    fallbackSummaries.set(input.id, buildFallbackBullets(input));
-  }
-
-  const systemPrompt = `You are a news summarizer. Summarize the article TEXT into 3–5 factual bullets.
-Rules:
-- Only include facts found in TEXT. Do not guess or infer.
-- Include concrete numbers (dates, counts, prices, specs) when present.
-- No opinions or hype. No adjectives like "stunning", "groundbreaking".
-- If critical details are missing, say "Detail not provided in source."
-- Keep each bullet ≤ 30 words.`;
-
-  let content = '';
-  try {
-    const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: systemPrompt,
-        },
-        {
-          role: 'user',
-          content:
-            'Summarize each news cluster strictly as JSON {"<cluster-id>": string[]}.' +
-            '\nFollow the rules above using the provided TEXT for each cluster. No extra commentary.\n\n' +
-            serialized,
-        },
-      ],
-      temperature: 0.2,
-      max_tokens: 600,
-    });
-
-    content = response.choices?.[0]?.message?.content?.trim() ?? '';
-  } catch (error) {
-    log.error('[api/headlines] summarization request failed', error);
-    return {};
-  }
-
-  if (!content) {
-    return {};
-  }
-
-  const cleaned = content.replace(/```json|```/g, '').trim();
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch (error) {
-    log.error('[api/headlines] failed to parse summarization response', error);
-    return {};
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return {};
-  }
-
-  const result: Record<string, HeadlineSummary> = {};
-
-  for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
-    const bulletSource = Array.isArray(value)
-      ? value
-      : value && typeof value === 'object' && Array.isArray((value as any).bullets)
-      ? (value as any).bullets
-      : [];
-
-    if (!Array.isArray(bulletSource)) {
-      continue;
-    }
-
-    const normalizedBullets = bulletSource
-      .map((entry: unknown) => {
-        if (typeof entry === 'string') {
-          return entry;
-        }
-        if (entry === null || entry === undefined) {
-          return '';
-        }
-        return String(entry);
-      })
-      .map((entry: string) => entry.replace(/\s+/g, ' ').trim())
-      .filter((entry: string) => {
-        if (!entry) {
-          return false;
-        }
-        const words = entry.split(/\s+/).filter(Boolean);
-        return words.length > 0 && words.length <= 30;
-      })
-      .slice(0, 5);
-
-    if (normalizedBullets.length < 3) {
-      const fallback = fallbackSummaries.get(id);
-      if (fallback && fallback.length >= 3) {
-        result[id] = [...fallback];
-      }
-      continue;
-    }
-
-    result[id] = normalizedBullets;
-  }
-
-  for (const input of inputs) {
-    if (!result[input.id] || result[input.id].length < 3) {
-      const fallback = fallbackSummaries.get(input.id);
-      if (fallback && fallback.length >= 3) {
-        result[input.id] = [...fallback];
-      }
-    }
-  }
-
-  return result;
-}
-
-async function buildHeadlineResponses(
-  ranked: RankedHeadlineCandidate[],
-  client: OpenAIClient,
-  log: Pick<typeof console, 'error'>
-): Promise<HeadlineResponseEntry[]> {
+function buildHeadlineResponses(
+  ranked: RankedHeadlineCandidate[]
+): HeadlineResponseEntry[] {
   if (ranked.length === 0) {
     return [];
   }
 
-  const candidates = ranked.map((entry) => entry.candidate);
-  const summaries = await generateClusterSummaries(client, candidates, log);
-
-  return ranked.map((entry, index) => {
+  return ranked.map((entry) => {
     const { candidate, ranking } = entry;
-    const summaryBullets = summaries[`item-${index}`];
-    const summary =
-      Array.isArray(summaryBullets) && summaryBullets.length > 0
-        ? [...summaryBullets]
+    const relatedArticles =
+      candidate.related.length > 0
+        ? candidate.related.map((article) => ({ ...article }))
         : undefined;
-    const relatedArticles = candidate.related.length > 0
-      ? candidate.related.map((article) => ({ ...article }))
-      : undefined;
 
     return {
       title: candidate.data.title,
@@ -1365,7 +1081,6 @@ async function buildHeadlineResponses(
       url: candidate.data.url,
       source: candidate.data.source,
       publishedAt: candidate.data.publishedAt,
-      summary,
       relatedArticles,
       ranking,
     };
@@ -1723,14 +1438,10 @@ function createHeadlinesHandler(
 
     const rankedCandidates = rankHeadlineCandidates(aggregatedHeadlines);
     const topRanked = rankedCandidates.slice(0, limit);
-    const headlinesWithSummaries = await buildHeadlineResponses(
-      topRanked,
-      aiClient,
-      log
-    );
+    const headlineEntries = buildHeadlineResponses(topRanked);
 
     const payload: Record<string, unknown> = {
-      headlines: headlinesWithSummaries,
+      headlines: headlineEntries,
       totalResults: aggregatedHeadlines.length,
       queriesAttempted,
       successfulQueries: 1,
@@ -2055,14 +1766,10 @@ function createHeadlinesHandler(
 
   const rankedCandidates = rankHeadlineCandidates(aggregatedHeadlines);
   const topRanked = rankedCandidates.slice(0, limit);
-  const headlinesWithSummaries = await buildHeadlineResponses(
-    topRanked,
-    aiClient,
-    log
-  );
+  const headlineEntries = buildHeadlineResponses(topRanked);
 
   const payload: Record<string, unknown> = {
-    headlines: headlinesWithSummaries,
+    headlines: headlineEntries,
     totalResults: aggregatedHeadlines.length,
     queriesAttempted,
     successfulQueries,

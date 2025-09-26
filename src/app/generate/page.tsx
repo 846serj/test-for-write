@@ -12,7 +12,6 @@ import { DEFAULT_WORDS, WORD_RANGES } from '../../constants/lengthOptions';
 import {
   buildHeadlineRequest,
   normalizeKeywordInput,
-  normalizeSummaryBullets,
   SEARCH_IN_ORDER,
 } from './headlineFormHelpers';
 
@@ -112,8 +111,6 @@ const TOP_HEADLINE_COUNTRY_OPTIONS = [
   { value: 'za', label: 'South Africa' },
 ];
 
-type HeadlineSummary = string[];
-
 type RelatedArticle = {
   title?: string;
   description?: string;
@@ -129,7 +126,6 @@ type HeadlineItem = {
   publishedAt?: string;
   description?: string;
   matchedQuery?: string;
-  summary?: HeadlineSummary;
   relatedArticles?: RelatedArticle[];
 };
 
@@ -545,10 +541,6 @@ export default function GeneratePage() {
             ? item.source
             : item.source?.name ?? item.source?.title ?? '';
 
-        const summaryBullets = normalizeSummaryBullets(item?.summary);
-        const summary: HeadlineSummary | undefined =
-          summaryBullets.length > 0 ? summaryBullets : undefined;
-
         const relatedArticles: RelatedArticle[] = Array.isArray(item?.relatedArticles)
           ? item.relatedArticles
               .map((related: any) => {
@@ -589,8 +581,6 @@ export default function GeneratePage() {
             ? item.description
             : typeof item.snippet === 'string'
             ? item.snippet
-            : typeof item.summary === 'string'
-            ? item.summary
             : '';
 
         return {
@@ -611,7 +601,6 @@ export default function GeneratePage() {
               : typeof item.searchQuery === 'string'
               ? item.searchQuery
               : undefined,
-          summary,
           relatedArticles: relatedArticles.length > 0 ? relatedArticles : undefined,
         };
       });
@@ -1233,42 +1222,28 @@ export default function GeneratePage() {
                       <tr>
                         <th
                           scope="col"
-                          className="w-1/3 min-w-[12rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
+                          className="w-1/2 min-w-[12rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
                         >
                           Headline
                         </th>
                         <th
                           scope="col"
-                          className="w-1/4 min-w-[10rem] max-w-[14rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
+                          className="w-1/2 min-w-[10rem] max-w-[20rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
                         >
                           Original Link
-                        </th>
-                        <th
-                          scope="col"
-                          className="w-5/12 min-w-[16rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
-                        >
-                          Summary
                         </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                       {headlineResults.map((headline, index) => {
                         const headlineUrl = headline.url;
-                        const bulletText = Array.isArray(headline.summary)
-                          ? headline.summary
-                              .map((bullet) => bullet?.trim())
-                              .filter(Boolean)
-                              .map((bullet) => `• ${bullet}`)
-                              .join('\n')
-                          : '';
-                        const resolvedSummary = bulletText;
 
                         return (
                           <tr
                             key={headlineUrl || index}
                             className="odd:bg-white even:bg-gray-50 dark:odd:bg-gray-900 dark:even:bg-gray-800"
                           >
-                            <td className="w-1/3 min-w-[12rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
+                            <td className="w-1/2 min-w-[12rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
                               <div className="font-semibold">
                                 {headline.title || 'Untitled headline'}
                               </div>
@@ -1340,7 +1315,7 @@ export default function GeneratePage() {
                                 </div>
                               ) : null}
                             </td>
-                            <td className="w-1/4 min-w-[10rem] max-w-[14rem] align-top break-words px-4 py-3 text-sm">
+                            <td className="w-1/2 min-w-[10rem] max-w-[20rem] align-top break-words px-4 py-3 text-sm">
                               {headlineUrl ? (
                                 <a
                                   href={headlineUrl}
@@ -1353,13 +1328,6 @@ export default function GeneratePage() {
                               ) : (
                                 <span className="text-gray-500 dark:text-gray-400">
                                   No link available
-                                </span>
-                              )}
-                            </td>
-                            <td className="w-5/12 min-w-[16rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-line">
-                              {resolvedSummary || (
-                                <span className="text-gray-500 dark:text-gray-400">
-                                  No summary available
                                 </span>
                               )}
                             </td>
