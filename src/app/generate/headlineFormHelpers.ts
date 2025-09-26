@@ -80,51 +80,6 @@ export function normalizeKeywordInput(value: string): string[] {
   return normalized;
 }
 
-export function normalizeSummaryBullets(value: unknown): string[] {
-  const bulletSource = Array.isArray(value)
-    ? value
-    : value && typeof value === 'object' && Array.isArray((value as any).bullets)
-    ? (value as any).bullets
-    : [];
-
-  if (!Array.isArray(bulletSource)) {
-    return [];
-  }
-
-  const normalized: string[] = [];
-
-  for (const entry of bulletSource) {
-    let text = '';
-    if (typeof entry === 'string') {
-      text = entry;
-    } else if (entry !== null && entry !== undefined) {
-      text = String(entry);
-    }
-
-    const condensed = text.replace(/\s+/g, ' ').trim();
-    if (!condensed) {
-      continue;
-    }
-
-    const words = condensed.split(/\s+/).filter(Boolean);
-    if (words.length === 0) {
-      continue;
-    }
-
-    const truncated = words.slice(0, 30).join(' ');
-    if (!truncated) {
-      continue;
-    }
-
-    normalized.push(truncated);
-    if (normalized.length >= 5) {
-      break;
-    }
-  }
-
-  return normalized;
-}
-
 function clampDateValue(value: string) {
   const trimmed = value.trim();
   if (!trimmed) {

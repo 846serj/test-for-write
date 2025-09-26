@@ -21,7 +21,7 @@ const sanitizedHelpersSource = tsSource
 const snippet = `
 ${categorySource}
 ${sanitizedHelpersSource}
-export { normalizeKeywordInput, buildHeadlineRequest, normalizeSummaryBullets, CATEGORY_FEED_CONFIG, CATEGORY_FEED_VALUES };
+export { normalizeKeywordInput, buildHeadlineRequest, CATEGORY_FEED_CONFIG, CATEGORY_FEED_VALUES };
 `;
 
 const jsCode = ts
@@ -35,7 +35,6 @@ const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString(
 const {
   normalizeKeywordInput,
   buildHeadlineRequest,
-  normalizeSummaryBullets,
   CATEGORY_FEED_CONFIG,
   CATEGORY_FEED_VALUES,
 } = await import(moduleUrl);
@@ -43,37 +42,6 @@ const {
 test('normalizeKeywordInput deduplicates mixed separators while preserving order', () => {
   const result = normalizeKeywordInput('AI, robotics\nAI, space exploration\nSpace Exploration');
   assert.deepStrictEqual(result, ['AI', 'robotics', 'space exploration']);
-});
-
-test('normalizeSummaryBullets preserves structured fallback bullet lists', () => {
-  const raw = {
-    bullets: [
-      '  Local council approves community center funding after months of debate.  ',
-      'Community center funding approved Tuesday evening by a 5-4 vote following months of public comment and budget negotiations across the district leadership board members.',
-      'Detail not provided in source.',
-      '',
-    ],
-  };
-
-  const result = normalizeSummaryBullets(raw);
-  assert.strictEqual(result.length, 3);
-  assert.strictEqual(
-    result[0],
-    'Local council approves community center funding after months of debate.'
-  );
-  assert.ok(result[1].startsWith('Community center funding approved Tuesday evening'));
-  const secondWords = result[1].split(/\s+/).filter(Boolean);
-  assert.ok(secondWords.length <= 30);
-  assert.strictEqual(result[2], 'Detail not provided in source.');
-  for (const bullet of result) {
-    const words = bullet.split(/\s+/).filter(Boolean);
-    assert.ok(words.length > 0 && words.length <= 30);
-  }
-});
-
-test('normalizeSummaryBullets returns empty array for non-list values', () => {
-  assert.deepStrictEqual(normalizeSummaryBullets('single summary string'), []);
-  assert.deepStrictEqual(normalizeSummaryBullets(null), []);
 });
 
 test('buildHeadlineRequest enforces keywords or category', () => {

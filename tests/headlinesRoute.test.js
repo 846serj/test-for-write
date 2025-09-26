@@ -188,7 +188,7 @@ test('infers keywords when only a description is provided', async () => {
   assert.strictEqual(response.status, 200);
   const body = await response.json();
 
-  assert.strictEqual(openaiCalls.length, 2);
+  assert.strictEqual(openaiCalls.length, 1);
   assert.ok(openaiCalls[0].messages?.[1]?.content.includes(description));
   assert.deepStrictEqual(body.inferredKeywords, [
     'Focus',
@@ -205,6 +205,9 @@ test('infers keywords when only a description is provided', async () => {
   assert.strictEqual(body.successfulQueries, 1);
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
+  for (const headline of body.headlines) {
+    assert.ok(!('summary' in headline));
+  }
 });
 
 test('aggregates deduplicated results for derived keyword query', async () => {
@@ -290,6 +293,9 @@ test('aggregates deduplicated results for derived keyword query', async () => {
   assert.strictEqual(body.successfulQueries, 1);
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
+  for (const headline of body.headlines) {
+    assert.ok(!('summary' in headline));
+  }
   assert.deepStrictEqual(
     body.headlines
       .map((item) => item.url)
@@ -545,209 +551,11 @@ test('continues paging when earlier results include duplicates', async () => {
   ]);
 });
 
-test('retains later valid summary bullets after filtering oversized entries', async () => {
-  const invalidBullet =
-    'This intentionally verbose bullet contains far more than thirty individual words because it keeps rambling about hypothetical developments in international markets without ever stopping for clarity or concision at all today.';
-  const validBullets = [
-    'Launch officials confirm three satellites reached orbit Monday.',
-    'Mission timeline notes refueling operations begin Friday at Cape Canaveral.',
-    'Agency says public updates will stream hourly via dedicated portal.',
-  ];
-
-  globalThis.__fetchImpl = async (input) => {
-    const url = new URL(input.toString());
-    assert.strictEqual(url.searchParams.get('q'), 'orbital science');
-    return {
-      ok: true,
-      status: 200,
-      headers: {
-        get(name) {
-          return name === 'content-type' ? 'application/json' : null;
-        },
-      },
-      async json() {
-        return {
-          status: 'ok',
-          articles: [
-            {
-              title: 'Orbital science milestone',
-              description: 'Agencies report orbital science milestone details.',
-              url: 'https://example.com/orbital',
-              source: { name: 'Science Journal' },
-              publishedAt: '2024-05-01T00:00:00Z',
-            },
-          ],
-        };
-      },
-      async text() {
-        return JSON.stringify({
-          status: 'ok',
-          articles: [
-            {
-              title: 'Orbital science milestone',
-              description: 'Agencies report orbital science milestone details.',
-              url: 'https://example.com/orbital',
-              source: { name: 'Science Journal' },
-              publishedAt: '2024-05-01T00:00:00Z',
-            },
-          ],
-        });
-      },
-    };
-  };
-
-  let openaiCalls = 0;
-  globalThis.__openaiCreate = async (options) => {
-    openaiCalls += 1;
-    const userContent = options?.messages?.[1]?.content ?? '';
-    assert.ok(
-      typeof userContent === 'string' &&
-        userContent.includes('Summarize each news cluster strictly as JSON'),
-      'expected summarization request'
-    );
-
-    return {
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              'item-0': [
-                invalidBullet,
-                invalidBullet,
-                invalidBullet,
-                invalidBullet,
-                invalidBullet,
-                ...validBullets,
-              ],
-            }),
-          },
-        },
-      ],
-    };
-  };
-
-  const handler = createHeadlinesHandler({ logger: { error() {} } });
-  const response = await handler(createRequest({ query: 'orbital science', limit: 1 }));
-
-  assert.strictEqual(response.status, 200);
-  const body = await response.json();
-  assert.strictEqual(openaiCalls, 1);
-  assert.strictEqual(body.headlines.length, 1);
-  const summary = body.headlines[0].summary;
-  assert.deepStrictEqual(summary, validBullets);
-  for (const bullet of summary) {
-    const words = bullet.split(/\s+/).filter(Boolean);
-    assert.ok(words.length > 0 && words.length <= 30);
-  }
-});
-
-test('builds structured fallback bullets when llm output is insufficient', async () => {
-  globalThis.__fetchImpl = async (input) => {
-    const url = new URL(input.toString());
-    assert.strictEqual(url.searchParams.get('q'), 'community funding');
-    return {
-      ok: true,
-      status: 200,
-      headers: {
-        get(name) {
-          return name === 'content-type' ? 'application/json' : null;
-        },
-      },
-      async json() {
-        return {
-          status: 'ok',
-          articles: [
-            {
-              title: 'Community center funding approved',
-              description:
-                'Local council approves community center funding after months of debate.',
-              url: 'https://example.com/community',
-              source: { name: 'City Herald' },
-              publishedAt: '2024-06-11T00:00:00Z',
-            },
-          ],
-        };
-      },
-      async text() {
-        return JSON.stringify({
-          status: 'ok',
-          articles: [
-            {
-              title: 'Community center funding approved',
-              description:
-                'Local council approves community center funding after months of debate.',
-              url: 'https://example.com/community',
-              source: { name: 'City Herald' },
-              publishedAt: '2024-06-11T00:00:00Z',
-            },
-          ],
-        });
-      },
-    };
-  };
-
-  let openaiCalls = 0;
-  globalThis.__openaiCreate = async (options) => {
-    openaiCalls += 1;
-    const userContent = options?.messages?.[1]?.content ?? '';
-    assert.ok(
-      typeof userContent === 'string' &&
-        userContent.includes('Summarize each news cluster strictly as JSON'),
-      'expected summarization request'
-    );
-
-    return {
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              'item-0': ['Single bullet provided by llm.'],
-            }),
-          },
-        },
-      ],
-    };
-  };
-
-  const handler = createHeadlinesHandler({ logger: { error() {} } });
-  const response = await handler(createRequest({ query: 'community funding', limit: 1 }));
-
-  assert.strictEqual(response.status, 200);
-  const body = await response.json();
-  assert.strictEqual(openaiCalls, 1);
-  assert.strictEqual(body.headlines.length, 1);
-  const summary = body.headlines[0].summary;
-  assert.deepStrictEqual(summary, [
-    'Local council approves community center funding after months of debate.',
-    'Community center funding approved',
-    'Detail not provided in source.',
-  ]);
-  for (const bullet of summary) {
-    const words = bullet.split(/\s+/).filter(Boolean);
-    assert.ok(words.length > 0 && words.length <= 30);
-  }
-});
-
 test('builds keyword query without OpenAI assistance', async () => {
   let openaiCalls = 0;
-  globalThis.__openaiCreate = async (options) => {
+  globalThis.__openaiCreate = async () => {
     openaiCalls += 1;
-    const userContent = options?.messages?.[1]?.content ?? '';
-    assert.ok(
-      typeof userContent === 'string' &&
-        userContent.includes('Summarize each news cluster strictly as JSON'),
-      'expected only summarization requests'
-    );
-
-    return {
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({ 'item-0': [] }),
-          },
-        },
-      ],
-    };
+    throw new Error('openai should not be called for direct keyword searches');
   };
 
   const keywordQuery = '"renewable energy" AND investment';
@@ -800,7 +608,10 @@ test('builds keyword query without OpenAI assistance', async () => {
   assert.strictEqual(body.successfulQueries, 1);
   assert.strictEqual(body.totalResults, 2);
   assert.strictEqual(body.headlines.length, 2);
-  assert.strictEqual(openaiCalls, 1);
+  for (const headline of body.headlines) {
+    assert.ok(!('summary' in headline));
+  }
+  assert.strictEqual(openaiCalls, 0);
 });
 
 test('falls back to SERP with a default time filter when NewsAPI has no results', async () => {
