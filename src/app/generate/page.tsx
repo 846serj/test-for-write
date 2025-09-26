@@ -14,6 +14,13 @@ import {
   normalizeKeywordInput,
   SEARCH_IN_ORDER,
 } from './headlineFormHelpers';
+import {
+  formatHeadlinesForClipboard,
+  HEADLINE_CLIPBOARD_HEADERS,
+  type HeadlineClipboardColumn,
+  type HeadlineClipboardFormat,
+} from './headlineClipboardHelpers';
+import type { HeadlineItem } from './types';
 
 const LANGUAGE_OPTIONS = [
   { value: 'all', label: 'All languages' },
@@ -111,22 +118,22 @@ const TOP_HEADLINE_COUNTRY_OPTIONS = [
   { value: 'za', label: 'South Africa' },
 ];
 
-type RelatedArticle = {
-  title?: string;
-  description?: string;
-  url?: string;
-  source?: string;
-  publishedAt?: string;
-};
+const HEADLINE_COPY_COLUMN_OPTIONS: {
+  value: HeadlineClipboardColumn;
+  label: string;
+}[] = [
+  { value: 'all', label: 'All columns' },
+  { value: 'title', label: HEADLINE_CLIPBOARD_HEADERS.title },
+  {
+    value: 'sourcePublished',
+    label: HEADLINE_CLIPBOARD_HEADERS.sourcePublished,
+  },
+  { value: 'url', label: HEADLINE_CLIPBOARD_HEADERS.url },
+];
 
-type HeadlineItem = {
-  title: string;
-  source?: string;
-  url?: string;
-  publishedAt?: string;
-  description?: string;
-  matchedQuery?: string;
-  relatedArticles?: RelatedArticle[];
+const HEADLINE_COPY_FORMAT_LABELS: Record<HeadlineClipboardFormat, string> = {
+  csv: 'CSV',
+  tsv: 'tab-separated text',
 };
 
 export default function GeneratePage() {
@@ -197,6 +204,66 @@ export default function GeneratePage() {
   const [headlineCategory, setHeadlineCategory] = useState('');
   const [headlineCountry, setHeadlineCountry] = useState('');
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [selectedCopyColumn, setSelectedCopyColumn] =
+    useState<HeadlineClipboardColumn>('all');
+  const [copyFeedback, setCopyFeedback] = useState<
+    | {
+        type: 'success' | 'error';
+        message: string;
+      }
+    | null
+  >(null);
+
+  useEffect(() => {
+    setCopyFeedback(null);
+  }, [headlineResults]);
+
+  const handleCopyHeadlines = async (format: HeadlineClipboardFormat) => {
+    setCopyFeedback(null);
+
+    const clipboardText = formatHeadlinesForClipboard(headlineResults, {
+      column: selectedCopyColumn,
+      format,
+    });
+
+    if (!clipboardText) {
+      setCopyFeedback({
+        type: 'error',
+        message: 'No headline data available to copy.',
+      });
+      return;
+    }
+
+    if (
+      typeof navigator === 'undefined' ||
+      !navigator.clipboard ||
+      typeof navigator.clipboard.writeText !== 'function'
+    ) {
+      setCopyFeedback({
+        type: 'error',
+        message: 'Clipboard copying is not supported in this browser.',
+      });
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(clipboardText);
+      const selectionLabel =
+        selectedCopyColumn === 'all'
+          ? 'all columns'
+          : HEADLINE_CLIPBOARD_HEADERS[selectedCopyColumn];
+      const formatLabel = HEADLINE_COPY_FORMAT_LABELS[format];
+      setCopyFeedback({
+        type: 'success',
+        message: `Copied ${selectionLabel} as ${formatLabel}.`,
+      });
+    } catch (error) {
+      setCopyFeedback({
+        type: 'error',
+        message: 'Failed to copy to clipboard. Try again.',
+      });
+    }
+  };
 
   const keywordsDisabled = headlineCategory.trim().length > 0;
 
@@ -1216,6 +1283,62 @@ export default function GeneratePage() {
             {headlineResults.length > 0 && (
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">Headlines</h2>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <label
+                      htmlFor="copy-column-select"
+                      className="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Copy selection
+                    </label>
+                    <select
+                      id="copy-column-select"
+                      value={selectedCopyColumn}
+                      onChange={(event) =>
+                        setSelectedCopyColumn(
+                          event.target.value as HeadlineClipboardColumn
+                        )
+                      }
+                      className="block rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-blue-400 dark:focus:ring-blue-400"
+                    >
+                      {HEADLINE_COPY_COLUMN_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyHeadlines('tsv')}
+                      className="inline-flex items-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
+                    >
+                      Copy as TSV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyHeadlines('csv')}
+                      className="inline-flex items-center rounded-md border border-blue-600 px-4 py-2 text-sm font-semibold text-blue-600 transition hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-blue-500 dark:text-blue-300 dark:hover:bg-blue-900/40 dark:focus:ring-offset-gray-900"
+                    >
+                      Copy as CSV
+                    </button>
+                  </div>
+                </div>
+                {copyFeedback && (
+                  <p
+                    className={clsx(
+                      'text-sm',
+                      copyFeedback.type === 'success'
+                        ? 'text-green-600 dark:text-green-400'
+                        : 'text-red-500 dark:text-red-400'
+                    )}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {copyFeedback.message}
+                  </p>
+                )}
                 <div className="overflow-x-auto">
                   <table className="min-w-full table-auto divide-y divide-gray-200 dark:divide-gray-700">
                     <thead className="bg-gray-100 dark:bg-gray-800">
