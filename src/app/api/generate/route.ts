@@ -8,6 +8,13 @@ import { grokChatCompletion } from '../../../lib/grok';
 export const runtime = 'edge';
 export const revalidate = 0;
 
+const DEFAULT_GROK_OUTLINE_TIMEOUT_MS = 9000;
+const GROK_OUTLINE_TIMEOUT_MS = (() => {
+  const raw = process.env.GROK_OUTLINE_TIMEOUT_MS;
+  const parsed = raw ? Number(raw) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : DEFAULT_GROK_OUTLINE_TIMEOUT_MS;
+})();
+
 interface NewsArticle {
   title: string;
   url: string;
@@ -658,14 +665,32 @@ async function generateOutlineWithGrokFallback(
   temperature = 0.7
 ): Promise<string> {
   if (process.env.GROK_API_KEY) {
+    let grokTimedOut = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const grokPromise = grokChatCompletion({
+      prompt,
+      temperature,
+      model: process.env.GROK_MODEL,
+      timeoutMs: GROK_OUTLINE_TIMEOUT_MS,
+    }).finally(() => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    });
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        grokTimedOut = true;
+        reject(new Error('Grok outline generation timed out'));
+      }, GROK_OUTLINE_TIMEOUT_MS);
+    });
+
     try {
-      return await grokChatCompletion({
-        prompt,
-        temperature,
-        model: process.env.GROK_MODEL,
-      });
+      return await Promise.race([grokPromise, timeoutPromise]);
     } catch (err) {
       console.warn('[api/generate] grok outline generation failed, falling back to OpenAI', err);
+      if (grokTimedOut) {
+        grokPromise.catch(() => {});
+      }
     }
 
   }
