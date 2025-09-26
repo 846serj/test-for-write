@@ -1372,6 +1372,13 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function stripHtmlTags(value: string): string {
+  if (!value) {
+    return '';
+  }
+  return value.replace(/<[^>]*>/g, ' ');
+}
+
 function countWordsFromHtml(html: string): number {
   if (!html) {
     return 0;
@@ -1392,6 +1399,153 @@ interface SourceContext {
   url: string;
   title?: string;
   summary?: string;
+}
+
+interface SectionStats {
+  heading: string;
+  start: number;
+  end: number;
+  paragraphCount: number;
+  wordCount: number;
+}
+
+interface ArticleStructure {
+  intro: {
+    paragraphCount: number;
+    wordCount: number;
+  };
+  sections: SectionStats[];
+}
+
+const MIN_PARAGRAPHS_PER_SECTION = 2;
+const UNDER_DEVELOPED_WORD_THRESHOLD = 120;
+
+function analyzeArticleStructure(html: string): ArticleStructure {
+  const headingRegex = /<h2[^>]*>([\s\S]*?)<\/h2>/gi;
+  const matches: Array<{ heading: string; index: number; endOfHeading: number }> = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = headingRegex.exec(html)) !== null) {
+    const headingHtml = match[1] ?? '';
+    const headingText = stripHtmlTags(headingHtml).replace(/\s+/g, ' ').trim();
+    matches.push({
+      heading: headingText,
+      index: match.index,
+      endOfHeading: match.index + match[0].length,
+    });
+  }
+
+  const firstHeadingIndex = matches.length > 0 ? matches[0].index : html.length;
+  const introHtml = html.slice(0, firstHeadingIndex);
+  const introParagraphCount = (introHtml.match(/<p\b[^>]*>[\s\S]*?<\/p>/gi) ?? []).length;
+  const introWordCount = countWordsFromHtml(introHtml);
+
+  const sections: SectionStats[] = [];
+  for (let i = 0; i < matches.length; i += 1) {
+    const current = matches[i];
+    const nextStart = i + 1 < matches.length ? matches[i + 1].index : html.length;
+    const sectionHtml = html.slice(current.endOfHeading, nextStart);
+    const paragraphCount = (sectionHtml.match(/<p\b[^>]*>[\s\S]*?<\/p>/gi) ?? []).length;
+    const wordCount = countWordsFromHtml(sectionHtml);
+    sections.push({
+      heading: current.heading,
+      start: current.endOfHeading,
+      end: nextStart,
+      paragraphCount,
+      wordCount,
+    });
+  }
+
+  return {
+    intro: {
+      paragraphCount: introParagraphCount,
+      wordCount: introWordCount,
+    },
+    sections,
+  };
+}
+
+interface SectionExpansion {
+  heading: string;
+  html: string;
+}
+
+function parseExpansionResponse(raw: string): SectionExpansion[] {
+  if (!raw) {
+    return [];
+  }
+
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed || !Array.isArray(parsed.expansions)) {
+      return [];
+    }
+
+    return parsed.expansions
+      .map((entry: any) => {
+        if (!entry) {
+          return null;
+        }
+        const heading = typeof entry.heading === 'string' ? entry.heading.trim() : '';
+        const html = typeof entry.html === 'string' ? entry.html.trim() : '';
+        if (!heading || !html) {
+          return null;
+        }
+        return { heading, html } as SectionExpansion;
+      })
+      .filter((entry: SectionExpansion | null): entry is SectionExpansion => Boolean(entry));
+  } catch {
+    return [];
+  }
+}
+
+function applySectionExpansions(
+  originalContent: string,
+  expansions: SectionExpansion[]
+): string {
+  let content = originalContent;
+
+  for (const expansion of expansions) {
+    const addition = expansion.html?.trim();
+    const heading = expansion.heading?.trim();
+    if (!addition || !heading) {
+      continue;
+    }
+
+    if (heading === '__INTRO__') {
+      const firstHeadingMatch = content.match(/<h2[^>]*>/i);
+      const insertIndex = firstHeadingMatch?.index ?? content.length;
+      const before = content.slice(0, insertIndex);
+      const after = content.slice(insertIndex);
+      const joiner = before.endsWith('\n') || addition.startsWith('<') ? '' : '\n';
+      content = `${before}${joiner}${addition}${after}`;
+      continue;
+    }
+
+    const structure = analyzeArticleStructure(content);
+    const normalizedTarget = heading.replace(/\s+/g, ' ').trim().toLowerCase();
+    const targetSection = structure.sections.find(
+      (section) => section.heading.replace(/\s+/g, ' ').trim().toLowerCase() === normalizedTarget
+    );
+
+    if (!targetSection) {
+      const joiner = content.endsWith('\n') || addition.startsWith('<') ? '' : '\n';
+      content = `${content}${joiner}${addition}`;
+      continue;
+    }
+
+    const before = content.slice(0, targetSection.end);
+    const after = content.slice(targetSection.end);
+    const joiner = before.endsWith('\n') || addition.startsWith('<') ? '' : '\n';
+    content = `${before}${joiner}${addition}${after}`;
+  }
+
+  return content;
 }
 
 interface KeywordEntry {
@@ -1507,8 +1661,9 @@ async function generateWithLinks(
   const requiredSources = sources.slice(0, requiredCount);
   const trimmedPrompt = prompt.trim();
   let augmentedPrompt = trimmedPrompt;
+  let reminderList: string | null = null;
   if (requiredSources.length > 0) {
-    const reminderList = requiredSources
+    reminderList = requiredSources
       .map((source, index) => `${index + 1}. ${source}`)
       .join('\n');
     const totalLinksNeeded = Math.max(minLinks, requiredSources.length);
@@ -1549,7 +1704,13 @@ async function generateWithLinks(
 
   let linkCount = content.match(/<a\s+href=/gi)?.length || 0;
 
-  if (requiredSources.length > 0) {
+  const runLinkAndCitationRepair = async () => {
+    linkCount = content.match(/<a\s+href=/gi)?.length || 0;
+
+    if (requiredSources.length === 0) {
+      return;
+    }
+
     let missingSources = new Set(findMissingSources(content, requiredSources));
     const MAX_LINKS = 5;
 
@@ -1976,27 +2137,105 @@ async function generateWithLinks(
         missingSources = new Set(findMissingSources(content, requiredSources));
       }
     }
-  }
+  };
+
+  await runLinkAndCitationRepair();
 
   if (minWords > 0) {
-    const wordCount = countWordsFromHtml(content);
-    if (
-      wordCount < minWords &&
-      lengthRetryCount < LENGTH_EXPANSION_ATTEMPTS - 1
-    ) {
-      const expansionPrompt = `${trimmedPrompt}\n\nThe previous draft contained approximately ${wordCount} words, which is below the required minimum of ${minWords}. Regenerate the full article so it meets every instruction above while expanding the coverage to at least ${minWords} words. Add substantive detail and context grounded in the provided sources rather than filler.`;
-      return generateWithLinks(
-        expansionPrompt,
-        model,
-        sources,
-        systemPrompt,
-        minLinks,
-        maxTokens,
-        minWords,
-        contextualSources,
-        strictLinking,
-        lengthRetryCount + 1
+    let wordCount = countWordsFromHtml(content);
+    let attempts = lengthRetryCount;
+    const maxAttempts = Math.max(0, LENGTH_EXPANSION_ATTEMPTS - 1);
+
+    while (wordCount < minWords && attempts < maxAttempts) {
+      const structure = analyzeArticleStructure(content);
+      const underDeveloped = structure.sections.filter(
+        (section) =>
+          section.paragraphCount < MIN_PARAGRAPHS_PER_SECTION ||
+          section.wordCount < UNDER_DEVELOPED_WORD_THRESHOLD
       );
+
+      const underDevelopedSummary = underDeveloped.length
+        ? underDeveloped
+            .map(
+              (section) =>
+                `- "${section.heading || 'Untitled section'}": ${section.paragraphCount} paragraphs / ${section.wordCount} words`
+            )
+            .join('\n')
+        : '- No <h2> sections met the under-developed threshold; add grounded detail where it best strengthens the reporting.';
+
+      const promptSections = [
+        'You are refining an existing article so it meets its required length without changing tone or structure.',
+        '',
+        `Minimum words: ${minWords}. Current words: ${wordCount}.`,
+        '',
+        'Sections needing more depth (fewer than 2 paragraphs or under 120 words):',
+        underDevelopedSummary,
+        '',
+        'Current article HTML (do not rewrite existing sentences; only add new grounded paragraphs that belong in the listed sections):',
+        content.trim(),
+        '',
+        'Instructions:',
+        '- Append new paragraphs that expand the highlighted sections with concrete, source-grounded facts.',
+        '- Preserve the current tone, point of view, and hyperlink formatting.',
+        '- Do not repeat or delete existing material.',
+        '- Reuse the existing source URLs; do not invent new links.',
+        '- Return valid JSON exactly matching {"expansions":[{"heading":"Existing <h2> text or __INTRO__","html":"<p>...</p>"}]} with double quotes.',
+        '- Only include entries for sections that actually receive new content.',
+        '- Ensure the appended paragraphs will bring the article above the minimum word count.'
+      ];
+
+      if (reminderList) {
+        promptSections.push(
+          '',
+          'Required sources (keep cited exactly once each):',
+          reminderList
+        );
+      }
+
+      const expansionPrompt = promptSections.join('\n');
+      let expansionTokens = Math.min(
+        Math.max(600, Math.ceil(Math.max(0, minWords - wordCount) * 2)),
+        limit
+      );
+
+      let expansionRes = await openai.chat.completions.create({
+        model,
+        messages: buildMessages(expansionPrompt),
+        temperature: FACTUAL_TEMPERATURE,
+        max_tokens: expansionTokens,
+      });
+
+      if (
+        expansionRes.choices[0]?.finish_reason === 'length' &&
+        expansionTokens < limit
+      ) {
+        expansionTokens = limit;
+        expansionRes = await openai.chat.completions.create({
+          model,
+          messages: buildMessages(expansionPrompt),
+          temperature: FACTUAL_TEMPERATURE,
+          max_tokens: expansionTokens,
+        });
+      }
+
+      const expansionContent = cleanModelOutput(
+        expansionRes.choices[0]?.message?.content
+      )?.trim();
+      const expansions = parseExpansionResponse(expansionContent || '');
+
+      if (!expansions.length) {
+        break;
+      }
+
+      const updatedContent = applySectionExpansions(content, expansions);
+      if (updatedContent === content) {
+        break;
+      }
+
+      content = updatedContent;
+      await runLinkAndCitationRepair();
+      wordCount = countWordsFromHtml(content);
+      attempts += 1;
     }
   }
 
