@@ -5,7 +5,7 @@ type GrokChatCompletionOptions = {
   timeoutMs?: number;
 };
 
-const DEFAULT_GROK_MODEL = 'grok-4';
+const DEFAULT_GROK_MODEL = process.env.GROK_MODEL ?? 'grok-4-fast-reasoning';
 
 interface GrokChatCompletionResponse {
   choices?: Array<{
