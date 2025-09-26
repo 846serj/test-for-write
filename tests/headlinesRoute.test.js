@@ -117,30 +117,6 @@ test('infers keywords when only a description is provided', async () => {
   const openaiCalls = [];
   globalThis.__openaiCreate = async (options) => {
     openaiCalls.push(options);
-    if (openaiCalls.length === 1) {
-      return {
-        choices: [
-          {
-            message: {
-              content: '{}',
-            },
-          },
-        ],
-      };
-    }
-
-    if (openaiCalls.length === 2) {
-      return {
-        choices: [
-          {
-            message: {
-              content: '["AI robotics AND \\\"health tech\\\""]',
-            },
-          },
-        ],
-      };
-    }
-
     return {
       choices: [
         {
@@ -153,9 +129,8 @@ test('infers keywords when only a description is provided', async () => {
   };
 
   const fetchCalls = [];
-  const descriptionQuery =
-    'Focus on technology-driven AI robotics transforming hospital care.';
-  const keywordQuery = 'AI robotics AND "health tech"';
+  const keywordQuery =
+    'Focus AND technology AND driven AND robotics AND transforming';
   globalThis.__fetchImpl = async (input) => {
     const url = new URL(input.toString());
     fetchCalls.push({
@@ -164,8 +139,7 @@ test('infers keywords when only a description is provided', async () => {
       page: Number(url.searchParams.get('page')),
     });
 
-    const query = url.searchParams.get('q') || '';
-    const articles = query === descriptionQuery ? [] : [
+    const articles = [
       {
         title: 'AI robotics breakthrough',
         description: 'desc1',
@@ -214,7 +188,7 @@ test('infers keywords when only a description is provided', async () => {
   assert.strictEqual(response.status, 200);
   const body = await response.json();
 
-  assert.strictEqual(openaiCalls.length, 3);
+  assert.strictEqual(openaiCalls.length, 2);
   assert.ok(openaiCalls[0].messages?.[1]?.content.includes(description));
   assert.deepStrictEqual(body.inferredKeywords, [
     'Focus',
@@ -233,25 +207,15 @@ test('infers keywords when only a description is provided', async () => {
   assert.strictEqual(body.headlines.length, 3);
 });
 
-test('aggregates deduplicated results for keyword expansions', async () => {
-  const openaiCalls = [];
-  globalThis.__openaiCreate = async (options) => {
-    openaiCalls.push(options);
-    return {
-      choices: [
-        {
-          message: {
-            content:
-              '["robotics AND \\\"AI\\\"","AI healthcare OR \\\"medical robotics\\\""]',
-          },
-        },
-      ],
-    };
+test('aggregates deduplicated results for derived keyword query', async () => {
+  globalThis.__openaiCreate = async () => {
+    throw new Error('should not call openai');
   };
 
+  const keywordQuery = 'AI AND Robotics AND healthcare';
   const responses = new Map([
     [
-      'robotics AND "AI"',
+      `${keywordQuery}|1`,
       [
         {
           title: 'Robotic surgeons',
@@ -267,18 +231,18 @@ test('aggregates deduplicated results for keyword expansions', async () => {
           source: { name: 'Source B' },
           publishedAt: '2024-01-02T00:00:00Z',
         },
+        {
+          title: 'Duplicate entry',
+          description: 'Duplicate entry for deduplication test',
+          url: 'https://example.com/1',
+          source: { name: 'Source A' },
+          publishedAt: '2024-01-01T00:00:00Z',
+        },
       ],
     ],
     [
-      'AI healthcare OR "medical robotics"',
+      `${keywordQuery}|2`,
       [
-        {
-          title: 'AI in hospitals',
-          description: 'Hospitals adopt AI for patient care',
-          url: 'https://example.com/2',
-          source: { name: 'Source B' },
-          publishedAt: '2024-01-02T00:00:00Z',
-        },
         {
           title: 'Care robots expand',
           description: 'Care robots enter more clinics',
@@ -297,7 +261,7 @@ test('aggregates deduplicated results for keyword expansions', async () => {
     const pageSize = Number(url.searchParams.get('pageSize'));
     const page = Number(url.searchParams.get('page'));
     fetchCalls.push({ query, pageSize, page });
-    const articles = responses.get(query) ?? [];
+    const articles = responses.get(`${query}|${page}`) ?? [];
     return {
       ok: true,
       status: 200,
@@ -322,15 +286,8 @@ test('aggregates deduplicated results for keyword expansions', async () => {
 
   assert.strictEqual(response.status, 200);
   const body = await response.json();
-  const expansionCalls = openaiCalls.filter((options) =>
-    options?.messages?.[1]?.content?.includes('Convert the following keywords')
-  );
-  assert.strictEqual(expansionCalls.length, 1);
-  assert.deepStrictEqual(
-    body.queriesAttempted,
-    ['robotics AND "AI"', 'AI healthcare OR "medical robotics"']
-  );
-  assert.strictEqual(body.successfulQueries, 2);
+  assert.deepStrictEqual(body.queriesAttempted, [keywordQuery]);
+  assert.strictEqual(body.successfulQueries, 1);
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
   assert.deepStrictEqual(
@@ -341,28 +298,19 @@ test('aggregates deduplicated results for keyword expansions', async () => {
       .sort()
   );
   assert.deepStrictEqual(fetchCalls, [
-    { query: 'robotics AND "AI"', pageSize: 2, page: 1 },
-    { query: 'robotics AND "AI"', pageSize: 1, page: 2 },
-    { query: 'AI healthcare OR "medical robotics"', pageSize: 1, page: 1 },
+    { query: keywordQuery, pageSize: 3, page: 1 },
+    { query: keywordQuery, pageSize: 1, page: 2 },
   ]);
 });
 
-test('continues fetching additional keyword queries until the limit is satisfied', async () => {
+test('combines query and keyword string to reach the limit', async () => {
   globalThis.__openaiCreate = async () => {
-    return {
-      choices: [
-        {
-          message: {
-            content: '["biology breakthroughs","space exploration"]',
-          },
-        },
-      ],
-    };
+    throw new Error('should not call openai');
   };
 
   const responses = new Map([
     [
-      'innovation',
+      'innovation|1',
       [
         {
           title: 'Innovation leaps ahead',
@@ -380,16 +328,10 @@ test('continues fetching additional keyword queries until the limit is satisfied
         },
       ],
     ],
+    ['innovation|2', []],
     [
-      'biology breakthroughs',
+      'biology AND space|1',
       [
-        {
-          title: 'Innovation leaps ahead',
-          description: 'Innovation leaps ahead globally',
-          url: 'https://example.com/a',
-          source: { name: 'Source A' },
-          publishedAt: '2024-01-01T00:00:00Z',
-        },
         {
           title: 'Genome editing milestones',
           description: 'Genome editing reaches new milestones',
@@ -397,24 +339,12 @@ test('continues fetching additional keyword queries until the limit is satisfied
           source: { name: 'Source C' },
           publishedAt: '2024-01-03T00:00:00Z',
         },
-      ],
-    ],
-    [
-      'space exploration',
-      [
         {
           title: 'Mars mission update',
           description: 'Mars mission update released',
           url: 'https://example.com/d',
           source: { name: 'Source D' },
           publishedAt: '2024-01-04T00:00:00Z',
-        },
-        {
-          title: 'Europa lander preparations',
-          description: 'Europa lander preparations advance',
-          url: 'https://example.com/e',
-          source: { name: 'Source E' },
-          publishedAt: '2024-01-05T00:00:00Z',
         },
       ],
     ],
@@ -427,7 +357,7 @@ test('continues fetching additional keyword queries until the limit is satisfied
     const pageSize = Number(url.searchParams.get('pageSize'));
     const page = Number(url.searchParams.get('page'));
     fetchCalls.push({ query, pageSize, page });
-    const articles = responses.get(query) ?? [];
+    const articles = responses.get(`${query}|${page}`) ?? [];
     return {
       ok: true,
       status: 200,
@@ -454,17 +384,14 @@ test('continues fetching additional keyword queries until the limit is satisfied
   const body = await response.json();
   assert.deepStrictEqual(body.queriesAttempted, [
     'innovation',
-    'biology breakthroughs',
-    'space exploration',
+    'biology AND space',
   ]);
   assert.deepStrictEqual(fetchCalls, [
     { query: 'innovation', pageSize: 2, page: 1 },
     { query: 'innovation', pageSize: 2, page: 2 },
-    { query: 'biology breakthroughs', pageSize: 2, page: 1 },
-    { query: 'biology breakthroughs', pageSize: 1, page: 2 },
-    { query: 'space exploration', pageSize: 1, page: 1 },
+    { query: 'biology AND space', pageSize: 2, page: 1 },
   ]);
-  assert.strictEqual(body.successfulQueries, 3);
+  assert.strictEqual(body.successfulQueries, 2);
   assert.strictEqual(body.totalResults, 4);
   assert.deepStrictEqual(
     body.headlines
@@ -532,7 +459,7 @@ test('continues paging when earlier results include duplicates', async () => {
       ],
     ],
     [
-      'second focus|1',
+      '"second focus"|1',
       [
         {
           title: 'Alpha insight',
@@ -551,7 +478,7 @@ test('continues paging when earlier results include duplicates', async () => {
       ],
     ],
     [
-      'second focus|2',
+      '"second focus"|2',
       [
         {
           title: 'Delta forecast',
@@ -596,7 +523,7 @@ test('continues paging when earlier results include duplicates', async () => {
 
   assert.strictEqual(response.status, 200);
   const body = await response.json();
-  assert.deepStrictEqual(body.queriesAttempted, ['first spotlight', 'second focus']);
+  assert.deepStrictEqual(body.queriesAttempted, ['first spotlight', '"second focus"']);
   assert.strictEqual(body.successfulQueries, 2);
   assert.strictEqual(body.totalResults, 4);
   assert.deepStrictEqual(
@@ -613,8 +540,8 @@ test('continues paging when earlier results include duplicates', async () => {
   assert.deepStrictEqual(fetchCalls, [
     { query: 'first spotlight', pageSize: 2, page: 1 },
     { query: 'first spotlight', pageSize: 2, page: 2 },
-    { query: 'second focus', pageSize: 2, page: 1 },
-    { query: 'second focus', pageSize: 1, page: 2 },
+    { query: '"second focus"', pageSize: 2, page: 1 },
+    { query: '"second focus"', pageSize: 1, page: 2 },
   ]);
 });
 
@@ -801,24 +728,79 @@ test('builds structured fallback bullets when llm output is insufficient', async
   }
 });
 
-test('surfaces expansion failures from OpenAI', async () => {
-  globalThis.__openaiCreate = async () => {
-    throw new Error('boom');
+test('builds keyword query without OpenAI assistance', async () => {
+  let openaiCalls = 0;
+  globalThis.__openaiCreate = async (options) => {
+    openaiCalls += 1;
+    const userContent = options?.messages?.[1]?.content ?? '';
+    assert.ok(
+      typeof userContent === 'string' &&
+        userContent.includes('Summarize each news cluster strictly as JSON'),
+      'expected only summarization requests'
+    );
+
+    return {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ 'item-0': [] }),
+          },
+        },
+      ],
+    };
   };
 
-  const fetchInvocations = [];
-  globalThis.__fetchImpl = async (...args) => {
-    fetchInvocations.push(args);
-    throw new Error('should not reach fetch');
+  const keywordQuery = '"renewable energy" AND investment';
+  globalThis.__fetchImpl = async (input) => {
+    const url = new URL(input.toString());
+    assert.strictEqual(url.searchParams.get('q'), keywordQuery);
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get(name) {
+          return name === 'content-type' ? 'application/json' : null;
+        },
+      },
+      async json() {
+        return {
+          status: 'ok',
+          articles: [
+            {
+              title: 'Renewable energy investments climb',
+              description: 'Investments in renewable energy climb globally.',
+              url: 'https://example.com/renewable',
+              source: { name: 'Energy Daily' },
+              publishedAt: '2024-07-01T00:00:00Z',
+            },
+            {
+              title: 'Solar funding surges',
+              description: 'Solar funding surges across multiple markets.',
+              url: 'https://example.com/solar',
+              source: { name: 'Solar Journal' },
+              publishedAt: '2024-07-02T00:00:00Z',
+            },
+          ],
+        };
+      },
+      async text() {
+        return JSON.stringify({ status: 'ok', articles: [] });
+      },
+    };
   };
 
   const handler = createHeadlinesHandler({ logger: { error() {} } });
-  const response = await handler(createRequest({ keywords: ['economy'] }));
+  const response = await handler(
+    createRequest({ keywords: ['renewable energy', 'investment'], limit: 2 })
+  );
 
-  assert.strictEqual(response.status, 502);
+  assert.strictEqual(response.status, 200);
   const body = await response.json();
-  assert.strictEqual(body.error, 'Failed to expand keyword searches');
-  assert.strictEqual(fetchInvocations.length, 0);
+  assert.deepStrictEqual(body.queriesAttempted, [keywordQuery]);
+  assert.strictEqual(body.successfulQueries, 1);
+  assert.strictEqual(body.totalResults, 2);
+  assert.strictEqual(body.headlines.length, 2);
+  assert.strictEqual(openaiCalls, 1);
 });
 
 test('falls back to SERP with a default time filter when NewsAPI has no results', async () => {
