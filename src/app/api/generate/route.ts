@@ -76,11 +76,11 @@ const SERP_14_DAY_TBS = 'qdr:d14';
 const MAX_FUTURE_DRIFT_MS = 5 * MILLIS_IN_MINUTE;
 
 const sectionRanges: Record<string, [number, number]> = {
-  shorter: [2, 4],
+  shorter: [2, 3],
   short: [3, 5],
-  medium: [4, 6],
-  longForm: [5, 7],
-  longer: [6, 8],
+  medium: [5, 7],
+  longForm: [7, 10],
+  longer: [10, 12],
 };
 
 type OutlinePromptOptions = {
@@ -163,11 +163,11 @@ ${reportingSection}${toneInstruction}${povInstruction}Requirements:
   - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
   - For each <h2> in the outline, write 2–3 paragraphs under it.
   - Keep every section anchored to the authoritative reporting summaries provided so each paragraph reflects accurate, highly relevant sourcing.
-${extraRequirementBlock}  - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
+  ${extraRequirementBlock}  - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
   - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}
+  ${DETAIL_INSTRUCTION}${customInstructionBlock}${groundingInstruction}${linkInstruction}
   - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
   - Do NOT invent sources, links, or information not present in the provided reporting.
 
@@ -2526,7 +2526,7 @@ ${reportingSection}${toneInstruction}${povInstruction}Requirements:
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
   - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${groundingInstruction}${customInstructionBlock}${linkInstruction}  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
+  ${DETAIL_INSTRUCTION}${customInstructionBlock}${groundingInstruction}${linkInstruction}  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
   - Do NOT invent sources or links.
 
 Write the full article in valid HTML below:
