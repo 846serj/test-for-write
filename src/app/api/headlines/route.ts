@@ -433,44 +433,6 @@ function normalizeKeywords(raw: unknown): string[] {
   return normalized;
 }
 
-function parseGeneratedQueries(raw: string): string[] {
-  if (!raw) {
-    return [];
-  }
-
-  const attemptParse = (text: string) => {
-    try {
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed)) {
-        return parsed
-          .map((value) => (typeof value === 'string' ? value.trim() : ''))
-          .filter(Boolean);
-      }
-    } catch {
-      // ignore parse failure
-    }
-    return [];
-  };
-
-  const direct = attemptParse(raw);
-  if (direct.length > 0) {
-    return direct;
-  }
-
-  const bracketMatch = raw.match(/\[[\s\S]*\]/);
-  if (bracketMatch) {
-    const nested = attemptParse(bracketMatch[0]);
-    if (nested.length > 0) {
-      return nested;
-    }
-  }
-
-  return raw
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^[\s*-•]+/, '').trim())
-    .filter(Boolean);
-}
-
 function normalizeStringList(
   values: unknown,
   {
@@ -733,51 +695,6 @@ async function inferKeywordsAndCategories(
   }
 
   return { keywords, categories };
-}
-
-async function generateKeywordQueries(
-  client: OpenAIClient,
-  keywords: string[],
-  requestedLimit: number
-): Promise<string[]> {
-  const maxSuggestions = Math.min(5, Math.max(1, Math.ceil(requestedLimit / 3)));
-  const systemPrompt =
-    'You convert curated keyword lists into complementary NewsAPI search strings. Each query should be ready for the "q" parameter, make use of phrase quoting and Boolean operators, and encourage coverage from distinct angles.';
-  const userPrompt = `Convert the following keywords into ${maxSuggestions} or fewer NewsAPI search strings. ` +
-    'Create variations that explore breaking developments, analytical or research-heavy coverage, and human impact or business implications when they make sense. ' +
-    'Use operators like AND, OR, and parentheses to pair or contrast the provided ideas, and prefer double quotes around multi-word phrases. ' +
-    'Respond with a JSON array of strings only. Keywords:\n' +
-    keywords.map((keyword, index) => `${index + 1}. ${keyword}`).join('\n');
-
-  const response = await client.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    temperature: 0.4,
-    max_tokens: 200,
-  });
-
-  const content =
-    response.choices?.[0]?.message?.content?.trim() ?? '';
-  const parsed = parseGeneratedQueries(content);
-
-  const unique = Array.from(new Set(parsed.map((value) => value.trim()).filter(Boolean)));
-
-  if (unique.length > 0) {
-    return unique.slice(0, 10);
-  }
-
-  if (keywords.length === 1) {
-    return [`"${keywords[0]}"`];
-  }
-
-  return [
-    keywords
-      .map((keyword) => (keyword.includes(' ') ? `"${keyword}"` : keyword))
-      .join(' AND '),
-  ];
 }
 
 type HeadlineSummary = string[];
@@ -1842,28 +1759,26 @@ function createHeadlinesHandler(
     return NextResponse.json(payload);
   }
 
-  let keywordQueries: string[] = [];
-  if (keywords.length > 0) {
-    try {
-      keywordQueries = await generateKeywordQueries(aiClient, keywords, limit);
-    } catch (error) {
-      log.error('[api/headlines] keyword expansion failed', error);
-      return NextResponse.json(
-        { error: 'Failed to expand keyword searches' },
-        { status: 502 }
-      );
-    }
-  }
-
   const searchQueryCandidates: string[] = [];
 
   if (query) {
     searchQueryCandidates.push(query);
   }
 
-  if (keywordQueries.length > 0) {
-    searchQueryCandidates.push(...keywordQueries);
-  } else if (!query && description) {
+  let keywordQuery: string | null = null;
+  if (keywords.length > 0) {
+    keywordQuery = keywords
+      .map((keyword) => keyword.trim())
+      .filter(Boolean)
+      .map((keyword) => (/\s/.test(keyword) ? `"${keyword}"` : keyword))
+      .join(' AND ');
+  }
+
+  if (keywordQuery) {
+    searchQueryCandidates.push(keywordQuery);
+  }
+
+  if (searchQueryCandidates.length === 0 && description) {
     const sanitized = sanitizeDescriptionQuery(description);
     if (sanitized) {
       searchQueryCandidates.push(sanitized);
@@ -1879,11 +1794,16 @@ function createHeadlinesHandler(
   );
 
   if (searchQueries.length === 0) {
-    searchQueries.push(
-      keywords
-        .map((keyword) => (keyword.includes(' ') ? `"${keyword}"` : keyword))
-        .join(' AND ')
-    );
+    const fallback = keywordQuery;
+
+    if (fallback) {
+      searchQueries.push(fallback);
+    } else if (description) {
+      const sanitized = sanitizeDescriptionQuery(description);
+      if (sanitized) {
+        searchQueries.push(sanitized);
+      }
+    }
   }
 
   const buildUrl = (q: string, pageSize: number, page = 1) => {
