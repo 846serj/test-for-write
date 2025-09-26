@@ -10,6 +10,9 @@ const minLinksMatch = tsCode.match(/const MIN_LINKS = \d+;/);
 const strictRetryMatch = tsCode.match(
   /const STRICT_LINK_RETRY_THRESHOLD = \d+;/
 );
+const lengthExpansionMatch = tsCode.match(
+  /const LENGTH_EXPANSION_ATTEMPTS = \d+;/
+);
 const factualTempMatch = tsCode.match(/const FACTUAL_TEMPERATURE\s*=\s*[^;]+;/);
 const modelLimitsMatch = tsCode.match(/const MODEL_CONTEXT_LIMITS[\s\S]*?};/);
 const normalizeTitleMatch = tsCode.match(/function normalizeTitleValue[\s\S]*?\n\}/);
@@ -30,6 +33,7 @@ const funcMatch = tsCode.match(/async function generateWithLinks[\s\S]*?\n\}/);
 const snippet = `
 ${minLinksMatch[0]}
 ${strictRetryMatch[0]}
+${lengthExpansionMatch[0]}
 ${factualTempMatch[0]}
 ${modelLimitsMatch[0]}
 ${normalizeTitleMatch[0]}
@@ -261,6 +265,33 @@ test('generateWithLinks retries when response is truncated', async () => {
     assert.strictEqual(call.messages.length, 1);
     assert.strictEqual(call.messages[0].role, 'user');
   }
+});
+
+test('generateWithLinks issues a follow-up when content is below minWords', async () => {
+  calls.length = 0;
+  responses.length = 0;
+  responses.push(
+    { choices: [{ message: { content: '<p>Too short.</p>' }, finish_reason: 'stop' }] },
+    {
+      choices: [
+        {
+          message: {
+            content:
+              '<p>This revised article now includes sufficient detail, analysis, and corroborated facts to satisfy the minimum word requirement.</p>',
+          },
+        },
+      ],
+    }
+  );
+
+  const content = await generateWithLinks('base prompt', 'model', [], undefined, 0, 200, 100);
+  assert.strictEqual(responses.length, 0);
+  assert.strictEqual(calls.length, 2);
+  assert.strictEqual(content.includes('revised article now includes'), true);
+  const followUpPrompt = calls[1].messages[0].content;
+  assert(followUpPrompt.includes('The previous draft contained approximately'));
+  assert(followUpPrompt.includes('at least 100 words'));
+  assert(followUpPrompt.includes('base prompt'));
 });
 
 test('findMissingSources detects uncited URLs even with encoded hrefs', () => {
