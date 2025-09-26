@@ -29,7 +29,7 @@ saved footer before creating the draft post.
 
 ## Grok configuration
 
-The Grok integration uses the `grok-4-fast-reasoning` model by default in
+The Grok integration uses the `grok-3-mini` model by default in
 production. Set the `GROK_MODEL` environment variable to override the model
 without touching the codebase. See `.env.example` for the expected format.
 

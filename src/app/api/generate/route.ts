@@ -376,7 +376,7 @@ const GROK_VERIFICATION_TIMEOUT_MS = (() => {
 })();
 
 const GROK_VERIFICATION_MODEL =
-  process.env.GROK_VERIFICATION_MODEL ?? 'grok-4-fast-reasoning';
+  process.env.GROK_VERIFICATION_MODEL ?? 'grok-3-mini';
 
 // Low temperature to encourage factual consistency for reporting prompts
 const FACTUAL_TEMPERATURE = 0.2;
