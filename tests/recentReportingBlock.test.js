@@ -99,7 +99,7 @@ const block = buildRecentReportingBlock(items);
 export { block };
 `;
   const { block } = await transpile(snippet);
-  assert(block.includes('Key reporting to reference:'));
+  assert(block.includes('Key facts from recent reporting'));
   assert(block.includes('"Alpha" (2024-05-01T12:00:00.000Z)'));
   assert(block.includes('Summary: First summary'));
   assert(block.includes('URL: https://alpha.test'));
@@ -151,7 +151,7 @@ ${promptSnippet}
 export { articlePrompt, reportingBlock, groundingInstruction };
 `;
   const { articlePrompt, reportingBlock, groundingInstruction } = await transpile(snippet);
-  assert(articlePrompt.includes('Key reporting to reference:'));
+  assert(articlePrompt.includes('Key facts from recent reporting'));
   assert(articlePrompt.includes('Key developments about the topic.'));
   assert(articlePrompt.includes('https://news.test/sample'));
   assert(articlePrompt.includes('Base every factual statement on the reporting summaries provided and cite the matching URL'));
@@ -160,7 +160,10 @@ export { articlePrompt, reportingBlock, groundingInstruction };
     articlePrompt.includes('accurate, highly relevant sourcing'),
     'Listicle prompt should emphasize accurate, highly relevant sourcing.'
   );
-  assert.strictEqual(reportingBlock.trim().startsWith('Key reporting to reference:'), true);
+  assert.strictEqual(
+    reportingBlock.trim().startsWith('Key facts from recent reporting'),
+    true
+  );
   assert.strictEqual(groundingInstruction.includes('cite the matching URL'), true);
 });
 
@@ -207,7 +210,7 @@ test('blog prompt injects reporting block and grounding instruction', async () =
     "export { articlePrompt };",
   ].join('\n');
   const { articlePrompt } = await transpile(snippet);
-  assert(articlePrompt.includes('Key reporting to reference:'));
+  assert(articlePrompt.includes('Key facts from recent reporting'));
   assert(
     articlePrompt.includes('authoritative reporting summaries provided'),
     'Blog prompt should reinforce authoritative reporting context.'
@@ -223,15 +226,16 @@ test('blog prompt injects reporting block and grounding instruction', async () =
 test('news prompt default references DEFAULT_WORDS and keeps full min bound', () => {
   const newsBlock = extractNewsBlock();
   assert(
-    /~\$\{DEFAULT_WORDS\.toLocaleString\(\)\} words total/.test(newsBlock),
+    /target roughly \$\{DEFAULT_WORDS\.toLocaleString\(\)\} words total/.test(
+      newsBlock
+    ),
     'News default length instruction should reference DEFAULT_WORDS.'
   );
-  const minWordsMatch = newsBlock.match(/const minWords =([^;]+);/);
-  assert(minWordsMatch, 'News branch should set a minWords value.');
-  const minWordsExpression = minWordsMatch[1].replace(/\s+/g, ' ').trim();
-  assert.strictEqual(
-    minWordsExpression,
-    'minBound',
-    'News minWords should equal the lower bound from getWordBounds.'
+  const minWordsMatch = newsBlock.match(
+    /const \[minWords, maxWords\] = getWordBounds\(lengthOption, customSections\);/
+  );
+  assert(
+    minWordsMatch,
+    'News branch should read minWords directly from getWordBounds.'
   );
 });
