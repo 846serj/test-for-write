@@ -1027,7 +1027,7 @@ function buildRecentReportingBlock(sources: ReportingSource[]): string {
     })
     .join('\n');
 
-  return `Key reporting to reference:\n${entries}`;
+  return `Key facts from recent reporting (weave them into the narrative; do not write standalone paragraphs about the outlets, and treat the URLs as attribution only):\n${entries}`;
 }
 
 function normalizePublisher(result: SerpApiResult): string | null {
@@ -2834,6 +2834,7 @@ export async function POST(request: Request) {
           'Avoid starting paragraphs with dates and omit dates unless they add essential context; when a date is necessary, place it after the subject rather than leading with it.',
           'Keep the pacing focused on timely developments, clarifying what happened, when, and why it matters now.',
           'Attribute key facts to the appropriate source by linking the relevant URL directly in the text.',
+          'Center each section on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.',
         ],
       });
 
@@ -3008,6 +3009,7 @@ ${reportingSection}${toneInstruction}${povInstruction}Requirements:
   ${lengthInstruction}${numberingInstruction}${wordCountInstruction}${customInstructionBlock}  - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
   - For each <h2> in the outline, write 2–3 paragraphs under it.
   - Keep every section anchored to the authoritative reporting summaries provided so each paragraph reflects accurate, highly relevant sourcing.
+  - Center each list item on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.
   - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
   - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
   - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
@@ -3122,6 +3124,7 @@ Write the full article in valid HTML below:
     const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
     const extraRequirements = [
       'Avoid starting paragraphs with dates and omit dates unless they add essential context; when a date is necessary, place it after the subject rather than leading with it.',
+      'Center each section on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.',
     ];
 
     const articlePrompt = buildArticlePrompt({
