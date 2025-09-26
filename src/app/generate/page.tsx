@@ -1217,18 +1217,24 @@ export default function GeneratePage() {
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">Headlines</h2>
                 <div className="overflow-x-auto">
-                  <table className="min-w-full table-fixed divide-y divide-gray-200 dark:divide-gray-700">
+                  <table className="min-w-full table-auto divide-y divide-gray-200 dark:divide-gray-700">
                     <thead className="bg-gray-100 dark:bg-gray-800">
                       <tr>
                         <th
                           scope="col"
-                          className="w-1/2 min-w-[12rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
+                          className="min-w-[14rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[45%]"
                         >
                           Headline
                         </th>
                         <th
                           scope="col"
-                          className="w-1/2 min-w-[10rem] max-w-[20rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100"
+                          className="min-w-[11rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[30%]"
+                        >
+                          Source &amp; Published
+                        </th>
+                        <th
+                          scope="col"
+                          className="min-w-[12rem] max-w-[20rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[25%]"
                         >
                           Original Link
                         </th>
@@ -1237,27 +1243,28 @@ export default function GeneratePage() {
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                       {headlineResults.map((headline, index) => {
                         const headlineUrl = headline.url;
+                        let formattedDate: string | null = null;
+                        if (headline.publishedAt) {
+                          const parsedDate = new Date(headline.publishedAt);
+                          if (!Number.isNaN(parsedDate.getTime())) {
+                            formattedDate = parsedDate.toLocaleString(undefined, {
+                              dateStyle: 'medium',
+                              timeStyle: 'short',
+                            });
+                          } else {
+                            formattedDate = headline.publishedAt;
+                          }
+                        }
 
                         return (
                           <tr
                             key={headlineUrl || index}
                             className="odd:bg-white even:bg-gray-50 dark:odd:bg-gray-900 dark:even:bg-gray-800"
                           >
-                            <td className="w-1/2 min-w-[12rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
+                            <td className="min-w-[14rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100 sm:w-[45%]">
                               <div className="font-semibold">
                                 {headline.title || 'Untitled headline'}
                               </div>
-                              {(headline.source || headline.publishedAt) && (
-                                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                  {headline.source && <span>Source: {headline.source}</span>}
-                                  {headline.source && headline.publishedAt && (
-                                    <span className="mx-2">•</span>
-                                  )}
-                                  {headline.publishedAt && (
-                                    <span>Published: {headline.publishedAt}</span>
-                                  )}
-                                </div>
-                              )}
                               {headline.matchedQuery && (
                                 <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
                                   Matched query:{' '}
@@ -1315,7 +1322,25 @@ export default function GeneratePage() {
                                 </div>
                               ) : null}
                             </td>
-                            <td className="w-1/2 min-w-[10rem] max-w-[20rem] align-top break-words px-4 py-3 text-sm">
+                            <td className="min-w-[11rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[30%]">
+                              <div className="space-y-1">
+                                {headline.source ? (
+                                  <div className="font-medium text-gray-900 dark:text-gray-100">
+                                    {headline.source}
+                                  </div>
+                                ) : (
+                                  <div className="text-gray-500 dark:text-gray-400">
+                                    Source unavailable
+                                  </div>
+                                )}
+                                {formattedDate && (
+                                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                                    Published {formattedDate}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="min-w-[12rem] max-w-[20rem] align-top break-words px-4 py-3 text-sm sm:w-[25%]">
                               {headlineUrl ? (
                                 <a
                                   href={headlineUrl}
