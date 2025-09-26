@@ -27,6 +27,12 @@ textarea where you can edit this footer. Click **Save Footer** to store the
 markup in Supabase. The `/api/wordpress/publish` route automatically appends the
 saved footer before creating the draft post.
 
+## Grok configuration
+
+The Grok integration uses the `grok-4-fast-reasoning` model by default in
+production. Set the `GROK_MODEL` environment variable to override the model
+without touching the codebase. See `.env.example` for the expected format.
+
 ## More Specific Articles
 
 The generation API now includes a default instruction encouraging concrete

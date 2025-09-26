@@ -659,7 +659,11 @@ async function generateOutlineWithGrokFallback(
 ): Promise<string> {
   if (process.env.GROK_API_KEY) {
     try {
-      return await grokChatCompletion({ prompt, temperature });
+      return await grokChatCompletion({
+        prompt,
+        temperature,
+        model: process.env.GROK_MODEL,
+      });
     } catch (err) {
       console.warn('[api/generate] grok outline generation failed, falling back to OpenAI', err);
     }
@@ -2363,6 +2367,7 @@ async function verifyOutput(
       prompt,
       temperature: 0,
       timeoutMs: VERIFICATION_TIMEOUT_MS,
+      model: process.env.GROK_MODEL,
     });
     let parsed: any;
     try {
