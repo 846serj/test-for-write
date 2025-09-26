@@ -2327,8 +2327,9 @@ export async function POST(request: Request) {
 
       let lengthInstruction = '';
       if (lengthOption === 'default') {
+        const approxPerSection = Math.round(DEFAULT_WORDS / 5);
         lengthInstruction =
-          '- Aim for around 5 sections (~900 words total, ~180 words per section).\n';
+          `- Aim for around 5 sections (~${DEFAULT_WORDS.toLocaleString()} words total, ~${approxPerSection.toLocaleString()} words per section).\n`;
       } else if (lengthOption === 'custom' && customSections) {
         const approx = customSections * 220;
         lengthInstruction = `- Use exactly ${customSections} sections (~${approx} words total).\n`;
@@ -2337,7 +2338,7 @@ export async function POST(request: Request) {
         const [minS, maxS] = sectionRanges[lengthOption] || [3, 6];
         lengthInstruction = `- Include ${minS}–${maxS} sections and write between ${minW} and ${maxW} words.\n`;
       } else {
-        lengthInstruction = '- Aim for a concise, timely report (~900 words).\n';
+        lengthInstruction = `- Aim for a concise, timely report (~${DEFAULT_WORDS.toLocaleString()} words total).\n`;
       }
 
       const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
@@ -2362,10 +2363,7 @@ export async function POST(request: Request) {
         applyVerificationIssuesToPrompt(articlePrompt, issues);
 
       const [minBound] = getWordBounds(lengthOption, customSections);
-      const minWords =
-        !lengthOption || lengthOption === 'default'
-          ? Math.min(minBound, 900)
-          : minBound;
+      const minWords = minBound;
       const maxTokens = Math.min(baseMaxTokens, 4000);
 
       const content = await generateWithVerification(
