@@ -181,7 +181,6 @@ export default function GeneratePage() {
 
   const [customInstructions, setCustomInstructions] = useState('');
   const [loading, setLoading] = useState(false);
-  const [headlinePrompt, setHeadlinePrompt] = useState('');
   const [keywordInput, setKeywordInput] = useState('');
   const [keywords, setKeywords] = useState<string[]>([]);
   const [headlineLimit, setHeadlineLimit] = useState<number>(5);
@@ -202,6 +201,8 @@ export default function GeneratePage() {
   const [headlineCategory, setHeadlineCategory] = useState('');
   const [headlineCountry, setHeadlineCountry] = useState('');
   const [generateError, setGenerateError] = useState<string | null>(null);
+
+  const keywordsDisabled = headlineCategory.trim().length > 0;
 
   // Tone of Voice
   const [toneOfVoice, setToneOfVoice] = useState<
@@ -465,7 +466,6 @@ export default function GeneratePage() {
 
   const handleFetchHeadlines = async () => {
     const buildResult = buildHeadlineRequest({
-      prompt: headlinePrompt,
       keywords,
       profileQuery: '',
       profileLanguage: null,
@@ -485,10 +485,6 @@ export default function GeneratePage() {
     setSourcesInput(buildResult.sanitizedSources.join(', '));
     setDomainsInput(buildResult.sanitizedDomains.join(', '));
     setExcludeDomainsInput(buildResult.sanitizedExcludeDomains.join(', '));
-
-    if (!headlinePrompt.trim() && buildResult.resolvedPrompt) {
-      setHeadlinePrompt(buildResult.resolvedPrompt);
-    }
 
     if (buildResult.ok === false) {
       setHeadlineError(buildResult.error);
@@ -936,20 +932,13 @@ export default function GeneratePage() {
         ) : (
             <div className="space-y-6 bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
             <div>
-              <label className={labelStyle}>Article Description</label>
-              <textarea
-                className={inputStyle}
-                rows={4}
-                placeholder="Describe the article to fetch relevant headlines"
-                value={headlinePrompt}
-                onChange={(e) => setHeadlinePrompt(e.target.value)}
-              />
-            </div>
-
-            <div>
               <label className={labelStyle}>Keywords (optional)</label>
               <textarea
-                className={inputStyle}
+                className={clsx(
+                  inputStyle,
+                  keywordsDisabled &&
+                    'cursor-not-allowed opacity-70 dark:opacity-60 focus:ring-0 focus:outline-none'
+                )}
                 rows={3}
                 placeholder="marketing funnel, product launch, conversion rate"
                 value={keywordInput}
@@ -958,13 +947,14 @@ export default function GeneratePage() {
                   setKeywordInput(value);
                   setKeywords(normalizeKeywordInput(value));
                 }}
+                disabled={keywordsDisabled}
               />
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Enter up to 20 keywords separated by commas or new lines. We'll expand
-                these into detailed NewsAPI queries when you run a keyword search, or
-                pick a category feed below to skip manual keywords entirely.
+                Enter up to 20 keywords separated by commas or new lines to run a
+                custom NewsAPI search. Selecting a category feed below switches to
+                curated top headlines and disables manual keywords.
               </p>
-              {keywords.length > 0 && (
+              {keywords.length > 0 && !keywordsDisabled && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {keywords.map((keyword) => (
                     <span
@@ -1000,8 +990,9 @@ export default function GeneratePage() {
                   ))}
                 </select>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Selecting a category fetches curated top headlines. Advanced filters
-                  below still apply to keyword searches only.
+                  Selecting a category switches to curated top headlines. Leave this
+                  blank to run custom keyword searches and unlock the advanced filters
+                  below.
                 </p>
               </div>
               <div>
@@ -1029,17 +1020,16 @@ export default function GeneratePage() {
               <input
                 type="number"
                 min={1}
-                max={50}
                 className={clsx(inputStyle, 'w-32')}
                 value={headlineLimit}
                 onChange={(e) => {
                   const value = Number(e.target.value);
-                  const clamped = Math.min(50, Math.max(1, Number.isNaN(value) ? 1 : value));
-                  setHeadlineLimit(clamped);
+                  const minimum = Math.max(1, Number.isNaN(value) ? 1 : value);
+                  setHeadlineLimit(minimum);
                 }}
               />
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Choose between 1 and 50 headlines.
+                Request at least one headline. NewsAPI may apply its own limits.
               </p>
             </div>
 
@@ -1191,9 +1181,7 @@ export default function GeneratePage() {
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded shadow disabled:opacity-60 disabled:cursor-not-allowed"
                 disabled={
                   headlineLoading ||
-                  (!headlinePrompt.trim() &&
-                    keywords.length === 0 &&
-                    !headlineCategory.trim())
+                  (keywords.length === 0 && !headlineCategory.trim())
                 }
               >
                 {headlineLoading ? 'Fetching…' : 'Fetch Headlines'}

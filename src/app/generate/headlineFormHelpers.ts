@@ -7,7 +7,6 @@ export const SEARCH_IN_ORDER = ['title', 'description', 'content'] as const;
 export type SortByValue = 'publishedAt' | 'relevancy' | 'popularity';
 
 export type BuildHeadlineRequestArgs = {
-  prompt: string;
   keywords: string[];
   profileQuery: string;
   profileLanguage?: string | null;
@@ -28,7 +27,6 @@ export type BuildHeadlineRequestBaseResult = {
   sanitizedSources: string[];
   sanitizedDomains: string[];
   sanitizedExcludeDomains: string[];
-  resolvedPrompt: string;
 };
 
 export type BuildHeadlineRequestSuccess = BuildHeadlineRequestBaseResult & {
@@ -162,7 +160,6 @@ export function buildHeadlineRequest(
   args: BuildHeadlineRequestArgs
 ): BuildHeadlineRequestResult {
   const {
-    prompt,
     keywords,
     profileQuery,
     profileLanguage,
@@ -179,11 +176,8 @@ export function buildHeadlineRequest(
     country,
   } = args;
 
-  const trimmedDescription = prompt.trim();
   const trimmedProfileQuery = profileQuery.trim();
-  const hasDescription = Boolean(trimmedDescription);
   const hasProfileQuery = Boolean(trimmedProfileQuery);
-  const resolvedPrompt = hasDescription ? trimmedDescription : trimmedProfileQuery;
 
   const trimmedCategory = category.trim();
   const normalizedCategory = trimmedCategory.toLowerCase();
@@ -205,7 +199,6 @@ export function buildHeadlineRequest(
       sanitizedSources,
       sanitizedDomains,
       sanitizedExcludeDomains,
-      resolvedPrompt,
     };
   }
 
@@ -220,7 +213,6 @@ export function buildHeadlineRequest(
       sanitizedSources,
       sanitizedDomains,
       sanitizedExcludeDomains,
-      resolvedPrompt,
     };
   }
 
@@ -234,7 +226,6 @@ export function buildHeadlineRequest(
       sanitizedSources,
       sanitizedDomains,
       sanitizedExcludeDomains,
-      resolvedPrompt,
     };
   }
 
@@ -245,7 +236,6 @@ export function buildHeadlineRequest(
       sanitizedSources,
       sanitizedDomains,
       sanitizedExcludeDomains,
-      resolvedPrompt,
     };
   }
 
@@ -260,24 +250,20 @@ export function buildHeadlineRequest(
       sanitizedSources,
       sanitizedDomains,
       sanitizedExcludeDomains,
-      resolvedPrompt,
     };
   }
 
   if (
-    !hasDescription &&
     !hasProfileQuery &&
     keywords.length === 0 &&
     categoryFeedValue === null
   ) {
     return {
       ok: false,
-      error:
-        'Provide at least one keyword, choose a category feed, or describe the article to fetch headlines.',
+      error: 'Provide at least one keyword or choose a category feed to fetch headlines.',
       sanitizedSources,
       sanitizedDomains,
       sanitizedExcludeDomains,
-      resolvedPrompt,
     };
   }
 
@@ -296,18 +282,13 @@ export function buildHeadlineRequest(
     }
   } else {
     payload.sortBy = sortBy;
+    if (hasProfileQuery) {
+      payload.query = trimmedProfileQuery;
+    }
+    if (keywords.length > 0) {
+      payload.keywords = keywords;
+    }
   }
-
-  if (hasDescription) {
-    payload.description = trimmedDescription;
-  } else if (hasProfileQuery) {
-    payload.query = trimmedProfileQuery;
-  }
-
-  if (keywords.length > 0) {
-    payload.keywords = keywords;
-  }
-
   if (categoryFeedValue === null) {
     const normalizedLanguage = normalizeLanguage(language, profileLanguage);
     if (normalizedLanguage) {
@@ -345,6 +326,5 @@ export function buildHeadlineRequest(
     sanitizedSources,
     sanitizedDomains,
     sanitizedExcludeDomains,
-    resolvedPrompt,
   };
 }
