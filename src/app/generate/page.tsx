@@ -313,6 +313,9 @@ export default function GeneratePage() {
       });
       const contentType = res.headers.get('content-type') ?? '';
 
+      const defaultFriendlyMessage =
+        'The article generator timed out—please try again.';
+
       if (!res.ok) {
         let message = res.statusText || `Request failed with status ${res.status}`;
         let errorCode: string | null = null;
@@ -339,7 +342,21 @@ export default function GeneratePage() {
             try {
               const fallbackText = await res.text();
               if (fallbackText) {
-                message = fallbackText;
+                console.error('[generate] non-ok JSON response body:', fallbackText);
+
+                const normalized = fallbackText
+                  .replace(/<[^>]+>/g, ' ')
+                  .replace(/\s+/g, ' ')
+                  .trim();
+                const looksHtml = /<html/i.test(fallbackText) || /<body/i.test(fallbackText);
+                const isVerbose = normalized.length > 200;
+
+                message =
+                  !looksHtml && !isVerbose && normalized
+                    ? normalized
+                    : defaultFriendlyMessage;
+              } else {
+                message = defaultFriendlyMessage;
               }
             } catch {}
           }
@@ -347,7 +364,21 @@ export default function GeneratePage() {
           try {
             const fallbackText = await res.text();
             if (fallbackText) {
-              message = fallbackText;
+              const normalized = fallbackText
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+              const looksHtml = /<html/i.test(fallbackText) || /<body/i.test(fallbackText);
+              const isVerbose = normalized.length > 200;
+
+              console.error('[generate] non-ok response body:', fallbackText);
+
+              message =
+                !looksHtml && !isVerbose && normalized
+                  ? normalized
+                  : defaultFriendlyMessage;
+            } else {
+              message = defaultFriendlyMessage;
             }
           } catch {}
         }
@@ -367,7 +398,26 @@ export default function GeneratePage() {
         } catch {}
 
         const friendlyMessage =
-          fallbackText ||
+          (() => {
+            if (!fallbackText) {
+              return defaultFriendlyMessage;
+            }
+
+            console.error('[generate] unexpected content-type body:', fallbackText);
+
+            const normalized = fallbackText
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            const looksHtml = /<html/i.test(fallbackText) || /<body/i.test(fallbackText);
+            const isVerbose = normalized.length > 200;
+
+            if (!looksHtml && !isVerbose && normalized) {
+              return normalized;
+            }
+
+            return defaultFriendlyMessage;
+          })() ||
           'Received an unexpected response format while generating the article.';
 
         alert(`Failed to generate article: ${friendlyMessage}`);
