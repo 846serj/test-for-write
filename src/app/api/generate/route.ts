@@ -2366,20 +2366,20 @@ export async function POST(request: Request) {
         ? `- ${customInstruction}\n`
         : '';
 
+      const [minWords, maxWords] = getWordBounds(lengthOption, customSections);
       let lengthInstruction = '';
       if (lengthOption === 'default') {
         const approxPerSection = Math.round(DEFAULT_WORDS / 5);
         lengthInstruction =
-          `- Aim for around 5 sections (~${DEFAULT_WORDS.toLocaleString()} words total, ~${approxPerSection.toLocaleString()} words per section).\n`;
+          `- Use around 5 sections, and the article must contain at least ${minWords.toLocaleString()} words (target roughly ${DEFAULT_WORDS.toLocaleString()} words total, ~${approxPerSection.toLocaleString()} words per section, and keep it under ${maxWords.toLocaleString()} words).\n`;
       } else if (lengthOption === 'custom' && customSections) {
         const approx = customSections * 220;
-        lengthInstruction = `- Use exactly ${customSections} sections (~${approx} words total).\n`;
+        lengthInstruction = `- Use exactly ${customSections} sections, and the article must contain at least ${minWords.toLocaleString()} words (~${approx.toLocaleString()} words total; keep it under ${maxWords.toLocaleString()} words).\n`;
       } else if (lengthOption && WORD_RANGES[lengthOption]) {
-        const [minW, maxW] = WORD_RANGES[lengthOption];
         const [minS, maxS] = sectionRanges[lengthOption] || [3, 6];
-        lengthInstruction = `- Include ${minS}–${maxS} sections and write between ${minW} and ${maxW} words.\n`;
+        lengthInstruction = `- Include ${minS}–${maxS} sections, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
       } else {
-        lengthInstruction = `- Aim for a concise, timely report (~${DEFAULT_WORDS.toLocaleString()} words total).\n`;
+        lengthInstruction = `- Include at least three <h2> headings, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
       }
 
       const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
@@ -2404,8 +2404,6 @@ export async function POST(request: Request) {
       const applyArticleIssues = (issues?: string[]) =>
         applyVerificationIssuesToPrompt(articlePrompt, issues);
 
-      const [minBound] = getWordBounds(lengthOption, customSections);
-      const minWords = minBound;
       const maxTokens = Math.min(baseMaxTokens, 4000);
 
       const content = await generateWithVerification(
@@ -2510,14 +2508,25 @@ ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond
         0.6
       );
 
-      const lengthInstruction = `- Use exactly ${count} items.\n`;
+      let [minWords, maxWords] = getWordBounds(lengthOption, customSections);
+      const wordsPerItem = listItemWordCount || 100;
+      const derivedMinWords = Math.floor(count * wordsPerItem * 0.8);
+      if (derivedMinWords > minWords) {
+        minWords = derivedMinWords;
+      }
+      const minWordsPerItem = Math.ceil(minWords / count);
+      const capText =
+        maxWords > minWords
+          ? ` while staying under ${maxWords.toLocaleString()} words`
+          : '';
+
+      const lengthInstruction = `- Use exactly ${count} items, and the article must contain at least ${minWords.toLocaleString()} words${capText}.\n`;
       const numberingInstruction = listNumberingFormat
         ? `- Use numbering formatted like ${listNumberingFormat}.\n`
         : '';
-      const wordCountInstruction =
-        listItemWordCount
-          ? `- Keep each list item around ${listItemWordCount} words.\n`
-          : '';
+      const wordCountInstruction = listItemWordCount
+        ? `- Each list item must run at least ${minWordsPerItem} words so the article clears ${minWords.toLocaleString()} words overall; aim for around ${listItemWordCount} words per item.\n`
+        : `- Make sure each list item adds enough detail to reach the ${minWords.toLocaleString()}-word minimum (roughly ${minWordsPerItem} words per item on average).\n`;
       const customInstruction = customInstructions?.trim();
       const customInstructionBlock = customInstruction
         ? `- ${customInstruction}\n`
@@ -2572,12 +2581,10 @@ ${reportingSection}${toneInstruction}${povInstruction}Requirements:
 Write the full article in valid HTML below:
 `.trim();
 
-      const wordsPerItem = listItemWordCount || 100;
       const desired = count * wordsPerItem + 50;
       let maxTokens = Math.ceil((desired * 1.2) / 0.75); // add 20% buffer
       const limit = MODEL_CONTEXT_LIMITS[modelVersion] || 8000;
       maxTokens = Math.min(maxTokens, limit);
-      const minWords = Math.floor(count * wordsPerItem * 0.8);
 
       const content = await generateWithVerification(
         (issues) =>
@@ -2640,22 +2647,21 @@ Write the full article in valid HTML below:
     const customInstructionBlock = customInstruction
       ? `- ${customInstruction}\n`
       : '';
+    const [minWords, maxWords] = getWordBounds(lengthOption, customSections);
     let lengthInstruction: string;
     if (lengthOption === 'default') {
       lengthInstruction =
-        `- Aim for around 9 sections (~${DEFAULT_WORDS.toLocaleString()} words total, ~220 words per section), ` +
-        'but feel free to adjust based on the topic.\n';
+        `- Use around 9 sections, and the article must contain at least ${minWords.toLocaleString()} words (target roughly ${DEFAULT_WORDS.toLocaleString()} words total, ~220 words per section, and keep it under ${maxWords.toLocaleString()} words).\n`;
     } else if (lengthOption === 'custom' && customSections) {
       const approx = customSections * 220;
-      lengthInstruction = `- Use exactly ${customSections} sections (~${approx} words total).\n`;
+      lengthInstruction = `- Use exactly ${customSections} sections, and the article must contain at least ${minWords.toLocaleString()} words (~${approx.toLocaleString()} words total; keep it under ${maxWords.toLocaleString()} words).\n`;
     } else if (WORD_RANGES[lengthOption || 'medium']) {
-      const [minW, maxW] = WORD_RANGES[lengthOption || 'medium'];
       const [minS, maxS] = sectionRanges[lengthOption || 'medium'];
       lengthInstruction =
-        `- Include ${minS}–${maxS} sections and write between ${minW} and ${maxW} words.\n`;
+        `- Include ${minS}–${maxS} sections, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
     } else {
       lengthInstruction =
-        '- Aim for around 9 sections (~1,900 words total, ~220 words per section), but feel free to adjust based on the topic.\n';
+        `- Include at least three <h2> headings, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
     }
 
     const requiredLinks = linkSources.slice(
@@ -2702,7 +2708,7 @@ Write the full article in valid HTML below:
           systemPrompt,
           minLinks,
           baseMaxTokens,
-          getWordBounds(lengthOption, customSections)[0],
+          minWords,
           reportingSources
         ),
       reportingSources,
