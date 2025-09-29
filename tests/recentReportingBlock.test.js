@@ -80,6 +80,32 @@ function extractNewsBlock() {
   return tsCode.slice(start, end);
 }
 
+function extractDefaultPromptSnippet() {
+  const extraIndex = tsCode.indexOf('const extraRequirements =');
+  if (extraIndex === -1) {
+    throw new Error('Unable to locate extra requirements block.');
+  }
+  const reportingStart = tsCode.lastIndexOf('const reportingSection', extraIndex);
+  if (reportingStart === -1) {
+    throw new Error('Unable to locate reporting section before extra requirements.');
+  }
+  const articlePromptStart = tsCode.indexOf('const articlePrompt', extraIndex);
+  if (articlePromptStart === -1) {
+    throw new Error('Unable to locate article prompt declaration for default branch.');
+  }
+  let nextConstIndex = tsCode.indexOf('\n\n    const', articlePromptStart);
+  if (nextConstIndex === -1) {
+    nextConstIndex = tsCode.indexOf('\n\n      const', articlePromptStart);
+  }
+  if (nextConstIndex === -1) {
+    nextConstIndex = tsCode.indexOf('\n\n    return', articlePromptStart);
+  }
+  if (nextConstIndex === -1) {
+    throw new Error('Unable to determine end of default prompt snippet.');
+  }
+  return tsCode.slice(reportingStart, nextConstIndex);
+}
+
 const reportingHelpers = `
 ${detailInstructionMatch[0]}
 ${detailExtractionMatch[0]}
@@ -221,6 +247,59 @@ test('blog prompt injects reporting block and grounding instruction', async () =
   );
   assert(articlePrompt.includes('https://news.test/blog'));
   assert(articlePrompt.includes('cite the matching URL'));
+});
+
+test('travel article prompt includes itinerary, seasonal, and highlight guidance', async () => {
+  const promptSnippet = extractDefaultPromptSnippet();
+  const snippet = `
+${reportingHelpers}
+${buildArticlePromptMatch[0]}
+const articleType = 'Travel article';
+const reportingSources = [
+  {
+    title: 'Kyoto in Spring',
+    summary: 'Cherry blossom season, itineraries, and top temples to prioritize.',
+    url: 'https://travel.test/kyoto',
+    publishedAt: '2024-03-15T09:00:00Z',
+  },
+];
+const reportingBlock = buildRecentReportingBlock(reportingSources);
+const groundingInstruction = reportingSources.length
+  ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\\n'
+  : '';
+const linkInstruction = '';
+const toneInstruction = '';
+const povInstruction = '';
+const title = 'Exploring Kyoto';
+const outline = 'INTRO:\\n- Opening\\n\\n<h2>Section</h2>';
+const lengthInstruction = '- Custom length guidance.\\n';
+const customInstructionBlock = '';
+${promptSnippet}
+export { articlePrompt, extraRequirements };
+`;
+  const { articlePrompt, extraRequirements } = await transpile(snippet);
+  assert.strictEqual(Array.isArray(extraRequirements), true);
+  assert(
+    extraRequirements.some((item) =>
+      item.includes('Surface itinerary tips from the provided reporting')
+    ),
+    'Travel extra requirements should include itinerary guidance.'
+  );
+  assert(
+    extraRequirements.some((item) =>
+      item.includes('Note seasonal considerations cited in the sources')
+    ),
+    'Travel extra requirements should include seasonal guidance.'
+  );
+  assert(
+    extraRequirements.some((item) =>
+      item.includes('Highlight standout destinations, landmarks, or experiences')
+    ),
+    'Travel extra requirements should include destination highlights.'
+  );
+  assert(articlePrompt.includes('Surface itinerary tips from the provided reporting'));
+  assert(articlePrompt.includes('Note seasonal considerations cited in the sources'));
+  assert(articlePrompt.includes('Highlight standout destinations, landmarks, or experiences'));
 });
 
 test('news prompt default references DEFAULT_WORDS and keeps full min bound', () => {
