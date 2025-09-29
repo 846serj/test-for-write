@@ -3270,10 +3270,19 @@ Write the full article in valid HTML below:
       : '';
 
     const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
-    const extraRequirements = [
+    const baseExtraRequirements = [
       'Avoid starting paragraphs with dates and omit dates unless they add essential context; when a date is necessary, place it after the subject rather than leading with it.',
       'Center each section on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.',
     ];
+    const extraRequirements =
+      articleType === 'Travel article'
+        ? [
+            ...baseExtraRequirements,
+            'Surface itinerary tips from the provided reporting, highlighting actionable planning guidance wherever sources allow.',
+            'Note seasonal considerations cited in the sources, including ideal times to visit or cautions about conditions travelers should plan around.',
+            'Highlight standout destinations, landmarks, or experiences emphasized in the reporting and connect them to the supporting sources.',
+          ]
+        : [...baseExtraRequirements];
 
     const articlePrompt = buildArticlePrompt({
       title,
