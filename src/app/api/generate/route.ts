@@ -991,6 +991,141 @@ async function fetchSources(
   });
 }
 
+const TRAVEL_KEYWORDS = [
+  'travel',
+  'guide',
+  'itinerary',
+  'visit',
+  'attractions',
+  'things to do',
+  'where to stay',
+  'tour',
+  'tourism',
+  'destination',
+  'trip',
+  'vacation',
+];
+
+async function fetchEvergreenTravelSources(
+  headline: string
+): Promise<ReportingSource[]> {
+  const query = `${headline} travel guide`;
+  const results = await serpapiSearch({
+    query,
+    engine: 'google',
+    extraParams: { hl: 'en' },
+    limit: 10,
+  });
+
+  if (!results.length) {
+    return [];
+  }
+
+  const nowMs = Date.now();
+  const sources: ReportingSource[] = [];
+  const seenVariants = new Set<string>();
+
+  for (const result of results) {
+    const url = normalizeHrefValue(result.link || '');
+    if (!url) {
+      continue;
+    }
+
+    const content = `${result.title || ''} ${
+      result.summary || result.snippet || ''
+    }`
+      .toLowerCase()
+      .trim();
+    if (
+      !content || !TRAVEL_KEYWORDS.some((keyword) => content.includes(keyword))
+    ) {
+      continue;
+    }
+
+    let isDuplicate = false;
+    for (const variant of buildUrlVariants(url)) {
+      if (seenVariants.has(variant)) {
+        isDuplicate = true;
+        break;
+      }
+    }
+    if (isDuplicate) {
+      continue;
+    }
+
+    const publishedAtRaw =
+      result.published_at || result.date_published || result.date || '';
+    const publishedTimestamp = parsePublishedTimestamp(publishedAtRaw, nowMs);
+
+    const publishedAt =
+      publishedTimestamp !== null
+        ? normalizePublishedAt(publishedTimestamp)
+        : '';
+
+    sources.push({
+      title: result.title || 'Untitled',
+      url,
+      summary: normalizeSummary(result.summary || result.snippet || ''),
+      publishedAt,
+    });
+
+    for (const variant of buildUrlVariants(url)) {
+      seenVariants.add(variant);
+    }
+  }
+
+  return sources;
+}
+
+function mergeEvergreenTravelSources(
+  reportingSources: ReportingSource[],
+  evergreenSources: ReportingSource[],
+  maxEvergreenAdditions = 3
+): ReportingSource[] {
+  if (!evergreenSources.length || maxEvergreenAdditions <= 0) {
+    return reportingSources;
+  }
+
+  const seenVariants = new Set<string>();
+  for (const source of reportingSources) {
+    for (const variant of buildUrlVariants(source.url)) {
+      seenVariants.add(variant);
+    }
+  }
+
+  const additions: ReportingSource[] = [];
+  for (const evergreen of evergreenSources) {
+    const normalizedUrl = normalizeHrefValue(evergreen.url);
+    if (!normalizedUrl) {
+      continue;
+    }
+
+    const variants = buildUrlVariants(normalizedUrl);
+    if (variants.some((variant) => seenVariants.has(variant))) {
+      continue;
+    }
+
+    additions.push({
+      ...evergreen,
+      url: normalizedUrl,
+    });
+
+    for (const variant of variants) {
+      seenVariants.add(variant);
+    }
+
+    if (additions.length >= maxEvergreenAdditions) {
+      break;
+    }
+  }
+
+  if (!additions.length) {
+    return reportingSources;
+  }
+
+  return [...reportingSources, ...additions];
+}
+
 function formatPublishedTimestamp(value: string): string {
   if (!value) {
     return 'Unknown publication time';
@@ -2880,8 +3015,10 @@ export async function POST(request: Request) {
       }
 
       const needsRelevanceSourcing =
-        articleType === 'Listicle/Gallery' || articleType === 'Blog post';
-      const reportingSources = await fetchSources(
+        articleType === 'Listicle/Gallery' ||
+        articleType === 'Blog post' ||
+        articleType === 'Travel article';
+      const baseReportingSources = await fetchSources(
         title,
         needsRelevanceSourcing
           ? {
@@ -2890,6 +3027,15 @@ export async function POST(request: Request) {
             }
           : undefined
       );
+      let reportingSources = baseReportingSources;
+      if (articleType === 'Travel article') {
+        const evergreenSources = await fetchEvergreenTravelSources(title);
+        reportingSources = mergeEvergreenTravelSources(
+          baseReportingSources,
+          evergreenSources
+        );
+      }
+
       const reportingBlock = buildRecentReportingBlock(reportingSources);
       const groundingInstruction = reportingSources.length
         ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\n'
