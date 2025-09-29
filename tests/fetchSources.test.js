@@ -28,14 +28,40 @@ ${extract(/function normalizePublishedAt[\s\S]*?\n\}/, 'normalizePublishedAt')}
 ${extract(/const SOURCE_TOKEN_MIN_LENGTH[\s\S]*?return \(2 \* precision \* recall\)[\s\S]*?\n\}/, 'source token helpers')}
 ${extract(/type ScoredReportingSource[\s\S]*?;/, 'ScoredReportingSource type')}
 ${extract(/async function fetchSources[\s\S]*?\n\}/, 'fetchSources')}
+${extract(/function normalizeHrefValue[\s\S]*?\n\}/, 'normalizeHrefValue')}
+${extract(/function buildUrlVariants[\s\S]*?\n\}/, 'buildUrlVariants')}
 ${extract(/function normalizePublisher[\s\S]*?\n\}/, 'normalizePublisher')}
+${extract(/const TRAVEL_KEYWORDS[\s\S]*?\n\];/, 'travel keywords')}
+${extract(/async function fetchEvergreenTravelSources[\s\S]*?\n\}/, 'fetchEvergreenTravelSources')}
+${extract(/function mergeEvergreenTravelSources[\s\S]*?\n\}/, 'mergeEvergreenTravelSources')}
 ${extract(/async function fetchNewsArticles[\s\S]*?\n\}/, 'fetchNewsArticles')}
-export { fetchSources, serpCalls, setSerpResults, fetchNewsArticles };
+${extract(/function formatKeyDetails[\s\S]*?\n\}/, 'formatKeyDetails')}
+${extract(/function normalizeSummary[\s\S]*?\n\}/, 'normalizeSummary')}
+${extract(/function formatPublishedTimestamp[\s\S]*?\n\}/, 'formatPublishedTimestamp')}
+${extract(/function extractStructuredFacts[\s\S]*?\n\}/, 'extractStructuredFacts')}
+${extract(/function buildRecentReportingBlock[\s\S]*?\n\}/, 'buildRecentReportingBlock')}
+export {
+  fetchSources,
+  serpCalls,
+  setSerpResults,
+  fetchNewsArticles,
+  fetchEvergreenTravelSources,
+  mergeEvergreenTravelSources,
+  buildRecentReportingBlock,
+};
 `;
 
 const jsCode = ts.transpileModule(snippet, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
 const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString('base64');
-const { fetchSources, serpCalls, setSerpResults, fetchNewsArticles } = await import(moduleUrl);
+const {
+  fetchSources,
+  serpCalls,
+  setSerpResults,
+  fetchNewsArticles,
+  fetchEvergreenTravelSources,
+  mergeEvergreenTravelSources,
+  buildRecentReportingBlock,
+} = await import(moduleUrl);
 
 const FIXED_NOW_ISO = '2024-03-10T12:00:00Z';
 const FIXED_NOW_MS = Date.parse(FIXED_NOW_ISO);
@@ -359,6 +385,140 @@ test('fetchSources dedupes titles that only differ by trailing publisher separat
       'https://site-d.com/unique',
     ]);
   });
+});
+
+test('fetchEvergreenTravelSources queries general search for travel-focused guidance', async () => {
+  await withMockedNow(async () => {
+    serpCalls.length = 0;
+    setSerpResults([
+      {
+        link: 'https://travel.com/kyoto',
+        title: 'Kyoto Travel Guide',
+        summary: 'Complete travel guide with things to do in Kyoto',
+        date: isoDaysAgo(40),
+      },
+      {
+        link: 'https://travel.com/kyoto-itinerary',
+        title: 'Kyoto attractions and itinerary tips',
+        snippet: 'Top attractions to visit with a family-friendly itinerary',
+        date: isoDaysAgo(55),
+      },
+      {
+        link: 'https://travel.com/kyoto',
+        title: 'Duplicate Kyoto travel guide',
+        snippet: 'Travel tips and places to visit in Kyoto',
+        date: isoDaysAgo(30),
+      },
+      {
+        link: 'https://weather.com/kyoto',
+        title: 'Kyoto weather update',
+        snippet: 'Weekly forecast and precipitation outlook',
+        date: isoDaysAgo(2),
+      },
+    ]);
+
+    const sources = await fetchEvergreenTravelSources('Kyoto cherry blossoms');
+
+    assert.strictEqual(serpCalls.length, 1);
+    assert.strictEqual(serpCalls[0].engine, 'google');
+    assert.strictEqual(
+      serpCalls[0].query,
+      'Kyoto cherry blossoms travel guide'
+    );
+    assert.deepStrictEqual(serpCalls[0].extraParams, { hl: 'en' });
+    assert.deepStrictEqual(
+      sources.map(({ url, publishedAt }) => ({ url, publishedAt })),
+      [
+        { url: 'https://travel.com/kyoto', publishedAt: isoDaysAgo(40) },
+        {
+          url: 'https://travel.com/kyoto-itinerary',
+          publishedAt: isoDaysAgo(55),
+        },
+      ]
+    );
+    assert.deepStrictEqual(
+      sources.map(({ summary }) => summary),
+      [
+        'Complete travel guide with things to do in Kyoto',
+        'Top attractions to visit with a family-friendly itinerary',
+      ]
+    );
+  });
+});
+
+test('mergeEvergreenTravelSources dedupes, caps extras, and feeds reporting block', () => {
+  const reportingSources = [
+    {
+      title: 'Recent Kyoto news',
+      url: 'https://news.com/kyoto-update',
+      summary: 'Recent developments in Kyoto tourism board announcements',
+      publishedAt: isoDaysAgo(5),
+    },
+    {
+      title: 'Kyoto hotel openings',
+      url: 'https://news.com/kyoto-hotels',
+      summary: 'New hotel openings expand travel capacity',
+      publishedAt: isoDaysAgo(4),
+    },
+  ];
+
+  const evergreenSources = [
+    {
+      title: 'Kyoto trip planner',
+      url: 'https://travel.com/plan',
+      summary: 'Trip planner with things to do and where to stay',
+      publishedAt: '',
+    },
+    {
+      title: 'Kyoto trip planner duplicate',
+      url: 'https://travel.com/plan/',
+      summary: 'Duplicate entry that should be skipped',
+      publishedAt: '',
+    },
+    {
+      title: 'Top Kyoto temples',
+      url: 'https://travel.com/temples',
+      summary: 'Guide to visiting the top temples in Kyoto',
+      publishedAt: '',
+    },
+    {
+      title: 'Kyoto dining guide',
+      url: 'https://travel.com/dining',
+      summary: 'Restaurants to visit in Kyoto',
+      publishedAt: '',
+    },
+    {
+      title: 'Recent news duplicate',
+      url: 'https://news.com/kyoto-update',
+      summary: 'Should be ignored because it matches recent source',
+      publishedAt: '',
+    },
+    {
+      title: 'Extra Kyoto hikes',
+      url: 'https://travel.com/hikes',
+      summary: 'Hiking routes around Kyoto',
+      publishedAt: '',
+    },
+  ];
+
+  const merged = mergeEvergreenTravelSources(reportingSources, evergreenSources);
+
+  assert.strictEqual(merged.length, reportingSources.length + 3);
+  assert.deepStrictEqual(
+    merged.slice(reportingSources.length).map((item) => item.url),
+    [
+      'https://travel.com/plan',
+      'https://travel.com/temples',
+      'https://travel.com/dining',
+    ]
+  );
+
+  assert.deepStrictEqual(
+    merged.slice(0, reportingSources.length).map((item) => item.url),
+    reportingSources.map((item) => item.url)
+  );
+  assert.ok(!merged.some((item) => item.url === 'https://travel.com/plan/'));
+  assert.ok(!merged.some((item) => item.url === 'https://travel.com/hikes'));
 });
 
 test('fetchSources keeps older sources when recency is disabled', async () => {
