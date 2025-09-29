@@ -165,6 +165,7 @@ export default function GeneratePage() {
   const [title, setTitle] = useState('');
   const [articleType, setArticleType] = useState<
     | 'Blog post'
+    | 'Travel article'
     | 'Listicle/Gallery'
     | 'Recipe article'
     | 'News article'
@@ -324,7 +325,11 @@ export default function GeneratePage() {
       alert('Enter a title first');
       return;
     }
-    if (articleType === 'Blog post' && lengthOption === 'custom' && customSections < 1) {
+    if (
+      (articleType === 'Blog post' || articleType === 'Travel article') &&
+      lengthOption === 'custom' &&
+      customSections < 1
+    ) {
       alert('Enter a valid number of sections');
       return;
     }
@@ -765,6 +770,7 @@ export default function GeneratePage() {
               onChange={(e) => setArticleType(e.target.value as any)}
             >
               <option value="Blog post">Blog post</option>
+              <option value="Travel article">Travel article</option>
               <option value="Listicle/Gallery">Listicle/Gallery</option>
               <option value="Recipe article">Recipe article</option>
               <option value="News article">News article</option>
