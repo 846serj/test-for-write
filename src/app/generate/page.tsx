@@ -57,6 +57,43 @@ const SEARCH_IN_OPTIONS = SEARCH_IN_ORDER.map((value) => ({
   label: SEARCH_IN_LABELS[value],
 }));
 
+const headlineSites = {
+  morningOverview: {
+    name: 'Morning Overview',
+    instructions:
+      'Surface the biggest overnight developments in global news, markets, and policy with a concise, pre-market tone. Prioritize authoritative sources, highlight why each story matters this morning, and favor items published within the last 12 hours.',
+  },
+  dailyOverview: {
+    name: 'The Daily Overview',
+    instructions:
+      'Compile a balanced, mid-day digest that blends world affairs, U.S. policy, business trends, science breakthroughs, and notable culture stories. Keep the tone analytical yet approachable and emphasize takeaways a curious professional would want to discuss later in the day.',
+  },
+  flexibleFridge: {
+    name: 'The Flexible Fridge',
+    instructions:
+      'Find inventive food, grocery, and sustainability reporting that helps home cooks stretch ingredients, reduce waste, and plan flexible meals. Prioritize service journalism with actionable tips, seasonal produce spotlights, and clever storage or substitution ideas.',
+  },
+  californiaAdventure: {
+    name: 'California is for Adventure',
+    instructions:
+      'Curate outdoor travel inspiration across California, from coastal escapes to desert and mountain adventures. Feature hike and road-trip ideas, scenic state and national parks, and local guides that highlight responsible recreation and hidden-gem communities.',
+  },
+  oregonAdventure: {
+    name: 'Oregon is for Adventure',
+    instructions:
+      'Highlight Pacific Northwest explorations throughout Oregon, including forest trails, coastline retreats, volcanic landscapes, and craft-forward towns. Seek stories that mix itineraries, gear tips, and conservation-minded advice for year-round adventurers.',
+  },
+  washingtonAdventure: {
+    name: 'Washington is for Adventure',
+    instructions:
+      'Spotlight Washington state adventures with coverage of national parks, islands, alpine routes, and urban gateways to the outdoors. Emphasize weekend-friendly itineraries, weather-aware planning, and guides that celebrate local experts and tribal lands.',
+  },
+} as const;
+
+type HeadlineSiteKey = keyof typeof headlineSites;
+
+const DEFAULT_HEADLINE_LIMIT = 5;
+
 const NO_RECENT_NEWS_MESSAGE =
   'No recent news on this topic. Adjust your topic, keywords, or timeframe to broaden the search for relevant reporting.';
 
@@ -188,11 +225,17 @@ export default function GeneratePage() {
   const [loading, setLoading] = useState(false);
   const [keywordInput, setKeywordInput] = useState('');
   const [keywords, setKeywords] = useState<string[]>([]);
-  const [headlineLimit, setHeadlineLimit] = useState<number>(5);
+  const [headlineLimit, setHeadlineLimit] = useState<number>(
+    DEFAULT_HEADLINE_LIMIT
+  );
   const [headlineLoading, setHeadlineLoading] = useState(false);
   const [headlineError, setHeadlineError] = useState<string | null>(null);
   const [headlineResults, setHeadlineResults] = useState<HeadlineItem[]>([]);
   const [headlineQueries, setHeadlineQueries] = useState<string[]>([]);
+  const [headlineDescription, setHeadlineDescription] = useState('');
+  const [activeSiteKey, setActiveSiteKey] = useState<HeadlineSiteKey | null>(
+    null
+  );
   const [language, setLanguage] = useState<string>('en');
   const [sortBy, setSortBy] = useState<'publishedAt' | 'relevancy' | 'popularity'>(
     'publishedAt'
@@ -267,7 +310,14 @@ export default function GeneratePage() {
     }
   };
 
-  const keywordsDisabled = headlineCategory.trim().length > 0;
+  const keywordsDisabled =
+    headlineCategory.trim().length > 0 || activeSiteKey !== null;
+  const keywordHelperText = activeSiteKey
+    ? 'Site presets supply tailored search instructions, so manual keywords are temporarily disabled. Clear the preset to enter your own keywords.'
+    : 'Enter up to 20 keywords separated by commas or new lines to run a custom NewsAPI search. Selecting a category feed below switches to curated top headlines and disables manual keywords.';
+  const siteEntries = Object.entries(headlineSites) as Array<
+    [HeadlineSiteKey, (typeof headlineSites)[HeadlineSiteKey]]
+  >;
 
   // Tone of Voice
   const [toneOfVoice, setToneOfVoice] = useState<
@@ -342,6 +392,36 @@ export default function GeneratePage() {
         ? current.filter((item) => item !== value)
         : [...current, value]
     );
+  };
+
+  const handleClearSitePreset = () => {
+    setActiveSiteKey(null);
+    setHeadlineDescription('');
+    setHeadlineLimit(DEFAULT_HEADLINE_LIMIT);
+  };
+
+  const handleGenerateSiteHeadlines = async (siteKey: HeadlineSiteKey) => {
+    const preset = headlineSites[siteKey];
+    if (!preset) {
+      return;
+    }
+
+    setActiveSiteKey(siteKey);
+    setHeadlineCategory('');
+    setHeadlineCountry('');
+    setKeywordInput('');
+    setKeywords([]);
+    setSourcesInput('');
+    setDomainsInput('');
+    setExcludeDomainsInput('');
+
+    await handleFetchHeadlines({
+      limit: 100,
+      description: preset.instructions,
+      keywords: [],
+      category: '',
+      country: '',
+    });
   };
 
   const handleGenerate = async () => {
@@ -556,12 +636,53 @@ export default function GeneratePage() {
     }
   };
 
-  const handleFetchHeadlines = async () => {
+  const handleFetchHeadlines = async (
+    overrides?: {
+      limit?: number;
+      description?: string;
+      keywords?: string[];
+      category?: string;
+      country?: string;
+    }
+  ) => {
+    const nextLimit =
+      overrides && overrides.limit !== undefined
+        ? overrides.limit
+        : headlineLimit;
+    const nextDescriptionRaw =
+      overrides && overrides.description !== undefined
+        ? overrides.description
+        : headlineDescription;
+    const nextDescription = nextDescriptionRaw.trim();
+    const nextKeywords = overrides?.keywords ?? keywords;
+    const nextCategory = overrides?.category ?? headlineCategory;
+    const nextCountry = overrides?.country ?? headlineCountry;
+
+    if (overrides?.limit !== undefined && overrides.limit !== headlineLimit) {
+      setHeadlineLimit(overrides.limit);
+    }
+
+    if (nextDescription !== headlineDescription) {
+      setHeadlineDescription(nextDescription);
+    }
+
+    if (overrides?.keywords && overrides.keywords !== keywords) {
+      setKeywords(overrides.keywords);
+    }
+
+    if (overrides?.category !== undefined && overrides.category !== headlineCategory) {
+      setHeadlineCategory(overrides.category);
+    }
+
+    if (overrides?.country !== undefined && overrides.country !== headlineCountry) {
+      setHeadlineCountry(overrides.country);
+    }
+
     const buildResult = buildHeadlineRequest({
-      keywords,
+      keywords: nextKeywords,
       profileQuery: '',
       profileLanguage: null,
-      limit: headlineLimit,
+      limit: nextLimit,
       sortBy,
       language,
       fromDate,
@@ -570,8 +691,9 @@ export default function GeneratePage() {
       sourcesInput,
       domainsInput,
       excludeDomainsInput,
-      category: headlineCategory,
-      country: headlineCountry,
+      category: nextCategory,
+      country: nextCountry,
+      description: nextDescription,
     });
 
     setSourcesInput(buildResult.sanitizedSources.join(', '));
@@ -1017,6 +1139,76 @@ export default function GeneratePage() {
           </div>
         ) : (
             <div className="space-y-6 bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
+            <div className="space-y-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                    Site presets
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                    Apply a newsroom preset to load its custom instructions and instantly request 100 story leads tailored to that brand.
+                  </p>
+                </div>
+                {activeSiteKey && (
+                  <button
+                    type="button"
+                    onClick={handleClearSitePreset}
+                    className="self-start rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+                  >
+                    Clear active preset
+                  </button>
+                )}
+              </div>
+              <div className="grid gap-4">
+                {siteEntries.map(([siteKey, site]) => {
+                  const isActive = activeSiteKey === siteKey;
+                  return (
+                    <div
+                      key={siteKey}
+                      className={clsx(
+                        'rounded-lg border p-4 transition-colors',
+                        isActive
+                          ? 'border-blue-500 bg-blue-50 dark:border-blue-300 dark:bg-blue-900/30'
+                          : 'border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900'
+                      )}
+                    >
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                              {site.name}
+                            </h3>
+                            {isActive && (
+                              <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/60 dark:text-blue-200">
+                                Active
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-2 whitespace-pre-line text-sm text-gray-700 dark:text-gray-300">
+                            {site.instructions}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleGenerateSiteHeadlines(siteKey);
+                          }}
+                          className={clsx(
+                            'w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:bg-blue-500 dark:hover:bg-blue-400 sm:w-auto',
+                            headlineLoading && 'disabled:cursor-not-allowed disabled:opacity-60'
+                          )}
+                          disabled={headlineLoading}
+                        >
+                          {headlineLoading && isActive
+                            ? 'Generating…'
+                            : 'Generate 100 articles'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
             <div>
               <label className={labelStyle}>Keywords (optional)</label>
               <textarea
@@ -1036,9 +1228,7 @@ export default function GeneratePage() {
                 disabled={keywordsDisabled}
               />
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Enter up to 20 keywords separated by commas or new lines to run a
-                custom NewsAPI search. Selecting a category feed below switches to
-                curated top headlines and disables manual keywords.
+                {keywordHelperText}
               </p>
               {keywords.length > 0 && !keywordsDisabled && (
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -1267,7 +1457,9 @@ export default function GeneratePage() {
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded shadow disabled:opacity-60 disabled:cursor-not-allowed"
                 disabled={
                   headlineLoading ||
-                  (keywords.length === 0 && !headlineCategory.trim())
+                  (keywords.length === 0 &&
+                    !headlineCategory.trim() &&
+                    headlineDescription.length === 0)
                 }
               >
                 {headlineLoading ? 'Fetching…' : 'Fetch Headlines'}
