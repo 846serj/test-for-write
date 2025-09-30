@@ -254,9 +254,7 @@ export function buildHeadlineRequest(
     return {
       ok: false,
       error: 'The "From" date must be on or before the "To" date.',
-      sanitizedSources,
-      sanitizedDomains,
-      sanitizedExcludeDomains,
+      ...baseResult,
     };
   }
 
