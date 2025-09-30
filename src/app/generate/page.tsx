@@ -20,7 +20,11 @@ import {
   type HeadlineClipboardColumn,
   type HeadlineClipboardFormat,
 } from './headlineClipboardHelpers';
-import type { HeadlineItem, RelatedArticle } from './types';
+import type {
+  HeadlineItem,
+  KeywordHeadlineGroup,
+  RelatedArticle,
+} from './types';
 
 const LANGUAGE_OPTIONS = [
   { value: 'all', label: 'All languages' },
@@ -260,6 +264,9 @@ export default function GeneratePage() {
   const [headlineLoading, setHeadlineLoading] = useState(false);
   const [headlineError, setHeadlineError] = useState<string | null>(null);
   const [headlineResults, setHeadlineResults] = useState<HeadlineItem[]>([]);
+  const [keywordHeadlineGroups, setKeywordHeadlineGroups] = useState<
+    KeywordHeadlineGroup[]
+  >([]);
   const [headlineQueries, setHeadlineQueries] = useState<string[]>([]);
   const [headlineDescription, setHeadlineDescription] = useState('');
   const [activeSiteKey, setActiveSiteKey] = useState<HeadlineSiteKey | null>(
@@ -337,6 +344,22 @@ export default function GeneratePage() {
         message: 'Failed to copy to clipboard. Try again.',
       });
     }
+  };
+
+  const formatPublishedDate = (value?: string) => {
+    if (!value) {
+      return null;
+    }
+
+    const parsedDate = new Date(value);
+    if (!Number.isNaN(parsedDate.getTime())) {
+      return parsedDate.toLocaleString(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+    }
+
+    return value;
   };
 
   const keywordsDisabled =
@@ -442,9 +465,10 @@ export default function GeneratePage() {
     setActiveSiteKey(siteKey);
     setHeadlineCategory('');
     setHeadlineCountry('');
-    const presetKeywords = Array.isArray(preset.keywords)
-      ? [...preset.keywords]
-      : [];
+    const presetKeywords =
+      'keywords' in preset && Array.isArray(preset.keywords)
+        ? [...preset.keywords]
+        : [];
     setKeywordInput(presetKeywords.join(', '));
     setKeywords(presetKeywords);
     setSourcesInput('');
@@ -742,12 +766,14 @@ export default function GeneratePage() {
     if (buildResult.ok === false) {
       setHeadlineError(buildResult.error);
       setHeadlineQueries([]);
+      setKeywordHeadlineGroups([]);
       return;
     }
 
     setHeadlineLoading(true);
     setHeadlineError(null);
     setHeadlineQueries([]);
+    setKeywordHeadlineGroups([]);
 
     try {
       const response = await fetch('/api/headlines', {
@@ -792,11 +818,11 @@ export default function GeneratePage() {
           })()
         : [];
 
-      const normalized: HeadlineItem[] = rawHeadlines.map((item: any) => {
+      const normalizeHeadline = (item: any): HeadlineItem => {
         const source =
-          typeof item.source === 'string'
+          typeof item?.source === 'string'
             ? item.source
-            : item.source?.name ?? item.source?.title ?? '';
+            : item?.source?.name ?? item?.source?.title ?? '';
 
         const relatedArticles: RelatedArticle[] = Array.isArray(item?.relatedArticles)
           ? item.relatedArticles
@@ -834,40 +860,117 @@ export default function GeneratePage() {
           : [];
 
         const description =
-          typeof item.description === 'string'
+          typeof item?.description === 'string'
             ? item.description
-            : typeof item.snippet === 'string'
+            : typeof item?.snippet === 'string'
             ? item.snippet
             : '';
 
+        const matchedQuery =
+          typeof item?.queryUsed === 'string'
+            ? item.queryUsed
+            : typeof item?.query === 'string'
+            ? item.query
+            : typeof item?.generatedBy === 'string'
+            ? item.generatedBy
+            : typeof item?.keyword === 'string'
+            ? item.keyword
+            : typeof item?.searchQuery === 'string'
+            ? item.searchQuery
+            : undefined;
+
+        const keywordValue =
+          typeof item?.keyword === 'string' ? item.keyword : undefined;
+        const queryUsedValue =
+          typeof item?.queryUsed === 'string' ? item.queryUsed : undefined;
+        const searchQueryValue =
+          typeof item?.searchQuery === 'string' ? item.searchQuery : undefined;
+
         return {
-          title: item.title ?? '',
+          title: item?.title ?? '',
           source,
-          url: item.url ?? item.link ?? item.href ?? '',
-          publishedAt: item.publishedAt ?? item.published_at ?? '',
+          url: item?.url ?? item?.link ?? item?.href ?? '',
+          publishedAt: item?.publishedAt ?? item?.published_at ?? '',
           description,
-          matchedQuery:
-            typeof item.queryUsed === 'string'
-              ? item.queryUsed
-              : typeof item.query === 'string'
-              ? item.query
-              : typeof item.generatedBy === 'string'
-              ? item.generatedBy
-              : typeof item.keyword === 'string'
-              ? item.keyword
-              : typeof item.searchQuery === 'string'
-              ? item.searchQuery
-              : undefined,
+          matchedQuery,
           relatedArticles: relatedArticles.length > 0 ? relatedArticles : undefined,
+          keyword: keywordValue,
+          queryUsed: queryUsedValue,
+          searchQuery: searchQueryValue,
         };
-      });
+      };
+
+      const normalized = rawHeadlines.map((item: any) => normalizeHeadline(item));
+
+      const keywordGroups = Array.isArray(data?.keywordHeadlines)
+        ? data.keywordHeadlines
+            .map((group: any) => {
+              if (!group || typeof group !== 'object') {
+                return null;
+              }
+
+              const keyword =
+                typeof group.keyword === 'string' ? group.keyword.trim() : '';
+              if (!keyword) {
+                return null;
+              }
+
+              const groupHeadlinesRaw = Array.isArray(group.headlines)
+                ? group.headlines
+                : [];
+
+              const groupHeadlines = groupHeadlinesRaw
+                .map((item: any) => {
+                  const normalizedHeadline = normalizeHeadline(item);
+                  if (!normalizedHeadline.keyword) {
+                    normalizedHeadline.keyword = keyword;
+                  }
+                  if (!normalizedHeadline.matchedQuery) {
+                    normalizedHeadline.matchedQuery =
+                      normalizedHeadline.keyword ||
+                      normalizedHeadline.searchQuery ||
+                      (typeof group.query === 'string' ? group.query : undefined) ||
+                      keyword;
+                  }
+                  return normalizedHeadline;
+                })
+                .filter((headline: HeadlineItem) =>
+                  Boolean(headline.title || headline.description || headline.url)
+                );
+
+              if (groupHeadlines.length === 0) {
+                return null;
+              }
+
+              const totalResults =
+                typeof group.totalResults === 'number' &&
+                Number.isFinite(group.totalResults)
+                  ? group.totalResults
+                  : undefined;
+
+              const queryValue =
+                typeof group.query === 'string' ? group.query : undefined;
+
+              const builtGroup: KeywordHeadlineGroup = {
+                keyword,
+                query: queryValue,
+                totalResults,
+                headlines: groupHeadlines,
+              };
+
+              return builtGroup;
+            })
+            .filter((group): group is KeywordHeadlineGroup => Boolean(group))
+        : [];
 
       setHeadlineResults(normalized);
+      setKeywordHeadlineGroups(keywordGroups);
       setHeadlineQueries(normalizedQueries);
     } catch (error: any) {
       console.error('[headlines] fetch error:', error);
       setHeadlineError(error?.message || 'Unable to fetch headlines.');
       setHeadlineResults([]);
+      setKeywordHeadlineGroups([]);
       setHeadlineQueries([]);
     } finally {
       setHeadlineLoading(false);
@@ -1517,7 +1620,10 @@ export default function GeneratePage() {
               </p>
             )}
 
-            {!headlineLoading && !headlineError && headlineResults.length === 0 && (
+            {!headlineLoading &&
+              !headlineError &&
+              headlineResults.length === 0 &&
+              keywordHeadlineGroups.length === 0 && (
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Headlines will appear here after fetching.
               </p>
@@ -1541,211 +1647,295 @@ export default function GeneratePage() {
               </div>
             )}
 
-            {headlineResults.length > 0 && (
-              <div className="space-y-4">
+            {(headlineResults.length > 0 || keywordHeadlineGroups.length > 0) && (
+              <div className="space-y-6">
                 <h2 className="text-lg font-semibold">Headlines</h2>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <label
-                      htmlFor="copy-column-select"
-                      className="text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >
-                      Copy selection
-                    </label>
-                    <select
-                      id="copy-column-select"
-                      value={selectedCopyColumn}
-                      onChange={(event) =>
-                        setSelectedCopyColumn(
-                          event.target.value as HeadlineClipboardColumn
-                        )
-                      }
-                      className="block rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-blue-400 dark:focus:ring-blue-400"
-                    >
-                      {HEADLINE_COPY_COLUMN_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleCopyHeadlines('tsv')}
-                      className="inline-flex items-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
-                    >
-                      Copy as TSV
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleCopyHeadlines('csv')}
-                      className="inline-flex items-center rounded-md border border-blue-600 px-4 py-2 text-sm font-semibold text-blue-600 transition hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-blue-500 dark:text-blue-300 dark:hover:bg-blue-900/40 dark:focus:ring-offset-gray-900"
-                    >
-                      Copy as CSV
-                    </button>
-                  </div>
-                </div>
-                {copyFeedback && (
-                  <p
-                    className={clsx(
-                      'text-sm',
-                      copyFeedback.type === 'success'
-                        ? 'text-green-600 dark:text-green-400'
-                        : 'text-red-500 dark:text-red-400'
-                    )}
-                    role="status"
-                    aria-live="polite"
-                  >
-                    {copyFeedback.message}
-                  </p>
-                )}
-                <div className="overflow-x-auto">
-                  <table className="min-w-full table-auto divide-y divide-gray-200 dark:divide-gray-700">
-                    <thead className="bg-gray-100 dark:bg-gray-800">
-                      <tr>
-                        <th
-                          scope="col"
-                          className="min-w-[14rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[45%]"
-                        >
-                          Headline
-                        </th>
-                        <th
-                          scope="col"
-                          className="min-w-[11rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[30%]"
-                        >
-                          Source &amp; Published
-                        </th>
-                        <th
-                          scope="col"
-                          className="min-w-[12rem] max-w-[20rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[25%]"
-                        >
-                          Original Link
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                      {headlineResults.map((headline, index) => {
-                        const headlineUrl = headline.url;
-                        let formattedDate: string | null = null;
-                        if (headline.publishedAt) {
-                          const parsedDate = new Date(headline.publishedAt);
-                          if (!Number.isNaN(parsedDate.getTime())) {
-                            formattedDate = parsedDate.toLocaleString(undefined, {
-                              dateStyle: 'medium',
-                              timeStyle: 'short',
-                            });
-                          } else {
-                            formattedDate = headline.publishedAt;
-                          }
-                        }
 
-                        return (
-                          <tr
-                            key={headlineUrl || index}
-                            className="odd:bg-white even:bg-gray-50 dark:odd:bg-gray-900 dark:even:bg-gray-800"
-                          >
-                            <td className="min-w-[14rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100 sm:w-[45%]">
-                              <div className="font-semibold">
-                                {headline.title || 'Untitled headline'}
-                              </div>
-                              {headline.matchedQuery && (
-                                <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
-                                  Matched query:{' '}
-                                  <span className="font-medium">
-                                    {headline.matchedQuery}
-                                  </span>
-                                </div>
-                              )}
-                              {headline.relatedArticles?.length ? (
-                                <div className="mt-3 space-y-1">
-                                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                    Supporting sources
-                                  </p>
-                                  <ul className="space-y-1">
-                                    {headline.relatedArticles
-                                      .slice(0, 3)
-                                      .map((related, relatedIndex) => {
-                                        const label =
-                                          related.title ||
-                                          related.source ||
-                                          'Related coverage';
-                                        const key = related.url || `${relatedIndex}-${label}`;
-                                        return (
-                                          <li
-                                            key={key}
-                                            className="text-xs text-gray-600 dark:text-gray-400"
-                                          >
-                                            {related.url ? (
-                                              <a
-                                                href={related.url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                                              >
-                                                {label}
-                                              </a>
-                                            ) : (
-                                              <span className="font-medium">{label}</span>
-                                            )}
-                                            {related.source && (
-                                              <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">
-                                                ({related.source})
-                                              </span>
-                                            )}
-                                          </li>
-                                        );
-                                      })}
-                                    {headline.relatedArticles.length > 3 && (
-                                      <li className="text-xs text-gray-500 dark:text-gray-400">
-                                        +{headline.relatedArticles.length - 3} more source
-                                        {headline.relatedArticles.length - 3 === 1 ? '' : 's'}
-                                      </li>
-                                    )}
-                                  </ul>
-                                </div>
-                              ) : null}
-                            </td>
-                            <td className="min-w-[11rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[30%]">
-                              <div className="space-y-1">
-                                {headline.source ? (
-                                  <div className="font-medium text-gray-900 dark:text-gray-100">
-                                    {headline.source}
-                                  </div>
-                                ) : (
-                                  <div className="text-gray-500 dark:text-gray-400">
-                                    Source unavailable
-                                  </div>
-                                )}
-                                {formattedDate && (
-                                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                                    Published {formattedDate}
-                                  </div>
-                                )}
-                              </div>
-                            </td>
-                            <td className="min-w-[12rem] max-w-[20rem] align-top break-words px-4 py-3 text-sm sm:w-[25%]">
-                              {headlineUrl ? (
-                                <a
-                                  href={headlineUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="break-words text-blue-600 hover:underline dark:text-blue-400"
-                                >
-                                  {headlineUrl}
-                                </a>
-                              ) : (
-                                <span className="text-gray-500 dark:text-gray-400">
-                                  No link available
-                                </span>
-                              )}
-                            </td>
+                {headlineResults.length > 0 && (
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <label
+                          htmlFor="copy-column-select"
+                          className="text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >
+                          Copy selection
+                        </label>
+                        <select
+                          id="copy-column-select"
+                          value={selectedCopyColumn}
+                          onChange={(event) =>
+                            setSelectedCopyColumn(
+                              event.target.value as HeadlineClipboardColumn
+                            )
+                          }
+                          className="block rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-blue-400 dark:focus:ring-blue-400"
+                        >
+                          {HEADLINE_COPY_COLUMN_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCopyHeadlines('tsv')}
+                          className="inline-flex items-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
+                        >
+                          Copy as TSV
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyHeadlines('csv')}
+                          className="inline-flex items-center rounded-md border border-blue-600 px-4 py-2 text-sm font-semibold text-blue-600 transition hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-blue-500 dark:text-blue-300 dark:hover:bg-blue-900/40 dark:focus:ring-offset-gray-900"
+                        >
+                          Copy as CSV
+                        </button>
+                      </div>
+                    </div>
+                    {copyFeedback && (
+                      <p
+                        className={clsx(
+                          'text-sm',
+                          copyFeedback.type === 'success'
+                            ? 'text-green-600 dark:text-green-400'
+                            : 'text-red-500 dark:text-red-400'
+                        )}
+                        role="status"
+                        aria-live="polite"
+                      >
+                        {copyFeedback.message}
+                      </p>
+                    )}
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full table-auto divide-y divide-gray-200 dark:divide-gray-700">
+                        <thead className="bg-gray-100 dark:bg-gray-800">
+                          <tr>
+                            <th
+                              scope="col"
+                              className="min-w-[14rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[45%]"
+                            >
+                              Headline
+                            </th>
+                            <th
+                              scope="col"
+                              className="min-w-[11rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[30%]"
+                            >
+                              Source &amp; Published
+                            </th>
+                            <th
+                              scope="col"
+                              className="min-w-[12rem] max-w-[20rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[25%]"
+                            >
+                              Original Link
+                            </th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                          {headlineResults.map((headline, index) => {
+                            const headlineUrl = headline.url;
+                            const formattedDate = formatPublishedDate(
+                              headline.publishedAt
+                            );
+
+                            return (
+                              <tr
+                                key={headlineUrl || index}
+                                className="odd:bg-white even:bg-gray-50 dark:odd:bg-gray-900 dark:even:bg-gray-800"
+                              >
+                                <td className="min-w-[14rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100 sm:w-[45%]">
+                                  <div className="font-semibold">
+                                    {headline.title || 'Untitled headline'}
+                                  </div>
+                                  {headline.matchedQuery && (
+                                    <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
+                                      Matched query:{' '}
+                                      <span className="font-medium">
+                                        {headline.matchedQuery}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {headline.relatedArticles?.length ? (
+                                    <div className="mt-3 space-y-1">
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                        Supporting sources
+                                      </p>
+                                      <ul className="space-y-1">
+                                        {headline.relatedArticles
+                                          .slice(0, 3)
+                                          .map((related, relatedIndex) => {
+                                            const label =
+                                              related.title ||
+                                              related.source ||
+                                              'Related coverage';
+                                            const key =
+                                              related.url || `${relatedIndex}-${label}`;
+                                            return (
+                                              <li
+                                                key={key}
+                                                className="text-xs text-gray-600 dark:text-gray-400"
+                                              >
+                                                {related.url ? (
+                                                  <a
+                                                    href={related.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                                                  >
+                                                    {label}
+                                                  </a>
+                                                ) : (
+                                                  <span className="font-medium">{label}</span>
+                                                )}
+                                                {related.source && (
+                                                  <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">
+                                                    ({related.source})
+                                                  </span>
+                                                )}
+                                              </li>
+                                            );
+                                          })}
+                                        {headline.relatedArticles.length > 3 && (
+                                          <li className="text-xs text-gray-500 dark:text-gray-400">
+                                            +{headline.relatedArticles.length - 3} more source
+                                            {headline.relatedArticles.length - 3 === 1 ? '' : 's'}
+                                          </li>
+                                        )}
+                                      </ul>
+                                    </div>
+                                  ) : null}
+                                </td>
+                                <td className="min-w-[11rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[30%]">
+                                  <div className="space-y-1">
+                                    {headline.source ? (
+                                      <div className="font-medium text-gray-900 dark:text-gray-100">
+                                        {headline.source}
+                                      </div>
+                                    ) : (
+                                      <div className="text-gray-500 dark:text-gray-400">
+                                        Source unavailable
+                                      </div>
+                                    )}
+                                    {formattedDate && (
+                                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                                        Published {formattedDate}
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="min-w-[12rem] max-w-[20rem] align-top break-words px-4 py-3 text-sm sm:w-[25%]">
+                                  {headlineUrl ? (
+                                    <a
+                                      href={headlineUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="break-words text-blue-600 hover:underline dark:text-blue-400"
+                                    >
+                                      {headlineUrl}
+                                    </a>
+                                  ) : (
+                                    <span className="text-gray-500 dark:text-gray-400">
+                                      No link available
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {keywordHeadlineGroups.length > 0 && (
+                  <div className="space-y-4">
+                    <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                      Keyword breakdown
+                    </h3>
+                    <div className="space-y-4">
+                      {keywordHeadlineGroups.map((group) => (
+                        <div
+                          key={group.keyword}
+                          className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900"
+                        >
+                          <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                                {group.keyword}
+                              </p>
+                              {group.query && (
+                                <p className="text-xs text-gray-500 dark:text-gray-400">
+                                  Search query:{' '}
+                                  <span className="font-medium">{group.query}</span>
+                                </p>
+                              )}
+                            </div>
+                            {typeof group.totalResults === 'number' && (
+                              <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                {group.totalResults} total result
+                                {group.totalResults === 1 ? '' : 's'}
+                              </span>
+                            )}
+                          </div>
+                          <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                            {group.headlines.map((headline, index) => {
+                              const headlineUrl = headline.url;
+                              const formattedDate = formatPublishedDate(
+                                headline.publishedAt
+                              );
+                              return (
+                                <li
+                                  key={headlineUrl || `${group.keyword}-${index}`}
+                                  className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300"
+                                >
+                                  <div className="font-semibold text-gray-900 dark:text-gray-100">
+                                    {headline.title || 'Untitled headline'}
+                                  </div>
+                                  <div className="mt-1 flex flex-col gap-1 text-xs text-gray-500 dark:text-gray-400 sm:flex-row sm:items-center sm:gap-2">
+                                    {headline.source && (
+                                      <span className="font-medium">
+                                        {headline.source}
+                                      </span>
+                                    )}
+                                    {formattedDate && <span>{formattedDate}</span>}
+                                  </div>
+                                  {headline.matchedQuery && (
+                                    <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
+                                      Matched query:{' '}
+                                      <span className="font-medium">
+                                        {headline.matchedQuery}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {headline.description && (
+                                    <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                                      {headline.description}
+                                    </p>
+                                  )}
+                                  {headlineUrl && (
+                                    <div className="mt-2">
+                                      <a
+                                        href={headlineUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                                      >
+                                        View article
+                                      </a>
+                                    </div>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

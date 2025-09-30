@@ -711,6 +711,9 @@ type NormalizedHeadline = {
   url: string;
   source: string;
   publishedAt: string;
+  queryUsed?: string;
+  keyword?: string;
+  searchQuery?: string;
 };
 
 type HeadlineResponseEntry = NormalizedHeadline & {
@@ -747,6 +750,17 @@ type HeadlineRankingMetadata = {
 type RankedHeadlineCandidate = {
   candidate: HeadlineCandidate;
   ranking: HeadlineRankingMetadata;
+};
+
+type SearchQueryDefinition = {
+  query: string;
+  type: 'manual' | 'keyword' | 'description';
+  keyword?: string;
+};
+
+type KeywordAggregation = {
+  query: string;
+  candidates: HeadlineCandidate[];
 };
 
 const TOKEN_MIN_LENGTH = 3;
@@ -883,6 +897,18 @@ function addHeadlineIfUnique(
       ) {
         existing.data.description = candidate.description;
         existing.normalizedDescription = normalizeHeadlineText(candidate.description);
+      }
+
+      if (candidate.keyword && !existing.data.keyword) {
+        existing.data.keyword = candidate.keyword;
+      }
+
+      if (candidate.queryUsed && !existing.data.queryUsed) {
+        existing.data.queryUsed = candidate.queryUsed;
+      }
+
+      if (candidate.searchQuery && !existing.data.searchQuery) {
+        existing.data.searchQuery = candidate.searchQuery;
       }
 
       existing.related.push({
@@ -1471,50 +1497,69 @@ function createHeadlinesHandler(
     return NextResponse.json(payload);
   }
 
-  const searchQueryCandidates: string[] = [];
+  const searchQueryCandidates: SearchQueryDefinition[] = [];
 
   if (query) {
-    searchQueryCandidates.push(query);
+    searchQueryCandidates.push({ query, type: 'manual' });
   }
 
-  let keywordQuery: string | null = null;
   if (keywords.length > 0) {
-    keywordQuery = keywords
-      .map((keyword) => keyword.trim())
-      .filter(Boolean)
-      .map((keyword) => (/\s/.test(keyword) ? `"${keyword}"` : keyword))
-      .join(' AND ');
-  }
+    for (const rawKeyword of keywords) {
+      const trimmedKeyword = rawKeyword.trim();
+      if (!trimmedKeyword) {
+        continue;
+      }
 
-  if (keywordQuery) {
-    searchQueryCandidates.push(keywordQuery);
+      const queryValue = /\s/.test(trimmedKeyword)
+        ? `"${trimmedKeyword}"`
+        : trimmedKeyword;
+
+      searchQueryCandidates.push({
+        query: queryValue,
+        type: 'keyword',
+        keyword: trimmedKeyword,
+      });
+    }
   }
 
   if (searchQueryCandidates.length === 0 && description) {
     const sanitized = sanitizeDescriptionQuery(description);
     if (sanitized) {
-      searchQueryCandidates.push(sanitized);
+      searchQueryCandidates.push({
+        query: sanitized,
+        type: 'description',
+      });
     }
   }
 
-  const searchQueries = Array.from(
-    new Set(
-      searchQueryCandidates
-        .map((value) => value?.trim())
-        .filter((value): value is string => Boolean(value))
-    )
-  );
+  const seenQueries = new Set<string>();
+  const searchQueries: SearchQueryDefinition[] = [];
 
-  if (searchQueries.length === 0) {
-    const fallback = keywordQuery;
+  for (const candidate of searchQueryCandidates) {
+    const normalizedQuery = candidate.query.trim();
+    if (!normalizedQuery) {
+      continue;
+    }
 
-    if (fallback) {
-      searchQueries.push(fallback);
-    } else if (description) {
-      const sanitized = sanitizeDescriptionQuery(description);
-      if (sanitized) {
-        searchQueries.push(sanitized);
-      }
+    const dedupeKey = normalizedQuery.toLowerCase();
+    if (seenQueries.has(dedupeKey)) {
+      continue;
+    }
+
+    seenQueries.add(dedupeKey);
+    searchQueries.push({
+      ...candidate,
+      query: normalizedQuery,
+    });
+  }
+
+  if (searchQueries.length === 0 && description) {
+    const sanitized = sanitizeDescriptionQuery(description);
+    if (sanitized) {
+      searchQueries.push({
+        query: sanitized,
+        type: 'description',
+      });
     }
   }
 
@@ -1570,11 +1615,25 @@ function createHeadlinesHandler(
   );
   const serpApiConfigured = Boolean(process.env.SERPAPI_KEY);
   const serpTimeFilter = computeSerpTimeFilter(from, to);
+  const keywordHeadlineResults = new Map<string, KeywordAggregation>();
+  const keywordOrder: string[] = [];
 
-  for (const search of searchQueries) {
+  const ensureKeywordEntry = (keyword: string, queryValue: string) => {
+    let existing = keywordHeadlineResults.get(keyword);
+    if (!existing) {
+      existing = { query: queryValue, candidates: [] };
+      keywordHeadlineResults.set(keyword, existing);
+      keywordOrder.push(keyword);
+    }
+    return existing;
+  };
+
+  for (const searchEntry of searchQueries) {
     if (aggregatedHeadlines.length >= limit) {
       break;
     }
+
+    const search = searchEntry.query;
 
     queriesAttempted.push(search);
     let page = 1;
@@ -1644,6 +1703,11 @@ function createHeadlinesHandler(
           url: article?.url ?? '',
           source: article?.source?.name ?? '',
           publishedAt: article?.publishedAt ?? article?.published_at ?? '',
+          queryUsed: search,
+          searchQuery: search,
+          ...(searchEntry.type === 'keyword' && searchEntry.keyword
+            ? { keyword: searchEntry.keyword }
+            : {}),
         };
 
         if (!normalized.title || !normalized.url) {
@@ -1651,6 +1715,11 @@ function createHeadlinesHandler(
         }
 
         addHeadlineIfUnique(aggregatedHeadlines, normalized);
+
+        if (searchEntry.type === 'keyword' && searchEntry.keyword) {
+          const keywordEntry = ensureKeywordEntry(searchEntry.keyword, search);
+          addHeadlineIfUnique(keywordEntry.candidates, normalized);
+        }
 
         if (aggregatedHeadlines.length >= limit) {
           break;
@@ -1734,7 +1803,18 @@ function createHeadlinesHandler(
             continue;
           }
 
+          normalized.queryUsed = search;
+          normalized.searchQuery = search;
+          if (searchEntry.type === 'keyword' && searchEntry.keyword) {
+            normalized.keyword = searchEntry.keyword;
+          }
+
           addHeadlineIfUnique(aggregatedHeadlines, normalized);
+
+          if (searchEntry.type === 'keyword' && searchEntry.keyword) {
+            const keywordEntry = ensureKeywordEntry(searchEntry.keyword, search);
+            addHeadlineIfUnique(keywordEntry.candidates, normalized);
+          }
         }
       }
     }
@@ -1765,6 +1845,46 @@ function createHeadlinesHandler(
     return NextResponse.json(errorPayload, { status: 502 });
   }
 
+  const keywordGroups = keywordOrder
+    .map((keyword) => {
+      const aggregation = keywordHeadlineResults.get(keyword);
+      if (!aggregation || aggregation.candidates.length === 0) {
+        return null;
+      }
+
+      const rankedGroup = rankHeadlineCandidates(aggregation.candidates);
+      if (rankedGroup.length === 0) {
+        return null;
+      }
+
+      const groupLimit = Math.max(
+        1,
+        Math.min(perQuery, limit, rankedGroup.length)
+      );
+      const headlines = buildHeadlineResponses(
+        rankedGroup.slice(0, groupLimit)
+      );
+
+      if (headlines.length === 0) {
+        return null;
+      }
+
+      return {
+        keyword,
+        query: aggregation.query,
+        totalResults: aggregation.candidates.length,
+        headlines,
+      };
+    })
+    .filter(
+      (group): group is {
+        keyword: string;
+        query: string;
+        totalResults: number;
+        headlines: HeadlineResponseEntry[];
+      } => Boolean(group)
+    );
+
   const rankedCandidates = rankHeadlineCandidates(aggregatedHeadlines);
   const topRanked = rankedCandidates.slice(0, limit);
   const headlineEntries = buildHeadlineResponses(topRanked);
@@ -1794,6 +1914,10 @@ function createHeadlinesHandler(
 
   if (queryWarnings.length > 0) {
     payload.warnings = queryWarnings;
+  }
+
+  if (keywordGroups.length > 0) {
+    payload.keywordHeadlines = keywordGroups;
   }
 
   return NextResponse.json(payload);

@@ -14,4 +14,14 @@ export type HeadlineItem = {
   description?: string;
   matchedQuery?: string;
   relatedArticles?: RelatedArticle[];
+  keyword?: string;
+  queryUsed?: string;
+  searchQuery?: string;
+};
+
+export type KeywordHeadlineGroup = {
+  keyword: string;
+  query?: string;
+  totalResults?: number;
+  headlines: HeadlineItem[];
 };
