@@ -394,6 +394,7 @@ export default function GeneratePage() {
     setActiveSiteRssFeeds([]);
     setHeadlineDescription('');
     setHeadlineLimit(DEFAULT_HEADLINE_LIMIT);
+    setHeadlineCountry('');
     setKeywordInput('');
     setKeywords([]);
   };
@@ -406,7 +407,8 @@ export default function GeneratePage() {
 
     setActiveSiteKey(siteKey);
     setHeadlineCategory('');
-    setHeadlineCountry('');
+    const presetCountry = preset.country ?? '';
+    setHeadlineCountry(presetCountry);
     const presetKeywords =
       'keywords' in preset && Array.isArray(preset.keywords)
         ? [...preset.keywords]
@@ -427,7 +429,7 @@ export default function GeneratePage() {
       description: preset.instructions,
       keywords: presetKeywords,
       category: '',
-      country: '',
+      country: presetCountry,
       rssFeeds: presetRssFeeds,
       presetKey: siteKey,
     });
