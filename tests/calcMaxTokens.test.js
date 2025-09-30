@@ -39,3 +39,8 @@ test('calcMaxTokens falls back for unknown option', () => {
   const approxWords = tokens * 0.75;
   assert(approxWords > 1850 && approxWords < 1950);
 });
+
+test('calcMaxTokens caps output at the model context limit', () => {
+  const tokens = calcMaxTokens('custom', 500, 'gpt-4o');
+  assert.equal(tokens, 16384);
+});

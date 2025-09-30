@@ -374,8 +374,8 @@ const GROK_VERIFICATION_MODEL =
 const FACTUAL_TEMPERATURE = 0.2;
 
 const MODEL_CONTEXT_LIMITS: Record<string, number> = {
-  'gpt-4o': 128000,
-  'gpt-4o-mini': 128000,
+  'gpt-4o': 16384,
+  'gpt-4o-mini': 16384,
   'gpt-4': 8192,
   'gpt-3.5-turbo': 16000,
 };
@@ -2472,7 +2472,15 @@ async function generateWithLinks(
       )?.trim();
       const expansions = parseExpansionResponse(expansionContent || '');
 
-      if (!expansions.length) {
+      if (expansions.length === 0) {
+        if (expansionContent) {
+          const joiner = expansionContent.startsWith('<') ? '' : '\n';
+          content = `${content}${joiner}${expansionContent}`;
+          await runLinkAndCitationRepair();
+          wordCount = countWordsFromHtml(content);
+          attempts += 1;
+          continue;
+        }
         break;
       }
 

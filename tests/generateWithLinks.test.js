@@ -256,11 +256,11 @@ test('generateWithLinks retries when response is truncated', async () => {
     { choices: [{ message: { content: 'partial' }, finish_reason: 'length' }] },
     { choices: [{ message: { content: 'complete' }, finish_reason: 'stop' }] }
   );
-  const content = await generateWithLinks('prompt', 'model', [], undefined, 0, 100);
+  const content = await generateWithLinks('prompt', 'gpt-4o', [], undefined, 0, 100);
   assert.strictEqual(content, 'complete');
   assert.strictEqual(calls.length, 2);
   assert(calls[0].max_tokens >= 800);
-  assert.strictEqual(calls[1].max_tokens, 8000);
+  assert.strictEqual(calls[1].max_tokens, 16384);
   assert.strictEqual(responses.length, 0);
   for (const call of calls) {
     assert.strictEqual(call.messages.length, 1);
@@ -290,9 +290,9 @@ test('generateWithLinks issues a follow-up when content is below minWords', asyn
   assert.strictEqual(calls.length, 2);
   assert.strictEqual(content.includes('revised article now includes'), true);
   const followUpPrompt = calls[1].messages[0].content;
-  assert(followUpPrompt.includes('The previous draft contained approximately'));
-  assert(followUpPrompt.includes('at least 100 words'));
-  assert(followUpPrompt.includes('base prompt'));
+  assert(followUpPrompt.includes('Minimum words: 100.'));
+  assert(/Current words:\s*\d+/.test(followUpPrompt));
+  assert(followUpPrompt.includes('Current article HTML'));
 });
 
 test('findMissingSources detects uncited URLs even with encoded hrefs', () => {
