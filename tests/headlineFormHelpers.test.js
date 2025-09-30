@@ -60,10 +60,40 @@ test('buildHeadlineRequest enforces keywords or category', () => {
     excludeDomainsInput: '',
     category: '',
     country: '',
+    description: '',
   });
 
   assert.strictEqual(result.ok, false);
-  assert.strictEqual(result.error, 'Provide at least one keyword or choose a category feed to fetch headlines.');
+  assert.strictEqual(
+    result.error,
+    'Provide at least one keyword, choose a category feed, or supply custom instructions to fetch headlines.'
+  );
+});
+
+test('buildHeadlineRequest accepts description-only payloads', () => {
+  const instructions = 'Curate upbeat travel pieces about coastal California towns.';
+
+  const result = buildHeadlineRequest({
+    keywords: [],
+    profileQuery: '',
+    profileLanguage: null,
+    limit: 25,
+    sortBy: 'publishedAt',
+    language: 'en',
+    fromDate: '',
+    toDate: '',
+    searchIn: [],
+    sourcesInput: '',
+    domainsInput: '',
+    excludeDomainsInput: '',
+    category: '',
+    country: '',
+    description: instructions,
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.payload.description, instructions);
+  assert.strictEqual(result.payload.limit, 25);
 });
 
 test('buildHeadlineRequest creates keyword-only payloads', () => {
@@ -86,6 +116,7 @@ test('buildHeadlineRequest creates keyword-only payloads', () => {
     excludeDomainsInput: '',
     category: '',
     country: '',
+    description: '',
   });
 
   assert.strictEqual(result.ok, true);
@@ -114,6 +145,7 @@ test('buildHeadlineRequest surfaces conflicts and normalizes language for profil
     excludeDomainsInput: '',
     category: '',
     country: '',
+    description: '',
   });
 
   assert.strictEqual(conflict.ok, false);
@@ -139,6 +171,7 @@ test('buildHeadlineRequest surfaces conflicts and normalizes language for profil
     excludeDomainsInput: '',
     category: '',
     country: '',
+    description: '',
   });
 
   assert.strictEqual(success.ok, true);
@@ -162,6 +195,7 @@ test('buildHeadlineRequest accepts profile queries without keywords', () => {
     excludeDomainsInput: '',
     category: '',
     country: '',
+    description: '',
   });
 
   assert.strictEqual(result.ok, true);
@@ -186,6 +220,7 @@ test('buildHeadlineRequest accepts every configured category feed', () => {
       excludeDomainsInput: '',
       category: feed.value,
       country: '',
+      description: '',
     });
 
     assert.strictEqual(result.ok, true, `Expected ${feed.value} to be accepted`);
@@ -212,6 +247,7 @@ test('buildHeadlineRequest rejects unsupported categories', () => {
     excludeDomainsInput: '',
     category: unsupported,
     country: '',
+    description: '',
   });
 
   assert.strictEqual(result.ok, false);

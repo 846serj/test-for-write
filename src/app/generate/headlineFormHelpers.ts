@@ -21,6 +21,7 @@ export type BuildHeadlineRequestArgs = {
   excludeDomainsInput: string;
   category: string;
   country: string;
+  description: string;
 };
 
 export type BuildHeadlineRequestBaseResult = {
@@ -129,10 +130,12 @@ export function buildHeadlineRequest(
     excludeDomainsInput,
     category,
     country,
+    description,
   } = args;
 
   const trimmedProfileQuery = profileQuery.trim();
   const hasProfileQuery = Boolean(trimmedProfileQuery);
+  const trimmedDescription = description.trim();
 
   const trimmedCategory = category.trim();
   const normalizedCategory = trimmedCategory.toLowerCase();
@@ -211,11 +214,13 @@ export function buildHeadlineRequest(
   if (
     !hasProfileQuery &&
     keywords.length === 0 &&
-    categoryFeedValue === null
+    categoryFeedValue === null &&
+    !trimmedDescription
   ) {
     return {
       ok: false,
-      error: 'Provide at least one keyword or choose a category feed to fetch headlines.',
+      error:
+        'Provide at least one keyword, choose a category feed, or supply custom instructions to fetch headlines.',
       sanitizedSources,
       sanitizedDomains,
       sanitizedExcludeDomains,
@@ -273,6 +278,10 @@ export function buildHeadlineRequest(
     if (sanitizedExcludeDomains.length > 0) {
       payload.excludeDomains = sanitizedExcludeDomains;
     }
+  }
+
+  if (trimmedDescription) {
+    payload.description = trimmedDescription;
   }
 
   return {
