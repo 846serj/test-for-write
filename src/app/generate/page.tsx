@@ -29,7 +29,7 @@ const SORT_BY_OPTIONS = [
   { value: 'popularity' as const, label: 'Most popular' },
 ];
 
-const DEFAULT_HEADLINE_LIMIT = 5;
+const DEFAULT_HEADLINE_LIMIT = 100;
 const HEADLINE_LANGUAGE = 'en';
 
 const NO_RECENT_NEWS_MESSAGE =
@@ -104,9 +104,6 @@ export default function GeneratePage() {
   const [customInstructions, setCustomInstructions] = useState('');
   const [loading, setLoading] = useState(false);
   const [keywords, setKeywords] = useState<string[]>([]);
-  const [headlineLimit, setHeadlineLimit] = useState<number>(
-    DEFAULT_HEADLINE_LIMIT
-  );
   const [headlineLoading, setHeadlineLoading] = useState(false);
   const [headlineError, setHeadlineError] = useState<string | null>(null);
   const [headlineResults, setHeadlineResults] = useState<HeadlineItem[]>([]);
@@ -283,7 +280,6 @@ export default function GeneratePage() {
     setActiveSiteKey(null);
     setActiveSiteRssFeeds([]);
     setHeadlineDescription('');
-    setHeadlineLimit(DEFAULT_HEADLINE_LIMIT);
     setHeadlineCountry('');
     setKeywords([]);
   };
@@ -313,7 +309,6 @@ export default function GeneratePage() {
     setExcludeDomainsInput('');
 
     await handleFetchHeadlines({
-      limit: 100,
       description: preset.instructions,
       keywords: presetKeywords,
       category: '',
@@ -537,7 +532,6 @@ export default function GeneratePage() {
 
   const handleFetchHeadlines = async (
     overrides?: {
-      limit?: number;
       description?: string;
       keywords?: string[];
       category?: string;
@@ -546,10 +540,6 @@ export default function GeneratePage() {
       presetKey?: HeadlineSiteKey | null;
     }
   ) => {
-    const nextLimit =
-      overrides && overrides.limit !== undefined
-        ? overrides.limit
-        : headlineLimit;
     const nextDescriptionRaw =
       overrides && overrides.description !== undefined
         ? overrides.description
@@ -559,10 +549,6 @@ export default function GeneratePage() {
     const nextCategory = overrides?.category ?? headlineCategory;
     const nextCountry = overrides?.country ?? headlineCountry;
     const nextRssFeeds = overrides?.rssFeeds ?? activeSiteRssFeeds;
-
-    if (overrides?.limit !== undefined && overrides.limit !== headlineLimit) {
-      setHeadlineLimit(overrides.limit);
-    }
 
     if (nextDescription !== headlineDescription) {
       setHeadlineDescription(nextDescription);
@@ -588,7 +574,7 @@ export default function GeneratePage() {
       keywords: nextKeywords,
       profileQuery: '',
       profileLanguage: null,
-      limit: nextLimit,
+      limit: DEFAULT_HEADLINE_LIMIT,
       sortBy,
       language: HEADLINE_LANGUAGE,
       fromDate,
@@ -1188,7 +1174,7 @@ export default function GeneratePage() {
                         >
                           {headlineLoading && isActive
                             ? 'Generating…'
-                            : 'Generate 100 articles'}
+                            : `Generate ${DEFAULT_HEADLINE_LIMIT} articles`}
                         </button>
                       </div>
                     </div>
@@ -1196,24 +1182,6 @@ export default function GeneratePage() {
                 })}
               </div>
             </div>
-            <div>
-              <label className={labelStyle}>Number of Headlines</label>
-              <input
-                type="number"
-                min={1}
-                className={clsx(inputStyle, 'w-32')}
-                value={headlineLimit}
-                onChange={(e) => {
-                  const value = Number(e.target.value);
-                  const minimum = Math.max(1, Number.isNaN(value) ? 1 : value);
-                  setHeadlineLimit(minimum);
-                }}
-              />
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Request at least one headline. NewsAPI may apply its own limits.
-              </p>
-            </div>
-
             <div>
               <label className={labelStyle}>Sort by</label>
               <select
