@@ -122,8 +122,6 @@ export default function GeneratePage() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const searchIn: string[] = [];
-  const [sourcesInput, setSourcesInput] = useState('');
-  const [domainsInput, setDomainsInput] = useState('');
   const [excludeDomainsInput, setExcludeDomainsInput] = useState('');
   const [headlineCategory, setHeadlineCategory] = useState('');
   const [headlineCountry, setHeadlineCountry] = useState('');
@@ -304,8 +302,6 @@ export default function GeneratePage() {
         : [];
     setKeywords(presetKeywords);
     setActiveSiteRssFeeds(presetRssFeeds);
-    setSourcesInput('');
-    setDomainsInput('');
     setExcludeDomainsInput('');
 
     await handleFetchHeadlines({
@@ -580,8 +576,6 @@ export default function GeneratePage() {
       fromDate,
       toDate,
       searchIn,
-      sourcesInput,
-      domainsInput,
       excludeDomainsInput,
       category: nextCategory,
       country: nextCountry,
@@ -589,8 +583,6 @@ export default function GeneratePage() {
       rssFeeds: nextRssFeeds,
     });
 
-    setSourcesInput(buildResult.sanitizedSources.join(', '));
-    setDomainsInput(buildResult.sanitizedDomains.join(', '));
     setExcludeDomainsInput(buildResult.sanitizedExcludeDomains.join(', '));
     setActiveSiteRssFeeds(buildResult.sanitizedRssFeeds);
 
@@ -1232,32 +1224,6 @@ export default function GeneratePage() {
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div>
-                <label className={labelStyle}>Sources (comma-separated)</label>
-                <input
-                  type="text"
-                  className={inputStyle}
-                  placeholder="bbc-news, the-verge"
-                  value={sourcesInput}
-                  onChange={(e) => setSourcesInput(e.target.value)}
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Up to 20 NewsAPI source IDs.
-                </p>
-              </div>
-              <div>
-                <label className={labelStyle}>Domains (comma-separated)</label>
-                <input
-                  type="text"
-                  className={inputStyle}
-                  placeholder="techcrunch.com, wired.com"
-                  value={domainsInput}
-                  onChange={(e) => setDomainsInput(e.target.value)}
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Filter to stories hosted on these domains.
-                </p>
-              </div>
               <div className="md:col-span-2">
                 <label className={labelStyle}>Exclude domains (comma-separated)</label>
                 <input
@@ -1272,10 +1238,6 @@ export default function GeneratePage() {
                 </p>
               </div>
             </div>
-
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              NewsAPI prevents combining specific sources with domain filters.
-            </p>
 
             <div className="pt-2">
               <button
