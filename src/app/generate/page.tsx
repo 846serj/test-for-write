@@ -1453,7 +1453,7 @@ export default function GeneratePage() {
 
             <div className="pt-2">
               <button
-                onClick={handleFetchHeadlines}
+                onClick={() => handleFetchHeadlines()}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded shadow disabled:opacity-60 disabled:cursor-not-allowed"
                 disabled={
                   headlineLoading ||
