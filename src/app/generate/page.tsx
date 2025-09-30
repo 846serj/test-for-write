@@ -26,24 +26,6 @@ import type {
   RelatedArticle,
 } from './types';
 
-const LANGUAGE_OPTIONS = [
-  { value: 'all', label: 'All languages' },
-  { value: 'ar', label: 'Arabic' },
-  { value: 'de', label: 'German' },
-  { value: 'en', label: 'English' },
-  { value: 'es', label: 'Spanish' },
-  { value: 'fr', label: 'French' },
-  { value: 'he', label: 'Hebrew' },
-  { value: 'it', label: 'Italian' },
-  { value: 'nl', label: 'Dutch' },
-  { value: 'no', label: 'Norwegian' },
-  { value: 'pt', label: 'Portuguese' },
-  { value: 'ru', label: 'Russian' },
-  { value: 'sv', label: 'Swedish' },
-  { value: 'ud', label: 'Undetermined (ud)' },
-  { value: 'zh', label: 'Chinese' },
-];
-
 const SORT_BY_OPTIONS = [
   { value: 'publishedAt' as const, label: 'Newest first' },
   { value: 'relevancy' as const, label: 'Most relevant' },
@@ -62,6 +44,7 @@ const SEARCH_IN_OPTIONS = SEARCH_IN_ORDER.map((value) => ({
 }));
 
 const DEFAULT_HEADLINE_LIMIT = 5;
+const HEADLINE_LANGUAGE = 'en';
 
 const NO_RECENT_NEWS_MESSAGE =
   'No recent news on this topic. Adjust your topic, keywords, or timeframe to broaden the search for relevant reporting.';
@@ -150,7 +133,6 @@ export default function GeneratePage() {
     null
   );
   const [activeSiteRssFeeds, setActiveSiteRssFeeds] = useState<string[]>([]);
-  const [language, setLanguage] = useState<string>('en');
   const [sortBy, setSortBy] = useState<'publishedAt' | 'relevancy' | 'popularity'>(
     'publishedAt'
   );
@@ -630,7 +612,7 @@ export default function GeneratePage() {
       profileLanguage: null,
       limit: nextLimit,
       sortBy,
-      language,
+      language: HEADLINE_LANGUAGE,
       fromDate,
       toDate,
       searchIn,
@@ -1254,43 +1236,24 @@ export default function GeneratePage() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div>
-                <label className={labelStyle}>Language</label>
-                <select
-                  className={inputStyle}
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
-                >
-                  {LANGUAGE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Defaults to English. Select "All languages" to let NewsAPI decide.
-                </p>
-              </div>
-              <div>
-                <label className={labelStyle}>Sort by</label>
-                <select
-                  className={inputStyle}
-                  value={sortBy}
-                  onChange={(e) =>
-                    setSortBy(e.target.value as 'publishedAt' | 'relevancy' | 'popularity')
-                  }
-                >
-                  {SORT_BY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Newest first mirrors the previous default.
-                </p>
-              </div>
+            <div>
+              <label className={labelStyle}>Sort by</label>
+              <select
+                className={inputStyle}
+                value={sortBy}
+                onChange={(e) =>
+                  setSortBy(e.target.value as 'publishedAt' | 'relevancy' | 'popularity')
+                }
+              >
+                {SORT_BY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Newest first mirrors the previous default.
+              </p>
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
