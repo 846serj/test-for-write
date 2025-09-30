@@ -5,13 +5,9 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
-import {
-  CATEGORY_FEED_OPTIONS,
-} from '../../constants/categoryFeeds';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../constants/lengthOptions';
 import {
   buildHeadlineRequest,
-  normalizeKeywordInput,
   SEARCH_IN_ORDER,
 } from './headlineFormHelpers';
 import {
@@ -69,64 +65,6 @@ const DEFAULT_HEADLINE_LIMIT = 5;
 
 const NO_RECENT_NEWS_MESSAGE =
   'No recent news on this topic. Adjust your topic, keywords, or timeframe to broaden the search for relevant reporting.';
-
-const TOP_HEADLINE_COUNTRY_OPTIONS = [
-  { value: '', label: 'Any country (global)' },
-  { value: 'ae', label: 'United Arab Emirates' },
-  { value: 'ar', label: 'Argentina' },
-  { value: 'at', label: 'Austria' },
-  { value: 'au', label: 'Australia' },
-  { value: 'be', label: 'Belgium' },
-  { value: 'bg', label: 'Bulgaria' },
-  { value: 'br', label: 'Brazil' },
-  { value: 'ca', label: 'Canada' },
-  { value: 'ch', label: 'Switzerland' },
-  { value: 'cn', label: 'China' },
-  { value: 'co', label: 'Colombia' },
-  { value: 'cu', label: 'Cuba' },
-  { value: 'cz', label: 'Czech Republic' },
-  { value: 'de', label: 'Germany' },
-  { value: 'eg', label: 'Egypt' },
-  { value: 'fr', label: 'France' },
-  { value: 'gb', label: 'United Kingdom' },
-  { value: 'gr', label: 'Greece' },
-  { value: 'hk', label: 'Hong Kong' },
-  { value: 'hu', label: 'Hungary' },
-  { value: 'id', label: 'Indonesia' },
-  { value: 'ie', label: 'Ireland' },
-  { value: 'il', label: 'Israel' },
-  { value: 'in', label: 'India' },
-  { value: 'it', label: 'Italy' },
-  { value: 'jp', label: 'Japan' },
-  { value: 'kr', label: 'South Korea' },
-  { value: 'lt', label: 'Lithuania' },
-  { value: 'lv', label: 'Latvia' },
-  { value: 'ma', label: 'Morocco' },
-  { value: 'mx', label: 'Mexico' },
-  { value: 'my', label: 'Malaysia' },
-  { value: 'ng', label: 'Nigeria' },
-  { value: 'nl', label: 'Netherlands' },
-  { value: 'no', label: 'Norway' },
-  { value: 'nz', label: 'New Zealand' },
-  { value: 'ph', label: 'Philippines' },
-  { value: 'pl', label: 'Poland' },
-  { value: 'pt', label: 'Portugal' },
-  { value: 'ro', label: 'Romania' },
-  { value: 'rs', label: 'Serbia' },
-  { value: 'ru', label: 'Russia' },
-  { value: 'sa', label: 'Saudi Arabia' },
-  { value: 'se', label: 'Sweden' },
-  { value: 'sg', label: 'Singapore' },
-  { value: 'si', label: 'Slovenia' },
-  { value: 'sk', label: 'Slovakia' },
-  { value: 'th', label: 'Thailand' },
-  { value: 'tr', label: 'Turkey' },
-  { value: 'tw', label: 'Taiwan' },
-  { value: 'ua', label: 'Ukraine' },
-  { value: 'us', label: 'United States' },
-  { value: 've', label: 'Venezuela' },
-  { value: 'za', label: 'South Africa' },
-];
 
 const HEADLINE_COPY_COLUMN_OPTIONS: {
   value: HeadlineClipboardColumn;
@@ -196,7 +134,6 @@ export default function GeneratePage() {
 
   const [customInstructions, setCustomInstructions] = useState('');
   const [loading, setLoading] = useState(false);
-  const [keywordInput, setKeywordInput] = useState('');
   const [keywords, setKeywords] = useState<string[]>([]);
   const [headlineLimit, setHeadlineLimit] = useState<number>(
     DEFAULT_HEADLINE_LIMIT
@@ -303,13 +240,6 @@ export default function GeneratePage() {
     return value;
   };
 
-  const keywordsDisabled =
-    headlineCategory.trim().length > 0 || activeSiteKey !== null;
-  const keywordHelperText = activeSiteKey
-    ? 'Site presets supply tailored search instructions, so manual keywords are temporarily disabled. Clear the preset to enter your own keywords.'
-    : 'Enter up to 20 keywords separated by commas or new lines to run a custom NewsAPI search. Selecting a category feed below switches to curated top headlines and disables manual keywords.';
-  const showKeywordPreview =
-    keywords.length > 0 && (!keywordsDisabled || activeSiteKey !== null);
   const siteEntries = Object.entries(HEADLINE_SITES) as Array<
     [HeadlineSiteKey, (typeof HEADLINE_SITES)[HeadlineSiteKey]]
   >;
@@ -395,7 +325,6 @@ export default function GeneratePage() {
     setHeadlineDescription('');
     setHeadlineLimit(DEFAULT_HEADLINE_LIMIT);
     setHeadlineCountry('');
-    setKeywordInput('');
     setKeywords([]);
   };
 
@@ -417,7 +346,6 @@ export default function GeneratePage() {
       'rssFeeds' in preset && Array.isArray(preset.rssFeeds)
         ? [...preset.rssFeeds]
         : [];
-    setKeywordInput(presetKeywords.join(', '));
     setKeywords(presetKeywords);
     setActiveSiteRssFeeds(presetRssFeeds);
     setSourcesInput('');
@@ -681,10 +609,7 @@ export default function GeneratePage() {
     }
 
     if (overrides?.keywords) {
-      if (overrides.keywords !== keywords) {
-        setKeywords(overrides.keywords);
-      }
-      setKeywordInput(overrides.keywords.join(', '));
+      setKeywords(overrides.keywords);
     }
 
     if (overrides?.category !== undefined && overrides.category !== headlineCategory) {
@@ -1311,88 +1236,6 @@ export default function GeneratePage() {
                 })}
               </div>
             </div>
-            <div>
-              <label className={labelStyle}>Keywords (optional)</label>
-              <textarea
-                className={clsx(
-                  inputStyle,
-                  keywordsDisabled &&
-                    'cursor-not-allowed opacity-70 dark:opacity-60 focus:ring-0 focus:outline-none'
-                )}
-                rows={3}
-                placeholder="marketing funnel, product launch, conversion rate"
-                value={keywordInput}
-                onChange={(event) => {
-                  const { value } = event.target;
-                  setKeywordInput(value);
-                  setKeywords(normalizeKeywordInput(value));
-                }}
-                disabled={keywordsDisabled}
-              />
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                {keywordHelperText}
-              </p>
-              {showKeywordPreview && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {keywords.map((keyword) => (
-                    <span
-                      key={keyword}
-                      className="inline-flex items-center rounded-full bg-gray-200 px-3 py-1 text-xs font-medium text-gray-800 dark:bg-gray-700 dark:text-gray-100"
-                    >
-                      {keyword}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div>
-                <label className={labelStyle}>Category feed (optional)</label>
-                <select
-                  className={inputStyle}
-                  value={headlineCategory}
-                  onChange={(event) => {
-                    const { value } = event.target;
-                    setHeadlineCategory(value);
-                    if (!value) {
-                      setHeadlineCountry('');
-                    }
-                  }}
-                >
-                  <option value="">Custom search (no category)</option>
-                  {CATEGORY_FEED_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Selecting a category switches to curated top headlines. Leave this
-                  blank to run custom keyword searches and unlock the advanced filters
-                  below.
-                </p>
-              </div>
-              <div>
-                <label className={labelStyle}>Country (optional)</label>
-                <select
-                  className={inputStyle}
-                  value={headlineCountry}
-                  onChange={(event) => setHeadlineCountry(event.target.value)}
-                  disabled={!headlineCategory}
-                >
-                  {TOP_HEADLINE_COUNTRY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Only used when a category feed is selected.
-                </p>
-              </div>
-            </div>
-
             <div>
               <label className={labelStyle}>Number of Headlines</label>
               <input
