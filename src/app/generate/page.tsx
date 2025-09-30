@@ -62,6 +62,28 @@ const headlineSites = {
     name: 'Morning Overview',
     instructions:
       'Surface the biggest overnight developments in global news, markets, and policy with a concise, pre-market tone. Prioritize authoritative sources, highlight why each story matters this morning, and favor items published within the last 12 hours.',
+    keywords: [
+      'Alien Technology',
+      'Ancient Civilizations',
+      'Arctic Expeditions',
+      'Artificial Intelligence',
+      'Banking Regulations',
+      'Climate Agreements',
+      'Cybersecurity Breaches',
+      'Diplomatic Summits',
+      'Economic Indicators',
+      'Election Polls',
+      'Energy Markets',
+      'Extreme Weather',
+      'Global Conflicts',
+      'Healthcare Innovations',
+      'Market Futures',
+      'Public Health Alerts',
+      'Supply Chain Disruptions',
+      'Tech Layoffs',
+      'Transportation Strikes',
+      'Engine Failures',
+    ],
   },
   dailyOverview: {
     name: 'The Daily Overview',
@@ -88,7 +110,14 @@ const headlineSites = {
     instructions:
       'Spotlight Washington state adventures with coverage of national parks, islands, alpine routes, and urban gateways to the outdoors. Emphasize weekend-friendly itineraries, weather-aware planning, and guides that celebrate local experts and tribal lands.',
   },
-} as const;
+} satisfies Record<
+  string,
+  {
+    name: string;
+    instructions: string;
+    keywords?: readonly string[];
+  }
+>;
 
 type HeadlineSiteKey = keyof typeof headlineSites;
 
@@ -315,6 +344,8 @@ export default function GeneratePage() {
   const keywordHelperText = activeSiteKey
     ? 'Site presets supply tailored search instructions, so manual keywords are temporarily disabled. Clear the preset to enter your own keywords.'
     : 'Enter up to 20 keywords separated by commas or new lines to run a custom NewsAPI search. Selecting a category feed below switches to curated top headlines and disables manual keywords.';
+  const showKeywordPreview =
+    keywords.length > 0 && (!keywordsDisabled || activeSiteKey !== null);
   const siteEntries = Object.entries(headlineSites) as Array<
     [HeadlineSiteKey, (typeof headlineSites)[HeadlineSiteKey]]
   >;
@@ -398,6 +429,8 @@ export default function GeneratePage() {
     setActiveSiteKey(null);
     setHeadlineDescription('');
     setHeadlineLimit(DEFAULT_HEADLINE_LIMIT);
+    setKeywordInput('');
+    setKeywords([]);
   };
 
   const handleGenerateSiteHeadlines = async (siteKey: HeadlineSiteKey) => {
@@ -409,8 +442,11 @@ export default function GeneratePage() {
     setActiveSiteKey(siteKey);
     setHeadlineCategory('');
     setHeadlineCountry('');
-    setKeywordInput('');
-    setKeywords([]);
+    const presetKeywords = Array.isArray(preset.keywords)
+      ? [...preset.keywords]
+      : [];
+    setKeywordInput(presetKeywords.join(', '));
+    setKeywords(presetKeywords);
     setSourcesInput('');
     setDomainsInput('');
     setExcludeDomainsInput('');
@@ -418,7 +454,7 @@ export default function GeneratePage() {
     await handleFetchHeadlines({
       limit: 100,
       description: preset.instructions,
-      keywords: [],
+      keywords: presetKeywords,
       category: '',
       country: '',
     });
@@ -666,8 +702,11 @@ export default function GeneratePage() {
       setHeadlineDescription(nextDescription);
     }
 
-    if (overrides?.keywords && overrides.keywords !== keywords) {
-      setKeywords(overrides.keywords);
+    if (overrides?.keywords) {
+      if (overrides.keywords !== keywords) {
+        setKeywords(overrides.keywords);
+      }
+      setKeywordInput(overrides.keywords.join(', '));
     }
 
     if (overrides?.category !== undefined && overrides.category !== headlineCategory) {
@@ -1230,7 +1269,7 @@ export default function GeneratePage() {
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                 {keywordHelperText}
               </p>
-              {keywords.length > 0 && !keywordsDisabled && (
+              {showKeywordPreview && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {keywords.map((keyword) => (
                     <span
