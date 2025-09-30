@@ -6,10 +6,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../constants/lengthOptions';
-import {
-  buildHeadlineRequest,
-  SEARCH_IN_ORDER,
-} from './headlineFormHelpers';
+import { buildHeadlineRequest } from './headlineFormHelpers';
 import {
   formatHeadlinesForClipboard,
   HEADLINE_CLIPBOARD_HEADERS,
@@ -31,17 +28,6 @@ const SORT_BY_OPTIONS = [
   { value: 'relevancy' as const, label: 'Most relevant' },
   { value: 'popularity' as const, label: 'Most popular' },
 ];
-
-const SEARCH_IN_LABELS: Record<(typeof SEARCH_IN_ORDER)[number], string> = {
-  title: 'Title',
-  description: 'Description',
-  content: 'Full content',
-};
-
-const SEARCH_IN_OPTIONS = SEARCH_IN_ORDER.map((value) => ({
-  value,
-  label: SEARCH_IN_LABELS[value],
-}));
 
 const DEFAULT_HEADLINE_LIMIT = 5;
 const HEADLINE_LANGUAGE = 'en';
@@ -138,7 +124,7 @@ export default function GeneratePage() {
   );
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [searchIn, setSearchIn] = useState<string[]>([]);
+  const searchIn: string[] = [];
   const [sourcesInput, setSourcesInput] = useState('');
   const [domainsInput, setDomainsInput] = useState('');
   const [excludeDomainsInput, setExcludeDomainsInput] = useState('');
@@ -291,14 +277,6 @@ export default function GeneratePage() {
 
     setHeadlinesUnlocked(true);
     setActiveTab('headlines');
-  };
-
-  const toggleSearchIn = (value: string) => {
-    setSearchIn((current) =>
-      current.includes(value)
-        ? current.filter((item) => item !== value)
-        : [...current, value]
-    );
   };
 
   const handleClearSitePreset = () => {
@@ -1283,34 +1261,6 @@ export default function GeneratePage() {
                   Must be on or after the "From" date when both are set.
                 </p>
               </div>
-            </div>
-
-            <div>
-              <span className={labelStyle}>Search within</span>
-              <div className="mt-2 flex flex-wrap gap-4">
-                {SEARCH_IN_OPTIONS.map((option) => {
-                  const checkboxId = `search-in-${option.value}`;
-                  return (
-                    <label
-                      key={option.value}
-                      htmlFor={checkboxId}
-                      className="flex items-center space-x-2 text-sm text-gray-700 dark:text-gray-300"
-                    >
-                      <input
-                        id={checkboxId}
-                        type="checkbox"
-                        className="h-4 w-4"
-                        checked={searchIn.includes(option.value)}
-                        onChange={() => toggleSearchIn(option.value)}
-                      />
-                      <span>{option.label}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Leave unchecked to let NewsAPI search across all fields.
-              </p>
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
