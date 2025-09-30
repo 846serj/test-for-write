@@ -20,6 +20,10 @@ import {
   type HeadlineClipboardColumn,
   type HeadlineClipboardFormat,
 } from './headlineClipboardHelpers';
+import {
+  HEADLINE_SITES,
+  type HeadlineSiteKey,
+} from '../../constants/headlineSites';
 import type {
   HeadlineItem,
   KeywordHeadlineGroup,
@@ -60,70 +64,6 @@ const SEARCH_IN_OPTIONS = SEARCH_IN_ORDER.map((value) => ({
   value,
   label: SEARCH_IN_LABELS[value],
 }));
-
-const headlineSites = {
-  morningOverview: {
-    name: 'Morning Overview',
-    instructions:
-      'Surface the biggest overnight developments in global news, markets, and policy with a concise, pre-market tone. Prioritize authoritative sources, highlight why each story matters this morning, and favor items published within the last 12 hours.',
-    keywords: [
-      'Alien Technology',
-      'Ancient Civilizations',
-      'Lost Cities',
-      'Mars Discoveries',
-      'NASA Discoveries',
-      'Astronomy Breakthroughs',
-      'UFO Sightings',
-      'Interstellar Objects',
-      'Time Travel Claims',
-      'Military Technology',
-      'Energy Breakthroughs',
-      'Smartphone Alternatives',
-      'Hidden Structures',
-      'Religious Artifacts',
-      'Mysterious Phenomena',
-      'Underground Cities',
-      'Truck Reliability',
-      'SUV Longevity',
-      'Car Bans & Recalls',
-      'Engine Failures',
-    ],
-  },
-  dailyOverview: {
-    name: 'The Daily Overview',
-    instructions:
-      'Compile a balanced, mid-day digest that blends world affairs, U.S. policy, business trends, science breakthroughs, and notable culture stories. Keep the tone analytical yet approachable and emphasize takeaways a curious professional would want to discuss later in the day.',
-  },
-  flexibleFridge: {
-    name: 'The Flexible Fridge',
-    instructions:
-      'Find inventive food, grocery, and sustainability reporting that helps home cooks stretch ingredients, reduce waste, and plan flexible meals. Prioritize service journalism with actionable tips, seasonal produce spotlights, and clever storage or substitution ideas.',
-  },
-  californiaAdventure: {
-    name: 'California is for Adventure',
-    instructions:
-      'Curate outdoor travel inspiration across California, from coastal escapes to desert and mountain adventures. Feature hike and road-trip ideas, scenic state and national parks, and local guides that highlight responsible recreation and hidden-gem communities.',
-  },
-  oregonAdventure: {
-    name: 'Oregon is for Adventure',
-    instructions:
-      'Highlight Pacific Northwest explorations throughout Oregon, including forest trails, coastline retreats, volcanic landscapes, and craft-forward towns. Seek stories that mix itineraries, gear tips, and conservation-minded advice for year-round adventurers.',
-  },
-  washingtonAdventure: {
-    name: 'Washington is for Adventure',
-    instructions:
-      'Spotlight Washington state adventures with coverage of national parks, islands, alpine routes, and urban gateways to the outdoors. Emphasize weekend-friendly itineraries, weather-aware planning, and guides that celebrate local experts and tribal lands.',
-  },
-} satisfies Record<
-  string,
-  {
-    name: string;
-    instructions: string;
-    keywords?: readonly string[];
-  }
->;
-
-type HeadlineSiteKey = keyof typeof headlineSites;
 
 const DEFAULT_HEADLINE_LIMIT = 5;
 
@@ -272,6 +212,7 @@ export default function GeneratePage() {
   const [activeSiteKey, setActiveSiteKey] = useState<HeadlineSiteKey | null>(
     null
   );
+  const [activeSiteRssFeeds, setActiveSiteRssFeeds] = useState<string[]>([]);
   const [language, setLanguage] = useState<string>('en');
   const [sortBy, setSortBy] = useState<'publishedAt' | 'relevancy' | 'popularity'>(
     'publishedAt'
@@ -369,8 +310,8 @@ export default function GeneratePage() {
     : 'Enter up to 20 keywords separated by commas or new lines to run a custom NewsAPI search. Selecting a category feed below switches to curated top headlines and disables manual keywords.';
   const showKeywordPreview =
     keywords.length > 0 && (!keywordsDisabled || activeSiteKey !== null);
-  const siteEntries = Object.entries(headlineSites) as Array<
-    [HeadlineSiteKey, (typeof headlineSites)[HeadlineSiteKey]]
+  const siteEntries = Object.entries(HEADLINE_SITES) as Array<
+    [HeadlineSiteKey, (typeof HEADLINE_SITES)[HeadlineSiteKey]]
   >;
 
   // Tone of Voice
@@ -450,6 +391,7 @@ export default function GeneratePage() {
 
   const handleClearSitePreset = () => {
     setActiveSiteKey(null);
+    setActiveSiteRssFeeds([]);
     setHeadlineDescription('');
     setHeadlineLimit(DEFAULT_HEADLINE_LIMIT);
     setKeywordInput('');
@@ -457,7 +399,7 @@ export default function GeneratePage() {
   };
 
   const handleGenerateSiteHeadlines = async (siteKey: HeadlineSiteKey) => {
-    const preset = headlineSites[siteKey];
+    const preset = HEADLINE_SITES[siteKey];
     if (!preset) {
       return;
     }
@@ -469,8 +411,13 @@ export default function GeneratePage() {
       'keywords' in preset && Array.isArray(preset.keywords)
         ? [...preset.keywords]
         : [];
+    const presetRssFeeds =
+      'rssFeeds' in preset && Array.isArray(preset.rssFeeds)
+        ? [...preset.rssFeeds]
+        : [];
     setKeywordInput(presetKeywords.join(', '));
     setKeywords(presetKeywords);
+    setActiveSiteRssFeeds(presetRssFeeds);
     setSourcesInput('');
     setDomainsInput('');
     setExcludeDomainsInput('');
@@ -481,6 +428,8 @@ export default function GeneratePage() {
       keywords: presetKeywords,
       category: '',
       country: '',
+      rssFeeds: presetRssFeeds,
+      presetKey: siteKey,
     });
   };
 
@@ -703,6 +652,8 @@ export default function GeneratePage() {
       keywords?: string[];
       category?: string;
       country?: string;
+      rssFeeds?: string[];
+      presetKey?: HeadlineSiteKey | null;
     }
   ) => {
     const nextLimit =
@@ -717,6 +668,7 @@ export default function GeneratePage() {
     const nextKeywords = overrides?.keywords ?? keywords;
     const nextCategory = overrides?.category ?? headlineCategory;
     const nextCountry = overrides?.country ?? headlineCountry;
+    const nextRssFeeds = overrides?.rssFeeds ?? activeSiteRssFeeds;
 
     if (overrides?.limit !== undefined && overrides.limit !== headlineLimit) {
       setHeadlineLimit(overrides.limit);
@@ -741,6 +693,10 @@ export default function GeneratePage() {
       setHeadlineCountry(overrides.country);
     }
 
+    if (overrides?.rssFeeds) {
+      setActiveSiteRssFeeds(overrides.rssFeeds);
+    }
+
     const buildResult = buildHeadlineRequest({
       keywords: nextKeywords,
       profileQuery: '',
@@ -757,11 +713,13 @@ export default function GeneratePage() {
       category: nextCategory,
       country: nextCountry,
       description: nextDescription,
+      rssFeeds: nextRssFeeds,
     });
 
     setSourcesInput(buildResult.sanitizedSources.join(', '));
     setDomainsInput(buildResult.sanitizedDomains.join(', '));
     setExcludeDomainsInput(buildResult.sanitizedExcludeDomains.join(', '));
+    setActiveSiteRssFeeds(buildResult.sanitizedRssFeeds);
 
     if (buildResult.ok === false) {
       setHeadlineError(buildResult.error);

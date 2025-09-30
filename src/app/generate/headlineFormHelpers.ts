@@ -1,6 +1,8 @@
 import { isCategoryFeedValue } from '../../constants/categoryFeeds';
 
 const MAX_LIST_ITEMS = 20;
+const MAX_RSS_FEEDS = 10;
+const ALLOWED_RSS_PROTOCOLS = new Set(['http:', 'https:']);
 
 export const SEARCH_IN_ORDER = ['title', 'description', 'content'] as const;
 
@@ -22,12 +24,14 @@ export type BuildHeadlineRequestArgs = {
   category: string;
   country: string;
   description: string;
+  rssFeeds?: string[];
 };
 
 export type BuildHeadlineRequestBaseResult = {
   sanitizedSources: string[];
   sanitizedDomains: string[];
   sanitizedExcludeDomains: string[];
+  sanitizedRssFeeds: string[];
 };
 
 export type BuildHeadlineRequestSuccess = BuildHeadlineRequestBaseResult & {
@@ -55,6 +59,50 @@ export function sanitizeListInput(
     .map((item) => (lowercase ? item.toLowerCase() : item));
 
   return Array.from(new Set(entries)).slice(0, MAX_LIST_ITEMS);
+}
+
+function sanitizeRssFeeds(feeds: string[] | undefined): string[] {
+  if (!Array.isArray(feeds) || feeds.length === 0) {
+    return [];
+  }
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of feeds) {
+    if (typeof entry !== 'string') {
+      continue;
+    }
+
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    try {
+      const parsed = new URL(trimmed);
+      if (!ALLOWED_RSS_PROTOCOLS.has(parsed.protocol)) {
+        continue;
+      }
+
+      const normalizedUrl = parsed.toString();
+      const key = normalizedUrl.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      normalized.push(normalizedUrl);
+
+      if (normalized.length >= MAX_RSS_FEEDS) {
+        break;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return normalized;
 }
 
 export function normalizeKeywordInput(value: string): string[] {
@@ -131,6 +179,7 @@ export function buildHeadlineRequest(
     category,
     country,
     description,
+    rssFeeds,
   } = args;
 
   const trimmedProfileQuery = profileQuery.trim();
@@ -149,14 +198,20 @@ export function buildHeadlineRequest(
   const sanitizedExcludeDomains = sanitizeListInput(excludeDomainsInput, {
     lowercase: true,
   });
+  const sanitizedRssFeeds = sanitizeRssFeeds(rssFeeds);
+
+  const baseResult: BuildHeadlineRequestBaseResult = {
+    sanitizedSources,
+    sanitizedDomains,
+    sanitizedExcludeDomains,
+    sanitizedRssFeeds,
+  };
 
   if (normalizedCategory && categoryFeedValue === null) {
     return {
       ok: false,
       error: `Unsupported category feed: ${trimmedCategory || category}`,
-      sanitizedSources,
-      sanitizedDomains,
-      sanitizedExcludeDomains,
+      ...baseResult,
     };
   }
 
@@ -168,9 +223,7 @@ export function buildHeadlineRequest(
       ok: false,
       error:
         'Choose either specific sources or domain filters. NewsAPI does not allow combining them.',
-      sanitizedSources,
-      sanitizedDomains,
-      sanitizedExcludeDomains,
+      ...baseResult,
     };
   }
 
@@ -181,9 +234,7 @@ export function buildHeadlineRequest(
     return {
       ok: false,
       error: 'Please provide a valid "From" date in YYYY-MM-DD format.',
-      sanitizedSources,
-      sanitizedDomains,
-      sanitizedExcludeDomains,
+      ...baseResult,
     };
   }
 
@@ -191,9 +242,7 @@ export function buildHeadlineRequest(
     return {
       ok: false,
       error: 'Please provide a valid "To" date in YYYY-MM-DD format.',
-      sanitizedSources,
-      sanitizedDomains,
-      sanitizedExcludeDomains,
+      ...baseResult,
     };
   }
 
@@ -221,9 +270,7 @@ export function buildHeadlineRequest(
       ok: false,
       error:
         'Provide at least one keyword, choose a category feed, or supply custom instructions to fetch headlines.',
-      sanitizedSources,
-      sanitizedDomains,
-      sanitizedExcludeDomains,
+      ...baseResult,
     };
   }
 
@@ -284,11 +331,13 @@ export function buildHeadlineRequest(
     payload.description = trimmedDescription;
   }
 
+  if (sanitizedRssFeeds.length > 0) {
+    payload.rssFeeds = sanitizedRssFeeds;
+  }
+
   return {
     ok: true,
     payload,
-    sanitizedSources,
-    sanitizedDomains,
-    sanitizedExcludeDomains,
+    ...baseResult,
   };
 }

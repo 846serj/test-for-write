@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { XMLParser } from 'fast-xml-parser';
 import {
   CATEGORY_FEED_SET,
   type CategoryFeedValue,
@@ -11,6 +12,9 @@ const MAX_LIMIT = 50;
 const DEFAULT_LIMIT = 5;
 const MAX_FILTER_LIST_ITEMS = 20;
 const MAX_DESCRIPTION_QUERY_LENGTH = 500;
+const MAX_RSS_FEEDS = 10;
+const MAX_RSS_ITEMS_PER_FEED = 50;
+const RSS_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 
 const LANGUAGE_CODES = [
   'ar',
@@ -355,6 +359,60 @@ function normalizeDomains(
   });
 }
 
+function normalizeRssFeeds(raw: unknown): string[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+
+  const entries: unknown[] = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+    ? raw.split(/[\r\n,;]+/)
+    : (() => {
+        throw new Error('rssFeeds must be provided as an array or string list of URLs');
+      })();
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of entries) {
+    if (typeof entry !== 'string') {
+      throw new Error('rssFeeds must contain only string URLs');
+    }
+
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      throw new Error(`Invalid RSS feed URL: ${trimmed}`);
+    }
+
+    if (!RSS_ALLOWED_PROTOCOLS.has(parsed.protocol)) {
+      throw new Error(`RSS feeds must use http or https URLs: ${trimmed}`);
+    }
+
+    const normalizedUrl = parsed.toString();
+    const key = normalizedUrl.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    normalized.push(normalizedUrl);
+
+    if (normalized.length >= MAX_RSS_FEEDS) {
+      break;
+    }
+  }
+
+  return normalized;
+}
+
 type HeadlinesRequestBody = {
   query?: unknown;
   keywords?: unknown;
@@ -370,6 +428,7 @@ type HeadlinesRequestBody = {
   excludeDomains?: unknown;
   category?: unknown;
   country?: unknown;
+  rssFeeds?: unknown;
 };
 
 type OpenAIClient = {
@@ -473,6 +532,103 @@ function normalizeStringList(
   }
 
   return normalized;
+}
+
+function toArray<T>(value: T | T[] | undefined | null): T[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  return [value];
+}
+
+function extractTextValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const text = extractTextValue(entry);
+      if (text) {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  if (value && typeof value === 'object') {
+    const candidate =
+      (value as Record<string, unknown>)['#text'] ??
+      (value as Record<string, unknown>).text ??
+      (value as Record<string, unknown>).value;
+    if (typeof candidate === 'string') {
+      return candidate.trim();
+    }
+  }
+
+  return '';
+}
+
+function extractLinkValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const link = extractLinkValue(entry);
+      if (link) {
+        return link;
+      }
+    }
+    return '';
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const href = record['@_href'] ?? record.href ?? record.url;
+    if (typeof href === 'string') {
+      return href.trim();
+    }
+
+    const text = record['#text'];
+    if (typeof text === 'string') {
+      return text.trim();
+    }
+  }
+
+  return '';
+}
+
+function normalizeRssDateValue(value: unknown): string {
+  const text = extractTextValue(value);
+  if (!text) {
+    return '';
+  }
+
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString();
+  }
+
+  return text;
+}
+
+function resolveHostnameFromUrl(url: string): string {
+  if (!url) {
+    return '';
+  }
+
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
 }
 
 function extractSectionList(text: string, labels: string[]): string[] {
@@ -716,6 +872,141 @@ type NormalizedHeadline = {
   searchQuery?: string;
 };
 
+function extractRssFeedPayload(parsed: unknown): {
+  feedTitle: string;
+  items: unknown[];
+} {
+  if (!parsed || typeof parsed !== 'object') {
+    return { feedTitle: '', items: [] };
+  }
+
+  const root = parsed as Record<string, unknown>;
+
+  const resolveChannel = (value: unknown) => {
+    const channel = value && typeof value === 'object'
+      ? (value as Record<string, unknown>).channel ?? value
+      : value;
+    const resolved = Array.isArray(channel) ? channel[0] : channel;
+    return resolved && typeof resolved === 'object'
+      ? (resolved as Record<string, unknown>)
+      : null;
+  };
+
+  let feedTitle = '';
+  let items: unknown[] = [];
+
+  const rss = root.rss ?? root.RSS;
+  const rssChannel = resolveChannel(rss);
+  if (rssChannel) {
+    feedTitle = extractTextValue(rssChannel.title) || feedTitle;
+    items = toArray(rssChannel.item ?? rssChannel.items);
+  }
+
+  if (items.length === 0) {
+    const directChannel = resolveChannel(root.channel);
+    if (directChannel) {
+      feedTitle = extractTextValue(directChannel.title) || feedTitle;
+      items = toArray(directChannel.item ?? directChannel.items);
+    }
+  }
+
+  if (items.length === 0) {
+    const feedCandidate = root.feed ?? root.Feed ?? parsed;
+    const feedObject = Array.isArray(feedCandidate)
+      ? feedCandidate[0]
+      : feedCandidate;
+    if (feedObject && typeof feedObject === 'object') {
+      const feedRecord = feedObject as Record<string, unknown>;
+      feedTitle = extractTextValue(feedRecord.title) || feedTitle;
+      items = toArray(
+        feedRecord.entry ??
+          feedRecord.entries ??
+          feedRecord.item ??
+          feedRecord.items
+      );
+    }
+  }
+
+  return { feedTitle, items };
+}
+
+function mapRssItemsToHeadlines(
+  items: unknown[],
+  feedTitle: string,
+  feedUrl: string,
+  queryLabel: string
+): NormalizedHeadline[] {
+  if (!Array.isArray(items) || items.length === 0) {
+    return [];
+  }
+
+  const normalized: NormalizedHeadline[] = [];
+  const limit = Math.min(MAX_RSS_ITEMS_PER_FEED, items.length);
+
+  for (let index = 0; index < limit; index += 1) {
+    const rawItem = items[index];
+    if (!rawItem || typeof rawItem !== 'object') {
+      continue;
+    }
+
+    const record = rawItem as Record<string, unknown>;
+    const title = extractTextValue(record.title);
+    const linkCandidates =
+      record.link ?? record.url ?? record.guid ?? record.id ?? null;
+    let url = extractLinkValue(linkCandidates);
+
+    if (!title || !url) {
+      continue;
+    }
+
+    try {
+      const parsedUrl = new URL(url);
+      if (!RSS_ALLOWED_PROTOCOLS.has(parsedUrl.protocol)) {
+        continue;
+      }
+      url = parsedUrl.toString();
+    } catch {
+      continue;
+    }
+
+    const description =
+      extractTextValue(record.description) ||
+      extractTextValue(record.summary) ||
+      extractTextValue(record['content:encoded']) ||
+      extractTextValue(record.content) ||
+      extractTextValue(record.subtitle) ||
+      '';
+
+    const publishedAt = normalizeRssDateValue(
+      record.pubDate ??
+        record.pubdate ??
+        record.published ??
+        record.updated ??
+        record['dc:date']
+    );
+
+    const itemSource =
+      extractTextValue(record.source) ||
+      extractTextValue(record['dc:creator']) ||
+      '';
+
+    const source =
+      itemSource || feedTitle || resolveHostnameFromUrl(url) || 'RSS Feed';
+
+    normalized.push({
+      title,
+      description,
+      url,
+      source,
+      publishedAt,
+      queryUsed: queryLabel,
+      searchQuery: feedUrl,
+    });
+  }
+
+  return normalized;
+}
+
 type HeadlineResponseEntry = NormalizedHeadline & {
   relatedArticles?: RelatedArticle[];
   ranking?: HeadlineRankingMetadata;
@@ -756,6 +1047,7 @@ type SearchQueryDefinition = {
   query: string;
   type: 'manual' | 'keyword' | 'description';
   keyword?: string;
+  fallback?: boolean;
 };
 
 type KeywordAggregation = {
@@ -1283,13 +1575,15 @@ function createHeadlinesHandler(
   let sources: string[];
   let domains: string[];
   let excludeDomains: string[];
+  let rssFeeds: string[];
   try {
     sources = normalizeSources(body.sources);
     domains = normalizeDomains(body.domains, 'domains');
     excludeDomains = normalizeDomains(body.excludeDomains, 'excludeDomains');
+    rssFeeds = normalizeRssFeeds(body.rssFeeds);
   } catch (error) {
     return badRequest(
-      error instanceof Error ? error.message : 'Invalid domain filters'
+      error instanceof Error ? error.message : 'Invalid domain or RSS feed filters'
     );
   }
 
@@ -1498,27 +1792,38 @@ function createHeadlinesHandler(
   }
 
   const searchQueryCandidates: SearchQueryDefinition[] = [];
+  const fallbackKeywordCandidates: SearchQueryDefinition[] = [];
 
   if (query) {
     searchQueryCandidates.push({ query, type: 'manual' });
   }
 
   if (keywords.length > 0) {
-    for (const rawKeyword of keywords) {
-      const trimmedKeyword = rawKeyword.trim();
-      if (!trimmedKeyword) {
-        continue;
+    const trimmedKeywords = keywords
+      .map((keyword) => keyword.trim())
+      .filter((keyword) => keyword.length > 0);
+
+    if (trimmedKeywords.length > 0) {
+      const combinedQuery = trimmedKeywords
+        .map((keyword) => (/\s/.test(keyword) ? `"${keyword}"` : keyword))
+        .join(' AND ');
+
+      if (combinedQuery) {
+        searchQueryCandidates.push({ query: combinedQuery, type: 'keyword' });
       }
 
-      const queryValue = /\s/.test(trimmedKeyword)
-        ? `"${trimmedKeyword}"`
-        : trimmedKeyword;
+      for (const trimmedKeyword of trimmedKeywords) {
+        const queryValue = /\s/.test(trimmedKeyword)
+          ? `"${trimmedKeyword}"`
+          : trimmedKeyword;
 
-      searchQueryCandidates.push({
-        query: queryValue,
-        type: 'keyword',
-        keyword: trimmedKeyword,
-      });
+        fallbackKeywordCandidates.push({
+          query: queryValue,
+          type: 'keyword',
+          keyword: trimmedKeyword,
+          fallback: true,
+        });
+      }
     }
   }
 
@@ -1535,7 +1840,10 @@ function createHeadlinesHandler(
   const seenQueries = new Set<string>();
   const searchQueries: SearchQueryDefinition[] = [];
 
-  for (const candidate of searchQueryCandidates) {
+  for (const candidate of [
+    ...searchQueryCandidates,
+    ...fallbackKeywordCandidates,
+  ]) {
     const normalizedQuery = candidate.query.trim();
     if (!normalizedQuery) {
       continue;
@@ -1609,10 +1917,8 @@ function createHeadlinesHandler(
   const queriesAttempted: string[] = [];
   const queryWarnings: string[] = [];
   let successfulQueries = 0;
-  const perQuery = Math.max(
-    1,
-    Math.ceil(limit / Math.max(1, searchQueries.length))
-  );
+  const primaryQueryCount = searchQueries.filter((entry) => !entry.fallback).length;
+  const perQuery = Math.max(1, Math.ceil(limit / Math.max(1, primaryQueryCount)));
   const serpApiConfigured = Boolean(process.env.SERPAPI_KEY);
   const serpTimeFilter = computeSerpTimeFilter(from, to);
   const keywordHeadlineResults = new Map<string, KeywordAggregation>();
@@ -1641,7 +1947,13 @@ function createHeadlinesHandler(
 
     while (aggregatedHeadlines.length < limit) {
       const remaining = limit - aggregatedHeadlines.length;
-      const pageSize = Math.min(remaining, perQuery);
+      const basePageSize = Math.min(remaining, perQuery);
+      const isCombinedKeywordQuery =
+        searchEntry.type === 'keyword' && !('keyword' in searchEntry);
+      const requestedPageSize = isCombinedKeywordQuery
+        ? remaining
+        : basePageSize;
+      const pageSize = Math.max(1, requestedPageSize);
       const requestUrl = buildUrl(search, pageSize, page);
 
       let response: Response;
@@ -1819,12 +2131,91 @@ function createHeadlinesHandler(
       }
     }
 
-    if (querySucceeded) {
-      successfulQueries += 1;
-    }
+  if (querySucceeded) {
+    successfulQueries += 1;
+  }
 
-    if (aggregatedHeadlines.length >= limit) {
-      break;
+  if (aggregatedHeadlines.length >= limit) {
+    break;
+  }
+}
+
+  if (rssFeeds.length > 0 && aggregatedHeadlines.length < limit) {
+    const xmlParser = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '@_',
+    });
+
+    for (const feedUrl of rssFeeds) {
+      if (aggregatedHeadlines.length >= limit) {
+        break;
+      }
+
+      let queryLabel = `RSS: ${feedUrl}`;
+      let addedFromFeed = 0;
+
+      try {
+        const response = await requester(feedUrl);
+        if (!response.ok) {
+          queryWarnings.push(
+            `RSS feed request failed (${response.status}) for ${feedUrl}`
+          );
+          queriesAttempted.push(queryLabel);
+          continue;
+        }
+
+        const bodyText = await response.text();
+        if (!bodyText.trim()) {
+          queryWarnings.push(`RSS feed returned empty response for ${feedUrl}`);
+          queriesAttempted.push(queryLabel);
+          continue;
+        }
+
+        let parsedFeed: unknown;
+        try {
+          parsedFeed = xmlParser.parse(bodyText);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Unable to parse RSS XML';
+          queryWarnings.push(`RSS feed parse error (${feedUrl}): ${message}`);
+          queriesAttempted.push(queryLabel);
+          continue;
+        }
+
+        const { feedTitle, items } = extractRssFeedPayload(parsedFeed);
+        if (feedTitle) {
+          queryLabel = `RSS: ${feedTitle}`;
+        }
+
+        const headlines = mapRssItemsToHeadlines(
+          items,
+          feedTitle,
+          feedUrl,
+          queryLabel
+        );
+
+        for (const headline of headlines) {
+          if (aggregatedHeadlines.length >= limit) {
+            break;
+          }
+
+          if (addHeadlineIfUnique(aggregatedHeadlines, headline)) {
+            addedFromFeed += 1;
+          }
+        }
+
+        if (addedFromFeed > 0) {
+          successfulQueries += 1;
+        } else {
+          queryWarnings.push(`No headlines found for RSS feed: ${feedUrl}`);
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Unknown RSS error';
+        queryWarnings.push(`RSS feed error (${feedUrl}): ${message}`);
+      }
+
+      queriesAttempted.push(queryLabel);
     }
   }
 

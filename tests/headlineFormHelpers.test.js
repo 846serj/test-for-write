@@ -117,6 +117,7 @@ test('buildHeadlineRequest creates keyword-only payloads', () => {
     category: '',
     country: '',
     description: '',
+    rssFeeds: ['https://example.com/feed'],
   });
 
   assert.strictEqual(result.ok, true);
@@ -126,7 +127,9 @@ test('buildHeadlineRequest creates keyword-only payloads', () => {
     keywords,
     searchIn: ['description', 'content'],
     sources: ['bbc-news', 'the-verge'],
+    rssFeeds: ['https://example.com/feed'],
   });
+  assert.deepStrictEqual(result.sanitizedRssFeeds, ['https://example.com/feed']);
 });
 
 test('buildHeadlineRequest surfaces conflicts and normalizes language for profile queries', () => {
@@ -177,6 +180,42 @@ test('buildHeadlineRequest surfaces conflicts and normalizes language for profil
   assert.strictEqual(success.ok, true);
   assert.strictEqual(success.payload.query, 'Tech policy updates');
   assert.strictEqual(success.payload.language, 'es');
+});
+
+test('buildHeadlineRequest sanitizes rss feeds', () => {
+  const result = buildHeadlineRequest({
+    keywords: ['space'],
+    profileQuery: '',
+    profileLanguage: null,
+    limit: 5,
+    sortBy: 'publishedAt',
+    language: 'en',
+    fromDate: '',
+    toDate: '',
+    searchIn: [],
+    sourcesInput: '',
+    domainsInput: '',
+    excludeDomainsInput: '',
+    category: '',
+    country: '',
+    description: '',
+    rssFeeds: [
+      ' https://example.com/feed ',
+      'HTTP://example.com/feed',
+      'not-a-url',
+      'ftp://example.com/feed',
+    ],
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(result.payload.rssFeeds, [
+    'https://example.com/feed',
+    'http://example.com/feed',
+  ]);
+  assert.deepStrictEqual(result.sanitizedRssFeeds, [
+    'https://example.com/feed',
+    'http://example.com/feed',
+  ]);
 });
 
 test('buildHeadlineRequest accepts profile queries without keywords', () => {
