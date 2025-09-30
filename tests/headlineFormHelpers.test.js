@@ -55,8 +55,6 @@ test('buildHeadlineRequest enforces keywords or category', () => {
     fromDate: '',
     toDate: '',
     searchIn: [],
-    sourcesInput: '',
-    domainsInput: '',
     excludeDomainsInput: '',
     category: '',
     country: '',
@@ -83,8 +81,6 @@ test('buildHeadlineRequest accepts description-only payloads', () => {
     fromDate: '',
     toDate: '',
     searchIn: [],
-    sourcesInput: '',
-    domainsInput: '',
     excludeDomainsInput: '',
     category: '',
     country: '',
@@ -111,9 +107,7 @@ test('buildHeadlineRequest creates keyword-only payloads', () => {
     fromDate: '',
     toDate: '',
     searchIn: ['description', 'content'],
-    sourcesInput: 'bbc-news, the-verge',
-    domainsInput: '',
-    excludeDomainsInput: '',
+    excludeDomainsInput: 'Example.com, example.com ',
     category: '',
     country: '',
     description: '',
@@ -126,40 +120,15 @@ test('buildHeadlineRequest creates keyword-only payloads', () => {
     sortBy: 'relevancy',
     keywords,
     searchIn: ['description', 'content'],
-    sources: ['bbc-news', 'the-verge'],
+    excludeDomains: ['example.com'],
     rssFeeds: ['https://example.com/feed'],
   });
+  assert.deepStrictEqual(result.sanitizedExcludeDomains, ['example.com']);
   assert.deepStrictEqual(result.sanitizedRssFeeds, ['https://example.com/feed']);
 });
 
-test('buildHeadlineRequest surfaces conflicts and normalizes language for profile queries', () => {
-  const conflict = buildHeadlineRequest({
-    keywords: [],
-    profileQuery: 'Tech policy updates',
-    profileLanguage: 'ES',
-    limit: 4,
-    sortBy: 'publishedAt',
-    language: 'all',
-    fromDate: '',
-    toDate: '',
-    searchIn: [],
-    sourcesInput: 'bbc-news, bbc-news',
-    domainsInput: 'example.com',
-    excludeDomainsInput: '',
-    category: '',
-    country: '',
-    description: '',
-  });
-
-  assert.strictEqual(conflict.ok, false);
-  assert.strictEqual(
-    conflict.error,
-    'Choose either specific sources or domain filters. NewsAPI does not allow combining them.'
-  );
-  assert.deepStrictEqual(conflict.sanitizedSources, ['bbc-news']);
-  assert.deepStrictEqual(conflict.sanitizedDomains, ['example.com']);
-
-  const success = buildHeadlineRequest({
+test('buildHeadlineRequest normalizes language for profile queries', () => {
+  const result = buildHeadlineRequest({
     keywords: [],
     profileQuery: '  Tech policy updates  ',
     profileLanguage: 'ES',
@@ -169,17 +138,15 @@ test('buildHeadlineRequest surfaces conflicts and normalizes language for profil
     fromDate: '',
     toDate: '',
     searchIn: [],
-    sourcesInput: '',
-    domainsInput: '',
     excludeDomainsInput: '',
     category: '',
     country: '',
     description: '',
   });
 
-  assert.strictEqual(success.ok, true);
-  assert.strictEqual(success.payload.query, 'Tech policy updates');
-  assert.strictEqual(success.payload.language, 'es');
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.payload.query, 'Tech policy updates');
+  assert.strictEqual(result.payload.language, 'es');
 });
 
 test('buildHeadlineRequest sanitizes rss feeds', () => {
@@ -193,8 +160,6 @@ test('buildHeadlineRequest sanitizes rss feeds', () => {
     fromDate: '',
     toDate: '',
     searchIn: [],
-    sourcesInput: '',
-    domainsInput: '',
     excludeDomainsInput: '',
     category: '',
     country: '',
@@ -229,8 +194,6 @@ test('buildHeadlineRequest accepts profile queries without keywords', () => {
     fromDate: '',
     toDate: '',
     searchIn: [],
-    sourcesInput: '',
-    domainsInput: '',
     excludeDomainsInput: '',
     category: '',
     country: '',
@@ -254,8 +217,6 @@ test('buildHeadlineRequest accepts every configured category feed', () => {
       fromDate: '',
       toDate: '',
       searchIn: [],
-      sourcesInput: '',
-      domainsInput: '',
       excludeDomainsInput: '',
       category: feed.value,
       country: '',
@@ -281,8 +242,6 @@ test('buildHeadlineRequest rejects unsupported categories', () => {
     fromDate: '',
     toDate: '',
     searchIn: [],
-    sourcesInput: '',
-    domainsInput: '',
     excludeDomainsInput: '',
     category: unsupported,
     country: '',

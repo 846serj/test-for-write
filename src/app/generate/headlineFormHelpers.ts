@@ -18,8 +18,6 @@ export type BuildHeadlineRequestArgs = {
   fromDate: string;
   toDate: string;
   searchIn: string[];
-  sourcesInput: string;
-  domainsInput: string;
   excludeDomainsInput: string;
   category: string;
   country: string;
@@ -28,8 +26,6 @@ export type BuildHeadlineRequestArgs = {
 };
 
 export type BuildHeadlineRequestBaseResult = {
-  sanitizedSources: string[];
-  sanitizedDomains: string[];
   sanitizedExcludeDomains: string[];
   sanitizedRssFeeds: string[];
 };
@@ -173,8 +169,6 @@ export function buildHeadlineRequest(
     fromDate,
     toDate,
     searchIn,
-    sourcesInput,
-    domainsInput,
     excludeDomainsInput,
     category,
     country,
@@ -193,16 +187,12 @@ export function buildHeadlineRequest(
     ? normalizedCategory
     : null;
 
-  const sanitizedSources = sanitizeListInput(sourcesInput);
-  const sanitizedDomains = sanitizeListInput(domainsInput, { lowercase: true });
   const sanitizedExcludeDomains = sanitizeListInput(excludeDomainsInput, {
     lowercase: true,
   });
   const sanitizedRssFeeds = sanitizeRssFeeds(rssFeeds);
 
   const baseResult: BuildHeadlineRequestBaseResult = {
-    sanitizedSources,
-    sanitizedDomains,
     sanitizedExcludeDomains,
     sanitizedRssFeeds,
   };
@@ -211,18 +201,6 @@ export function buildHeadlineRequest(
     return {
       ok: false,
       error: `Unsupported category feed: ${trimmedCategory || category}`,
-      ...baseResult,
-    };
-  }
-
-  if (
-    sanitizedSources.length > 0 &&
-    (sanitizedDomains.length > 0 || sanitizedExcludeDomains.length > 0)
-  ) {
-    return {
-      ok: false,
-      error:
-        'Choose either specific sources or domain filters. NewsAPI does not allow combining them.',
       ...baseResult,
     };
   }
@@ -310,14 +288,6 @@ export function buildHeadlineRequest(
 
     if (orderedSearchIn.length > 0) {
       payload.searchIn = orderedSearchIn;
-    }
-
-    if (sanitizedSources.length > 0) {
-      payload.sources = sanitizedSources;
-    }
-
-    if (sanitizedDomains.length > 0) {
-      payload.domains = sanitizedDomains;
     }
 
     if (sanitizedExcludeDomains.length > 0) {
