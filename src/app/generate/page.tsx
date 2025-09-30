@@ -140,6 +140,7 @@ export default function GeneratePage() {
   const router = useRouter();
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [activeTab, setActiveTab] = useState<'writing' | 'headlines'>('writing');
+  const [headlinesUnlocked, setHeadlinesUnlocked] = useState(false);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
@@ -311,6 +312,29 @@ export default function GeneratePage() {
       setHeadlineError(null);
     }
   }, [activeTab]);
+
+  const handleHeadlinesTabClick = () => {
+    if (headlinesUnlocked) {
+      setActiveTab('headlines');
+      return;
+    }
+
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const input = window.prompt('Enter password');
+
+    if (input !== '12345') {
+      if (input !== null) {
+        window.alert('Incorrect password');
+      }
+      return;
+    }
+
+    setHeadlinesUnlocked(true);
+    setActiveTab('headlines');
+  };
 
   const toggleSearchIn = (value: string) => {
     setSearchIn((current) =>
@@ -733,7 +757,7 @@ export default function GeneratePage() {
             Writing
           </button>
           <button
-            onClick={() => setActiveTab('headlines')}
+            onClick={handleHeadlinesTabClick}
             className={clsx(
               'px-4 py-2 rounded-md text-sm font-medium transition-colors',
               activeTab === 'headlines'
