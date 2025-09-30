@@ -249,7 +249,7 @@ test('blog prompt injects reporting block and grounding instruction', async () =
   assert(articlePrompt.includes('cite the matching URL'));
 });
 
-test('travel article prompt includes itinerary, seasonal, and highlight guidance', async () => {
+test('travel article prompt uses only baseline extra requirements', async () => {
   const promptSnippet = extractDefaultPromptSnippet();
   const snippet = `
 ${reportingHelpers}
@@ -280,26 +280,21 @@ export { articlePrompt, extraRequirements };
   const { articlePrompt, extraRequirements } = await transpile(snippet);
   assert.strictEqual(Array.isArray(extraRequirements), true);
   assert(
-    extraRequirements.some((item) =>
-      item.includes('Surface itinerary tips from the provided reporting')
+    extraRequirements.every(
+      (item) =>
+        !item.includes('Surface itinerary tips from the provided reporting') &&
+        !item.includes('Note seasonal considerations cited in the sources') &&
+        !item.includes('Highlight standout destinations, landmarks, or experiences')
     ),
-    'Travel extra requirements should include itinerary guidance.'
+    'Travel extra requirements should not add travel-specific guidance.'
   );
+  assert(!articlePrompt.includes('Surface itinerary tips from the provided reporting'));
+  assert(!articlePrompt.includes('Note seasonal considerations cited in the sources'));
   assert(
-    extraRequirements.some((item) =>
-      item.includes('Note seasonal considerations cited in the sources')
-    ),
-    'Travel extra requirements should include seasonal guidance.'
+    !articlePrompt.includes(
+      'Highlight standout destinations, landmarks, or experiences'
+    )
   );
-  assert(
-    extraRequirements.some((item) =>
-      item.includes('Highlight standout destinations, landmarks, or experiences')
-    ),
-    'Travel extra requirements should include destination highlights.'
-  );
-  assert(articlePrompt.includes('Surface itinerary tips from the provided reporting'));
-  assert(articlePrompt.includes('Note seasonal considerations cited in the sources'));
-  assert(articlePrompt.includes('Highlight standout destinations, landmarks, or experiences'));
 });
 
 test('news prompt default references DEFAULT_WORDS and keeps full min bound', () => {
