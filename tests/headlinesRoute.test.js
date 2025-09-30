@@ -10,6 +10,7 @@ const categorySource = fs.readFileSync(categoryConfigPath, 'utf8');
 
 const sanitizedSource = tsSource
   .replace("import { NextRequest, NextResponse } from 'next/server';", '')
+  .replace("import { XMLParser } from 'fast-xml-parser';", '')
   .replace("import { getOpenAI } from '../../../lib/openai';", '')
   .replace(
     "import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';",
@@ -26,6 +27,7 @@ const NextResponse = globalThis.__nextResponse;
 const getOpenAI = () => globalThis.__openai;
 const fetch = globalThis.__fetch;
 const serpapiSearch = (...args) => globalThis.__serpapiSearch(...args);
+const { XMLParser } = globalThis.__fastXmlParser;
 type SerpApiResult = any;
 type NextRequest = any;
 ${sanitizedSource}
@@ -75,6 +77,9 @@ globalThis.__openai = {
     },
   },
 };
+
+const fastXmlParserModule = await import('fast-xml-parser');
+globalThis.__fastXmlParser = fastXmlParserModule;
 
 const { createHeadlinesHandler } = await import(moduleUrl);
 
@@ -208,6 +213,98 @@ test('infers keywords when only a description is provided', async () => {
   for (const headline of body.headlines) {
     assert.ok(!('summary' in headline));
   }
+});
+
+test('combines rss feeds with NewsAPI results', async () => {
+  globalThis.__openaiCreate = async () => {
+    throw new Error('should not call openai');
+  };
+
+  const rssUrl = 'https://example.com/feed';
+  const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example Feed</title>
+    <item>
+      <title>RSS Headline</title>
+      <link>https://example.com/story</link>
+      <description>RSS description</description>
+      <pubDate>Mon, 01 Jul 2024 10:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>`;
+
+  const newsArticles = [
+    {
+      title: 'NewsAPI Headline',
+      description: 'News description',
+      url: 'https://news.example.com/story',
+      source: { name: 'NewsAPI Source' },
+      publishedAt: '2024-07-01T08:00:00Z',
+    },
+  ];
+
+  globalThis.__fetchImpl = async (input) => {
+    const url = input.toString();
+    if (url.startsWith('https://newsapi.org')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get(name) {
+            return name === 'content-type' ? 'application/json' : null;
+          },
+        },
+        async json() {
+          return { status: 'ok', articles: newsArticles };
+        },
+        async text() {
+          return JSON.stringify({ status: 'ok', articles: newsArticles });
+        },
+      };
+    }
+
+    if (url === rssUrl) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return rssXml;
+        },
+      };
+    }
+
+    throw new Error(`Unexpected fetch request: ${url}`);
+  };
+
+  globalThis.__serpapiSearch = async () => [];
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(
+    createRequest({ query: 'space', limit: 5, rssFeeds: [rssUrl] })
+  );
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+
+  assert.strictEqual(body.headlines.length, 2);
+  const titles = body.headlines.map((item) => item.title).sort();
+  assert.deepStrictEqual(titles, ['NewsAPI Headline', 'RSS Headline']);
+
+  const rssHeadline = body.headlines.find(
+    (item) => item.title === 'RSS Headline'
+  );
+  assert.ok(rssHeadline);
+  assert.strictEqual(rssHeadline.source, 'Example Feed');
+
+  assert.ok(
+    body.queriesAttempted.some((entry) => entry === 'space' || entry === '"space"')
+  );
+  assert.ok(
+    body.queriesAttempted.some((entry) => entry.includes('RSS: Example Feed'))
+  );
+
+  assert.strictEqual(body.successfulQueries, 2);
 });
 
 test('aggregates deduplicated results for derived keyword query', async () => {
