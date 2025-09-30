@@ -66,7 +66,7 @@ test('buildHeadlineRequest enforces keywords or category', () => {
   assert.strictEqual(result.ok, false);
   assert.strictEqual(
     result.error,
-    'Provide at least one keyword, choose a category feed, or supply custom instructions to fetch headlines.'
+    'Select a site preset or supply custom instructions to fetch headlines.'
   );
 });
 

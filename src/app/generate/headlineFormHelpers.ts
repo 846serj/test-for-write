@@ -267,7 +267,7 @@ export function buildHeadlineRequest(
     return {
       ok: false,
       error:
-        'Provide at least one keyword, choose a category feed, or supply custom instructions to fetch headlines.',
+        'Select a site preset or supply custom instructions to fetch headlines.',
       ...baseResult,
     };
   }
