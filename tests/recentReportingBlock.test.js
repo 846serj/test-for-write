@@ -106,6 +106,20 @@ function extractDefaultPromptSnippet() {
   return tsCode.slice(reportingStart, nextConstIndex);
 }
 
+function extractTravelGenerationBlock() {
+  const marker = 'const runArticleGeneration =';
+  const start = tsCode.indexOf(marker);
+  if (start === -1) {
+    throw new Error('Unable to locate runArticleGeneration block.');
+  }
+  const endMarker = 'return NextResponse.json({';
+  const end = tsCode.indexOf(endMarker, start);
+  if (end === -1) {
+    throw new Error('Unable to locate generation return statement.');
+  }
+  return tsCode.slice(start, end);
+}
+
 const reportingHelpers = `
 ${detailInstructionMatch[0]}
 ${detailExtractionMatch[0]}
@@ -249,12 +263,13 @@ test('blog prompt injects reporting block and grounding instruction', async () =
   assert(articlePrompt.includes('cite the matching URL'));
 });
 
-test('travel article prompt uses only baseline extra requirements', async () => {
+test('travel article prompt injects travel-specific requirements', async () => {
   const promptSnippet = extractDefaultPromptSnippet();
   const snippet = `
 ${reportingHelpers}
 ${buildArticlePromptMatch[0]}
 const articleType = 'Travel article';
+const travelState = 'Colorado';
 const reportingSources = [
   {
     title: 'Kyoto in Spring',
@@ -280,20 +295,47 @@ export { articlePrompt, extraRequirements };
   const { articlePrompt, extraRequirements } = await transpile(snippet);
   assert.strictEqual(Array.isArray(extraRequirements), true);
   assert(
-    extraRequirements.every(
+    extraRequirements.some(
       (item) =>
-        !item.includes('Surface itinerary tips from the provided reporting') &&
-        !item.includes('Note seasonal considerations cited in the sources') &&
-        !item.includes('Highlight standout destinations, landmarks, or experiences')
+        item.includes('must-see attractions') && item.includes('Colorado')
     ),
-    'Travel extra requirements should not add travel-specific guidance.'
+    'Travel prompts should require must-see coverage tied to the state.'
   );
-  assert(!articlePrompt.includes('Surface itinerary tips from the provided reporting'));
-  assert(!articlePrompt.includes('Note seasonal considerations cited in the sources'));
   assert(
-    !articlePrompt.includes(
-      'Highlight standout destinations, landmarks, or experiences'
-    )
+    extraRequirements.some(
+      (item) =>
+        item.includes('lodging and dining tips') && item.includes('Colorado')
+    ),
+    'Travel prompts should require lodging and dining guidance anchored to the state.'
+  );
+  assert(
+    extraRequirements.some((item) =>
+      item.includes('itinerary-building guidance') && item.includes('Colorado')
+    ),
+    'Travel prompts should require itinerary-building advice linked to the state.'
+  );
+  assert(
+    extraRequirements.some((item) =>
+      item.includes('Name Colorado directly in each section')
+    ),
+    'Travel prompts should instruct sections to mention the chosen state explicitly.'
+  );
+  assert(articlePrompt.includes('Colorado'));
+});
+
+test('travel article branch verifies style feedback before returning', () => {
+  const generationBlock = extractTravelGenerationBlock();
+  assert(
+    generationBlock.includes('verifyTravelStyle('),
+    'Travel branch should run style verification on generated HTML.'
+  );
+  assert(
+    generationBlock.includes('applyTravelStyleFeedbackToPrompt('),
+    'Travel branch should feed style issues back into regeneration.'
+  );
+  assert(
+    generationBlock.includes('Regenerating travel article to address style gaps'),
+    'Travel branch should log when it retries for style issues.'
   );
 });
 
