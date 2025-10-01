@@ -1,7 +1,8 @@
 // page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { MutableRefObject } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
@@ -50,6 +51,199 @@ const HEADLINE_COPY_FORMAT_LABELS: Record<HeadlineClipboardFormat, string> = {
 };
 
 const DEFAULT_FETCH_ERROR_MESSAGE = 'Failed to fetch headlines.';
+
+const HEADLINE_SEEN_STORAGE_KEY = 'headlineSeenUrls';
+const DEFAULT_HEADLINE_SEEN_KEY = '__default__';
+const MAX_TRACKED_SEEN_PER_KEY = 400;
+const MAX_EXCLUDE_URLS = 200;
+
+type SeenHeadlineMetadata = {
+  firstSeenAt: number;
+  lastSeenAt: number;
+  publishedAt?: string;
+};
+
+type SeenHeadlineCollection = Record<string, Record<string, SeenHeadlineMetadata>>;
+
+const normalizeHeadlineUrlForTracking = (url?: string | null): string | null => {
+  if (!url) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(url);
+    const normalizedPath = parsed.pathname.replace(/\/+$/g, '');
+    const normalized = `${parsed.protocol}//${parsed.hostname}${normalizedPath}`
+      .replace(/\/+$/g, '')
+      .toLowerCase();
+    return normalized || null;
+  } catch {
+    const trimmed = url.trim().replace(/\/+$/g, '').toLowerCase();
+    return trimmed || null;
+  }
+};
+
+const loadSeenHeadlineCollection = (): SeenHeadlineCollection => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(HEADLINE_SEEN_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return {};
+    }
+
+    const sanitized: SeenHeadlineCollection = {};
+
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof key !== 'string' || !value || typeof value !== 'object') {
+        continue;
+      }
+
+      const entryMap: Record<string, SeenHeadlineMetadata> = {};
+
+      for (const [rawUrl, meta] of Object.entries(value as Record<string, unknown>)) {
+        if (!rawUrl || typeof rawUrl !== 'string' || !meta || typeof meta !== 'object') {
+          continue;
+        }
+
+        const normalizedUrl = normalizeHeadlineUrlForTracking(rawUrl);
+        if (!normalizedUrl) {
+          continue;
+        }
+
+        const typedMeta = meta as Partial<SeenHeadlineMetadata>;
+        const firstSeenAt = Number.isFinite(typedMeta.firstSeenAt)
+          ? Number(typedMeta.firstSeenAt)
+          : Date.now();
+        const lastSeenAt = Number.isFinite(typedMeta.lastSeenAt)
+          ? Number(typedMeta.lastSeenAt)
+          : firstSeenAt;
+        const publishedAt =
+          typeof typedMeta.publishedAt === 'string' && typedMeta.publishedAt.trim()
+            ? typedMeta.publishedAt
+            : undefined;
+
+        entryMap[normalizedUrl] = {
+          firstSeenAt,
+          lastSeenAt,
+          ...(publishedAt ? { publishedAt } : {}),
+        };
+      }
+
+      if (Object.keys(entryMap).length > 0) {
+        sanitized[key] = entryMap;
+      }
+    }
+
+    return sanitized;
+  } catch {
+    return {};
+  }
+};
+
+const persistSeenHeadlineCollection = (collection: SeenHeadlineCollection) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      HEADLINE_SEEN_STORAGE_KEY,
+      JSON.stringify(collection)
+    );
+  } catch {
+    // Ignore persistence errors (e.g., storage quota exceeded).
+  }
+};
+
+const resolveSeenHeadlineKey = (presetKey: HeadlineSiteKey | null | undefined) =>
+  presetKey ? `preset:${presetKey}` : DEFAULT_HEADLINE_SEEN_KEY;
+
+const collectExcludeUrls = (
+  collection: SeenHeadlineCollection,
+  storageKey: string
+): string[] => {
+  const entries = Object.entries(collection[storageKey] ?? {});
+  if (entries.length === 0) {
+    return [];
+  }
+
+  return entries
+    .sort((a, b) => b[1].lastSeenAt - a[1].lastSeenAt)
+    .slice(0, MAX_EXCLUDE_URLS)
+    .map(([url]) => url);
+};
+
+const upsertSeenHeadlines = (
+  collectionRef: MutableRefObject<SeenHeadlineCollection>,
+  storageKey: string,
+  headlines: HeadlineItem[]
+) => {
+  if (headlines.length === 0) {
+    return;
+  }
+
+  const currentCollection = collectionRef.current;
+  const existing = currentCollection[storageKey]
+    ? { ...currentCollection[storageKey] }
+    : {};
+
+  let changed = false;
+  const now = Date.now();
+
+  for (const headline of headlines) {
+    const normalizedUrl = normalizeHeadlineUrlForTracking(headline.url);
+    if (!normalizedUrl) {
+      continue;
+    }
+
+    const publishedAt =
+      typeof headline.publishedAt === 'string' && headline.publishedAt.trim()
+        ? headline.publishedAt
+        : undefined;
+
+    const previous = existing[normalizedUrl];
+    if (previous) {
+      const nextPublishedAt = publishedAt ?? previous.publishedAt;
+      if (previous.lastSeenAt !== now || previous.publishedAt !== nextPublishedAt) {
+        existing[normalizedUrl] = {
+          firstSeenAt: previous.firstSeenAt,
+          lastSeenAt: now,
+          ...(nextPublishedAt ? { publishedAt: nextPublishedAt } : {}),
+        };
+        changed = true;
+      }
+      continue;
+    }
+
+    existing[normalizedUrl] = {
+      firstSeenAt: now,
+      lastSeenAt: now,
+      ...(publishedAt ? { publishedAt } : {}),
+    };
+    changed = true;
+  }
+
+  if (!changed) {
+    return;
+  }
+
+  const trimmedEntries = Object.entries(existing)
+    .sort((a, b) => a[1].firstSeenAt - b[1].firstSeenAt)
+    .slice(-MAX_TRACKED_SEEN_PER_KEY);
+
+  const nextMap = Object.fromEntries(trimmedEntries);
+  currentCollection[storageKey] = nextMap;
+  collectionRef.current = { ...currentCollection };
+  persistSeenHeadlineCollection(collectionRef.current);
+};
 
 type HeadlineFetchErrorInput = {
   data: any;
@@ -190,10 +384,15 @@ export default function GeneratePage() {
       }
     | null
   >(null);
+  const seenHeadlinesRef = useRef<SeenHeadlineCollection>({});
 
   useEffect(() => {
     setCopyFeedback(null);
   }, [headlineResults]);
+
+  useEffect(() => {
+    seenHeadlinesRef.current = loadSeenHeadlineCollection();
+  }, []);
 
   const handleCopyHeadlines = async (format: HeadlineClipboardFormat) => {
     setCopyFeedback(null);
@@ -612,6 +811,10 @@ export default function GeneratePage() {
       setActiveSiteRssFeeds(overrides.rssFeeds);
     }
 
+    const targetPresetKey = overrides?.presetKey ?? activeSiteKey;
+    const storageKey = resolveSeenHeadlineKey(targetPresetKey);
+    const excludeUrls = collectExcludeUrls(seenHeadlinesRef.current, storageKey);
+
     const buildResult = buildHeadlineRequest({
       keywords: nextKeywords,
       profileQuery: '',
@@ -625,6 +828,7 @@ export default function GeneratePage() {
       description: nextDescription,
       rssFeeds: nextRssFeeds,
       dedupeMode: 'strict',
+      excludeUrls,
     });
 
     setActiveSiteRssFeeds(buildResult.sanitizedRssFeeds);
@@ -802,6 +1006,10 @@ export default function GeneratePage() {
 
       setHeadlineResults(normalized);
       setHeadlineQueries(normalizedQueries);
+
+      if (normalized.length > 0) {
+        upsertSeenHeadlines(seenHeadlinesRef, storageKey, normalized);
+      }
     } catch (error: any) {
       console.error('[headlines] fetch error:', error);
       setHeadlineError(error?.message || 'Unable to fetch headlines.');
