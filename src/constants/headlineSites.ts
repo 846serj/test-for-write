@@ -150,4 +150,3 @@ export const HEADLINE_SITES = {
 
 export type HeadlineSiteKey = keyof typeof HEADLINE_SITES;
 
-export type { PresetCategory };
