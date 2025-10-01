@@ -2134,11 +2134,9 @@ function createHeadlinesHandler(
   const queryWarnings: string[] = [];
   let successfulQueries = 0;
   const primaryQueryCount = searchQueries.filter((entry) => !entry.fallback).length;
+  const fallbackQueryCount = searchQueries.filter((entry) => entry.fallback).length;
   const perQuery = Math.max(1, Math.ceil(limit / Math.max(1, primaryQueryCount)));
-  const fallbackPerQuery = Math.max(
-    1,
-    Math.min(2, Math.ceil(limit / Math.max(1, searchQueries.length)))
-  );
+  let remainingFallbackQueries = fallbackQueryCount;
   const serpApiConfigured = Boolean(process.env.SERPAPI_KEY);
   const serpTimeFilter = computeSerpTimeFilter(from, to);
   const keywordHeadlineResults = new Map<string, KeywordAggregation>();
@@ -2166,7 +2164,25 @@ function createHeadlinesHandler(
     let querySucceeded = false;
     let addedByQuery = 0;
 
-    const maxForQuery = searchEntry.fallback ? fallbackPerQuery : perQuery;
+    let maxForQuery = perQuery;
+
+    if (searchEntry.fallback) {
+      const remainingCapacity = Math.max(0, limit - aggregatedHeadlines.length);
+      if (remainingCapacity <= 0) {
+        continue;
+      }
+
+      const rawQuota =
+        remainingFallbackQueries > 0
+          ? Math.ceil(remainingCapacity / remainingFallbackQueries)
+          : remainingCapacity;
+      const fallbackQuota = Math.max(
+        1,
+        Math.min(rawQuota, remainingCapacity)
+      );
+
+      maxForQuery = fallbackQuota;
+    }
 
     while (addedByQuery < maxForQuery && aggregatedHeadlines.length < limit) {
       const globalRemaining = Math.max(0, limit - aggregatedHeadlines.length);
@@ -2277,6 +2293,10 @@ function createHeadlinesHandler(
       }
 
       page += 1;
+    }
+
+    if (searchEntry.fallback) {
+      remainingFallbackQueries = Math.max(0, remainingFallbackQueries - 1);
     }
 
     if (
