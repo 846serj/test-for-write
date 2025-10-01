@@ -16,6 +16,7 @@ import {
 import {
   HEADLINE_SITES,
   type HeadlineSiteKey,
+  type PresetCategory,
 } from '../../constants/headlineSites';
 import type {
   HeadlineItem,
@@ -117,6 +118,70 @@ const deriveHeadlineFetchErrorMessage = ({
   return DEFAULT_FETCH_ERROR_MESSAGE;
 };
 
+type CategoryLegendProps = {
+  categories: readonly PresetCategory[];
+  title?: string;
+  description?: string;
+};
+
+const CategoryLegend = ({
+  categories,
+  title,
+  description,
+}: CategoryLegendProps) => {
+  if (!categories?.length) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-lg border border-blue-200 bg-blue-50/80 p-4 text-sm shadow-sm dark:border-blue-700 dark:bg-blue-900/20">
+      {title ? (
+        <h4 className="text-sm font-semibold text-blue-900 dark:text-blue-200">
+          {title}
+        </h4>
+      ) : null}
+      {description ? (
+        <p className="mt-1 text-xs text-blue-800/80 dark:text-blue-100/80">
+          {description}
+        </p>
+      ) : null}
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        {categories.map((category) => (
+          <div
+            key={category.id}
+            className="rounded-md bg-white/80 p-3 ring-1 ring-blue-100 dark:bg-gray-900/60 dark:ring-blue-800/50"
+          >
+            <div className="flex items-start gap-2">
+              <span
+                className="mt-1 h-2.5 w-2.5 flex-shrink-0 rounded-full bg-blue-500 dark:bg-blue-300"
+                aria-hidden
+              />
+              <div>
+                <div className="font-semibold text-blue-900 dark:text-blue-100">
+                  {category.label}
+                </div>
+                {category.children?.length ? (
+                  <ul className="mt-2 space-y-1 text-xs text-blue-900/80 dark:text-blue-100/80">
+                    {category.children.map((child) => (
+                      <li key={child.id} className="flex items-start gap-2">
+                        <span
+                          className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-blue-300 dark:bg-blue-500"
+                          aria-hidden
+                        />
+                        <span>{child.label}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 export default function GeneratePage() {
   const router = useRouter();
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -177,6 +242,9 @@ export default function GeneratePage() {
     null
   );
   const [activeSiteRssFeeds, setActiveSiteRssFeeds] = useState<string[]>([]);
+  const [activeSiteCategories, setActiveSiteCategories] = useState<
+    PresetCategory[]
+  >([]);
   const [sortBy, setSortBy] = useState<'publishedAt' | 'relevancy' | 'popularity'>(
     'publishedAt'
   );
@@ -340,6 +408,7 @@ export default function GeneratePage() {
     setHeadlineDescription('');
     setHeadlineCountry('');
     setKeywords([]);
+    setActiveSiteCategories([]);
   };
 
   const handleGenerateSiteHeadlines = async (siteKey: HeadlineSiteKey) => {
@@ -352,6 +421,10 @@ export default function GeneratePage() {
     setHeadlineCategory('');
     const presetCountry = preset.country ?? '';
     setHeadlineCountry(presetCountry);
+    const presetCategories = Array.isArray(preset.categories)
+      ? (preset.categories as PresetCategory[])
+      : [];
+    setActiveSiteCategories(presetCategories);
     const presetKeywords =
       'keywords' in preset && Array.isArray(preset.keywords)
         ? [...preset.keywords]
@@ -1179,6 +1252,15 @@ export default function GeneratePage() {
                           <p className="mt-2 whitespace-pre-line text-sm text-gray-700 dark:text-gray-300">
                             {site.instructions}
                           </p>
+                          {isActive && activeSiteCategories.length > 0 && (
+                            <div className="mt-4">
+                              <CategoryLegend
+                                categories={activeSiteCategories}
+                                title="Active category guardrails"
+                                description="Fetched headlines should map to these approved coverage buckets."
+                              />
+                            </div>
+                          )}
                         </div>
                         <button
                           type="button"
@@ -1308,6 +1390,14 @@ export default function GeneratePage() {
             {headlineResults.length > 0 && (
               <div className="space-y-6">
                 <h2 className="text-lg font-semibold">Headlines</h2>
+
+                {activeSiteCategories.length > 0 && (
+                  <CategoryLegend
+                    categories={activeSiteCategories}
+                    title="Preset category expectations"
+                    description="Use this legend to confirm each story aligns with the preset's intended coverage areas."
+                  />
+                )}
 
                 {headlineResults.length > 0 && (
                   <div className="space-y-4">
