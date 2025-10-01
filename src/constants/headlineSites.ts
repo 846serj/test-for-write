@@ -26,7 +26,15 @@ export const HEADLINE_SITES = {
       'Car Bans & Recalls',
       'Engine Failures',
     ] as const,
-    rssFeeds: ['https://www.slashgear.com/feed/'],
+    rssFeeds: [
+      'https://www.slashgear.com/feed/',
+      'https://modernengineeringmarvels.com/feed/',
+      'https://techcrunch.com/feed/',
+      'https://www.hotcars.com/feed/',
+      'https://interestingengineering.com/feed',
+      'https://www.zmescience.com/feed/',
+      'https://dailygalaxy.com/feed/',
+    ] as const,
   },
   dailyOverview: {
     name: 'The Daily Overview',
