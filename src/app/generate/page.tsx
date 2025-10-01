@@ -1,7 +1,7 @@
 // page.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
@@ -13,12 +13,7 @@ import {
   type HeadlineClipboardColumn,
   type HeadlineClipboardFormat,
 } from './headlineClipboardHelpers';
-import {
-  HEADLINE_SITES,
-  type HeadlineSiteKey,
-  type PresetCategory,
-} from '../../constants/headlineSites';
-import type { HeadlineCategoryReviewResult } from '../../lib/headlineCategoryReview';
+import { HEADLINE_SITES, type HeadlineSiteKey } from '../../constants/headlineSites';
 import type {
   HeadlineItem,
   RelatedArticle,
@@ -119,70 +114,6 @@ const deriveHeadlineFetchErrorMessage = ({
   return DEFAULT_FETCH_ERROR_MESSAGE;
 };
 
-type CategoryLegendProps = {
-  categories: readonly PresetCategory[];
-  title?: string;
-  description?: string;
-};
-
-const CategoryLegend = ({
-  categories,
-  title,
-  description,
-}: CategoryLegendProps) => {
-  if (!categories?.length) {
-    return null;
-  }
-
-  return (
-    <div className="rounded-lg border border-blue-200 bg-blue-50/80 p-4 text-sm shadow-sm dark:border-blue-700 dark:bg-blue-900/20">
-      {title ? (
-        <h4 className="text-sm font-semibold text-blue-900 dark:text-blue-200">
-          {title}
-        </h4>
-      ) : null}
-      {description ? (
-        <p className="mt-1 text-xs text-blue-800/80 dark:text-blue-100/80">
-          {description}
-        </p>
-      ) : null}
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        {categories.map((category) => (
-          <div
-            key={category.id}
-            className="rounded-md bg-white/80 p-3 ring-1 ring-blue-100 dark:bg-gray-900/60 dark:ring-blue-800/50"
-          >
-            <div className="flex items-start gap-2">
-              <span
-                className="mt-1 h-2.5 w-2.5 flex-shrink-0 rounded-full bg-blue-500 dark:bg-blue-300"
-                aria-hidden
-              />
-              <div>
-                <div className="font-semibold text-blue-900 dark:text-blue-100">
-                  {category.label}
-                </div>
-                {category.children?.length ? (
-                  <ul className="mt-2 space-y-1 text-xs text-blue-900/80 dark:text-blue-100/80">
-                    {category.children.map((child) => (
-                      <li key={child.id} className="flex items-start gap-2">
-                        <span
-                          className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-blue-300 dark:bg-blue-500"
-                          aria-hidden
-                        />
-                        <span>{child.label}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
 export default function GeneratePage() {
   const router = useRouter();
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -238,30 +169,17 @@ export default function GeneratePage() {
   const [headlineError, setHeadlineError] = useState<string | null>(null);
   const [headlineResults, setHeadlineResults] = useState<HeadlineItem[]>([]);
   const [headlineQueries, setHeadlineQueries] = useState<string[]>([]);
-  const [headlineReviewResults, setHeadlineReviewResults] = useState<
-    HeadlineCategoryReviewResult[]
-  >([]);
-  const [headlineReviewStatus, setHeadlineReviewStatus] = useState<
-    'idle' | 'loading' | 'error' | 'success'
-  >('idle');
-  const [headlineReviewError, setHeadlineReviewError] = useState<string | null>(
-    null
-  );
   const [headlineDescription, setHeadlineDescription] = useState('');
   const [activeSiteKey, setActiveSiteKey] = useState<HeadlineSiteKey | null>(
     null
   );
   const [activeSiteRssFeeds, setActiveSiteRssFeeds] = useState<string[]>([]);
-  const [activeSiteCategories, setActiveSiteCategories] = useState<
-    PresetCategory[]
-  >([]);
   const [sortBy, setSortBy] = useState<'publishedAt' | 'relevancy' | 'popularity'>(
     'publishedAt'
   );
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const searchIn: string[] = [];
-  const [headlineCategory, setHeadlineCategory] = useState('');
   const [headlineCountry, setHeadlineCountry] = useState('');
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [selectedCopyColumn, setSelectedCopyColumn] =
@@ -277,20 +195,6 @@ export default function GeneratePage() {
   useEffect(() => {
     setCopyFeedback(null);
   }, [headlineResults]);
-
-  const reviewResultsByIndex = useMemo(() => {
-    const map = new Map<number, HeadlineCategoryReviewResult>();
-    for (const result of headlineReviewResults) {
-      map.set(result.index, result);
-    }
-    return map;
-  }, [headlineReviewResults]);
-
-  const unmatchedReviewCount = useMemo(() => {
-    return headlineReviewResults.reduce((total, entry) => {
-      return entry.status === 'unmatched' ? total + 1 : total;
-    }, 0);
-  }, [headlineReviewResults]);
 
   const handleCopyHeadlines = async (format: HeadlineClipboardFormat) => {
     setCopyFeedback(null);
@@ -432,7 +336,6 @@ export default function GeneratePage() {
     setHeadlineDescription('');
     setHeadlineCountry('');
     setKeywords([]);
-    setActiveSiteCategories([]);
   };
 
   const handleGenerateSiteHeadlines = async (siteKey: HeadlineSiteKey) => {
@@ -442,13 +345,8 @@ export default function GeneratePage() {
     }
 
     setActiveSiteKey(siteKey);
-    setHeadlineCategory('');
     const presetCountry = preset.country ?? '';
     setHeadlineCountry(presetCountry);
-    const presetCategories = Array.isArray(preset.categories)
-      ? (preset.categories as PresetCategory[])
-      : [];
-    setActiveSiteCategories(presetCategories);
     const presetKeywords =
       'keywords' in preset && Array.isArray(preset.keywords)
         ? [...preset.keywords]
@@ -463,7 +361,6 @@ export default function GeneratePage() {
     await handleFetchHeadlines({
       description: preset.instructions,
       keywords: presetKeywords,
-      category: '',
       country: presetCountry,
       rssFeeds: presetRssFeeds,
       presetKey: siteKey,
@@ -686,7 +583,6 @@ export default function GeneratePage() {
     overrides?: {
       description?: string;
       keywords?: string[];
-      category?: string;
       country?: string;
       rssFeeds?: string[];
       presetKey?: HeadlineSiteKey | null;
@@ -698,7 +594,6 @@ export default function GeneratePage() {
         : headlineDescription;
     const nextDescription = nextDescriptionRaw.trim();
     const nextKeywords = overrides?.keywords ?? keywords;
-    const nextCategory = overrides?.category ?? headlineCategory;
     const nextCountry = overrides?.country ?? headlineCountry;
     const nextRssFeeds = overrides?.rssFeeds ?? activeSiteRssFeeds;
 
@@ -708,10 +603,6 @@ export default function GeneratePage() {
 
     if (overrides?.keywords) {
       setKeywords(overrides.keywords);
-    }
-
-    if (overrides?.category !== undefined && overrides.category !== headlineCategory) {
-      setHeadlineCategory(overrides.category);
     }
 
     if (overrides?.country !== undefined && overrides.country !== headlineCountry) {
@@ -732,7 +623,7 @@ export default function GeneratePage() {
       fromDate,
       toDate,
       searchIn,
-      category: nextCategory,
+      category: '',
       country: nextCountry,
       description: nextDescription,
       rssFeeds: nextRssFeeds,
@@ -750,9 +641,6 @@ export default function GeneratePage() {
     setHeadlineLoading(true);
     setHeadlineError(null);
     setHeadlineQueries([]);
-    setHeadlineReviewResults([]);
-    setHeadlineReviewStatus('idle');
-    setHeadlineReviewError(null);
 
     try {
       const response = await fetch('/api/headlines', {
@@ -917,73 +805,6 @@ export default function GeneratePage() {
 
       setHeadlineResults(normalized);
       setHeadlineQueries(normalizedQueries);
-
-      if (activeSiteCategories.length > 0) {
-        if (normalized.length === 0) {
-          setHeadlineReviewResults([]);
-          setHeadlineReviewStatus('success');
-          setHeadlineReviewError(null);
-        } else {
-          setHeadlineReviewStatus('loading');
-          try {
-            const reviewResponse = await fetch('/api/headlines/review', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                categories: activeSiteCategories,
-                headlines: normalized.map((item) => ({
-                  title: item.title,
-                  description: item.description,
-                  source: item.source,
-                })),
-              }),
-            });
-
-            const reviewContentType = reviewResponse.headers.get('content-type') ?? '';
-            let reviewData: any = null;
-            let reviewFallback: string | null = null;
-
-            if (reviewContentType.includes('application/json')) {
-              try {
-                reviewData = await reviewResponse.json();
-              } catch (error) {
-                console.error('[headlines] review parse error:', error);
-                reviewFallback = await reviewResponse.text();
-              }
-            } else {
-              reviewFallback = await reviewResponse.text();
-            }
-
-            if (!reviewResponse.ok) {
-              const fallbackMessage = sanitizeFallbackText(reviewFallback);
-              const message =
-                typeof reviewData?.error === 'string'
-                  ? reviewData.error
-                  : fallbackMessage || 'Failed to review headlines.';
-              throw new Error(message);
-            }
-
-            if (!reviewData || !Array.isArray(reviewData.results)) {
-              throw new Error('Received an invalid review response.');
-            }
-
-            setHeadlineReviewResults(reviewData.results);
-            setHeadlineReviewStatus('success');
-            setHeadlineReviewError(null);
-          } catch (reviewError: any) {
-            console.error('[headlines] review error:', reviewError);
-            setHeadlineReviewResults([]);
-            setHeadlineReviewStatus('error');
-            setHeadlineReviewError(
-              reviewError?.message || 'Unable to review headlines.'
-            );
-          }
-        }
-      } else {
-        setHeadlineReviewResults([]);
-        setHeadlineReviewStatus('idle');
-        setHeadlineReviewError(null);
-      }
     } catch (error: any) {
       console.error('[headlines] fetch error:', error);
       setHeadlineError(error?.message || 'Unable to fetch headlines.');
@@ -997,8 +818,6 @@ export default function GeneratePage() {
   const labelStyle = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1';
   const inputStyle =
     'border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-black dark:text-white rounded-md px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500';
-  const hasPresetCategories = activeSiteCategories.length > 0;
-
   return (
     <div
       className={clsx(
@@ -1347,15 +1166,6 @@ export default function GeneratePage() {
                           <p className="mt-2 whitespace-pre-line text-sm text-gray-700 dark:text-gray-300">
                             {site.instructions}
                           </p>
-                          {isActive && activeSiteCategories.length > 0 && (
-                            <div className="mt-4">
-                              <CategoryLegend
-                                categories={activeSiteCategories}
-                                title="Active category guardrails"
-                                description="Fetched headlines should map to these approved coverage buckets."
-                              />
-                            </div>
-                          )}
                         </div>
                         <button
                           type="button"
@@ -1435,9 +1245,7 @@ export default function GeneratePage() {
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded shadow disabled:opacity-60 disabled:cursor-not-allowed"
                 disabled={
                   headlineLoading ||
-                  (keywords.length === 0 &&
-                    !headlineCategory.trim() &&
-                    headlineDescription.length === 0)
+                  (keywords.length === 0 && headlineDescription.length === 0)
                 }
               >
                 {headlineLoading ? 'Fetching…' : 'Fetch Headlines'}
@@ -1485,14 +1293,6 @@ export default function GeneratePage() {
             {headlineResults.length > 0 && (
               <div className="space-y-6">
                 <h2 className="text-lg font-semibold">Headlines</h2>
-
-                {activeSiteCategories.length > 0 && (
-                  <CategoryLegend
-                    categories={activeSiteCategories}
-                    title="Preset category expectations"
-                    description="Use this legend to confirm each story aligns with the preset's intended coverage areas."
-                  />
-                )}
 
                 {headlineResults.length > 0 && (
                   <div className="space-y-4">
@@ -1552,33 +1352,6 @@ export default function GeneratePage() {
                         {copyFeedback.message}
                       </p>
                     )}
-                    {hasPresetCategories && headlineResults.length > 0 ? (
-                      <div className="mt-4 space-y-1">
-                        {headlineReviewStatus === 'loading' ? (
-                          <p className="text-sm text-blue-700 dark:text-blue-300">
-                            Categorizing headlines…
-                          </p>
-                        ) : null}
-                        {headlineReviewStatus === 'error' && headlineReviewError ? (
-                          <p className="text-sm text-red-600 dark:text-red-400">
-                            {headlineReviewError}
-                          </p>
-                        ) : null}
-                        {headlineReviewStatus === 'success' ? (
-                          unmatchedReviewCount > 0 ? (
-                            <p className="text-sm text-amber-700 dark:text-amber-300">
-                              {unmatchedReviewCount} of {headlineResults.length} headline
-                              {headlineResults.length === 1 ? '' : 's'} fall outside the
-                              preset categories.
-                            </p>
-                          ) : (
-                            <p className="text-sm text-green-700 dark:text-green-300">
-                              All headlines match the preset categories.
-                            </p>
-                          )
-                        ) : null}
-                      </div>
-                    ) : null}
                     <div className="overflow-x-auto">
                       <table className="min-w-full table-auto divide-y divide-gray-200 dark:divide-gray-700">
                         <thead className="bg-gray-100 dark:bg-gray-800">
@@ -1591,13 +1364,7 @@ export default function GeneratePage() {
                             </th>
                             <th
                               scope="col"
-                              className="min-w-[10rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[20%]"
-                            >
-                              Category Review
-                            </th>
-                            <th
-                              scope="col"
-                              className="min-w-[11rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[20%]"
+                              className="min-w-[11rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[30%]"
                             >
                               Source &amp; Published
                             </th>
@@ -1615,21 +1382,11 @@ export default function GeneratePage() {
                             const formattedDate = formatPublishedDate(
                               headline.publishedAt
                             );
-                            const review = reviewResultsByIndex.get(index);
-                            const isUnmatched =
-                              hasPresetCategories &&
-                              headlineReviewStatus === 'success' &&
-                              (!review || review.status === 'unmatched');
 
                             return (
                               <tr
                                 key={headlineUrl || index}
-                                className={clsx(
-                                  'odd:bg-white even:bg-gray-50 dark:odd:bg-gray-900 dark:even:bg-gray-800 border-l-4',
-                                  isUnmatched
-                                    ? 'border-red-400 dark:border-red-500'
-                                    : 'border-transparent'
-                                )}
+                                className="odd:bg-white even:bg-gray-50 dark:odd:bg-gray-900 dark:even:bg-gray-800"
                               >
                                 <td className="min-w-[14rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100 sm:w-[45%]">
                                   <div className="font-semibold">
@@ -1693,42 +1450,7 @@ export default function GeneratePage() {
                                     </div>
                                   ) : null}
                                 </td>
-                                <td className="min-w-[10rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[20%]">
-                                  {!hasPresetCategories ? (
-                                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                                      No preset categories
-                                    </span>
-                                  ) : headlineReviewStatus === 'loading' ? (
-                                    <span className="text-xs text-blue-700 dark:text-blue-300">
-                                      Reviewing…
-                                    </span>
-                                  ) : headlineReviewStatus === 'error' ? (
-                                    <span className="text-xs text-red-600 dark:text-red-400">
-                                      Review unavailable
-                                    </span>
-                                  ) : review && review.status === 'matched' ? (
-                                    <div>
-                                      <span className="inline-flex items-center rounded-md bg-green-100 px-2 py-1 text-xs font-semibold text-green-700 dark:bg-green-900/50 dark:text-green-200">
-                                        {review.categoryLabel || 'Matched'}
-                                      </span>
-                                      {review.matchedTerms.length > 0 ? (
-                                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                          Matched: {review.matchedTerms.join(', ')}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  ) : (
-                                    <div>
-                                      <span className="inline-flex items-center rounded-md bg-red-100 px-2 py-1 text-xs font-semibold text-red-700 dark:bg-red-900/60 dark:text-red-200">
-                                        Unmatched
-                                      </span>
-                                      <div className="mt-1 text-xs text-red-600 dark:text-red-300">
-                                        Outside preset taxonomy
-                                      </div>
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="min-w-[11rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[20%]">
+                                <td className="min-w-[11rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[30%]">
                                   <div className="space-y-1">
                                     {headline.source ? (
                                       <div className="font-medium text-gray-900 dark:text-gray-100">
