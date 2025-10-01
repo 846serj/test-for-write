@@ -122,7 +122,6 @@ export default function GeneratePage() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const searchIn: string[] = [];
-  const [excludeDomainsInput, setExcludeDomainsInput] = useState('');
   const [headlineCategory, setHeadlineCategory] = useState('');
   const [headlineCountry, setHeadlineCountry] = useState('');
   const [generateError, setGenerateError] = useState<string | null>(null);
@@ -576,14 +575,12 @@ export default function GeneratePage() {
       fromDate,
       toDate,
       searchIn,
-      excludeDomainsInput,
       category: nextCategory,
       country: nextCountry,
       description: nextDescription,
       rssFeeds: nextRssFeeds,
     });
 
-    setExcludeDomainsInput(buildResult.sanitizedExcludeDomains.join(', '));
     setActiveSiteRssFeeds(buildResult.sanitizedRssFeeds);
 
     if (buildResult.ok === false) {
@@ -1219,22 +1216,6 @@ export default function GeneratePage() {
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                   Must be on or after the "From" date when both are set.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="md:col-span-2">
-                <label className={labelStyle}>Exclude domains (comma-separated)</label>
-                <input
-                  type="text"
-                  className={inputStyle}
-                  placeholder="example.com"
-                  value={excludeDomainsInput}
-                  onChange={(e) => setExcludeDomainsInput(e.target.value)}
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Skip articles from these domains.
                 </p>
               </div>
             </div>
