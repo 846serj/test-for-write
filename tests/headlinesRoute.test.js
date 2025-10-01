@@ -203,11 +203,23 @@ test('infers keywords when only a description is provided', async () => {
     'transforming',
   ]);
   assert.deepStrictEqual(body.inferredCategories, ['technology']);
-  assert.deepStrictEqual(body.queriesAttempted, [keywordQuery]);
+  assert.deepStrictEqual(body.queriesAttempted, [
+    keywordQuery,
+    'Focus',
+    'technology',
+    'driven',
+    'robotics',
+    'transforming',
+  ]);
   assert.deepStrictEqual(fetchCalls, [
     { query: keywordQuery, pageSize: 3, page: 1 },
+    { query: 'Focus', pageSize: 3, page: 1 },
+    { query: 'technology', pageSize: 3, page: 1 },
+    { query: 'driven', pageSize: 3, page: 1 },
+    { query: 'robotics', pageSize: 3, page: 1 },
+    { query: 'transforming', pageSize: 3, page: 1 },
   ]);
-  assert.strictEqual(body.successfulQueries, 1);
+  assert.strictEqual(body.successfulQueries, 6);
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
   for (const headline of body.headlines) {
@@ -220,27 +232,54 @@ test('combines rss feeds with NewsAPI results', async () => {
     throw new Error('should not call openai');
   };
 
-  const rssUrl = 'https://example.com/feed';
-  const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+  const rssUrlOne = 'https://example.com/feed-one';
+  const rssUrlTwo = 'https://example.com/feed-two';
+  const rssXmlOne = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
-    <title>Example Feed</title>
+    <title>Example Feed One</title>
     <item>
-      <title>RSS Headline</title>
-      <link>https://example.com/story</link>
-      <description>RSS description</description>
-      <pubDate>Mon, 01 Jul 2024 10:00:00 GMT</pubDate>
+      <title>RSS One</title>
+      <link>https://example.com/story-one</link>
+      <description>RSS description one</description>
+      <pubDate>Fri, 05 Jul 2024 10:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>`;
+  const rssXmlTwo = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example Feed Two</title>
+    <item>
+      <title>RSS Two</title>
+      <link>https://example.com/story-two</link>
+      <description>RSS description two</description>
+      <pubDate>Thu, 04 Jul 2024 15:00:00 GMT</pubDate>
     </item>
   </channel>
 </rss>`;
 
   const newsArticles = [
     {
-      title: 'NewsAPI Headline',
-      description: 'News description',
-      url: 'https://news.example.com/story',
+      title: 'NewsAPI Headline One',
+      description: 'News description one',
+      url: 'https://news.example.com/story-one',
       source: { name: 'NewsAPI Source' },
-      publishedAt: '2024-07-01T08:00:00Z',
+      publishedAt: '2024-06-30T08:00:00Z',
+    },
+    {
+      title: 'NewsAPI Headline Two',
+      description: 'News description two',
+      url: 'https://news.example.com/story-two',
+      source: { name: 'NewsAPI Source' },
+      publishedAt: '2024-06-29T08:00:00Z',
+    },
+    {
+      title: 'NewsAPI Headline Three',
+      description: 'News description three',
+      url: 'https://news.example.com/story-three',
+      source: { name: 'NewsAPI Source' },
+      publishedAt: '2024-06-28T08:00:00Z',
     },
   ];
 
@@ -264,12 +303,22 @@ test('combines rss feeds with NewsAPI results', async () => {
       };
     }
 
-    if (url === rssUrl) {
+    if (url === rssUrlOne) {
       return {
         ok: true,
         status: 200,
         async text() {
-          return rssXml;
+          return rssXmlOne;
+        },
+      };
+    }
+
+    if (url === rssUrlTwo) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return rssXmlTwo;
         },
       };
     }
@@ -281,30 +330,175 @@ test('combines rss feeds with NewsAPI results', async () => {
 
   const handler = createHeadlinesHandler({ logger: { error() {} } });
   const response = await handler(
-    createRequest({ query: 'space', limit: 5, rssFeeds: [rssUrl] })
+    createRequest({
+      query: 'space exploration',
+      limit: 3,
+      rssFeeds: [rssUrlOne, rssUrlTwo],
+    })
   );
 
   assert.strictEqual(response.status, 200);
   const body = await response.json();
 
-  assert.strictEqual(body.headlines.length, 2);
-  const titles = body.headlines.map((item) => item.title).sort();
-  assert.deepStrictEqual(titles, ['NewsAPI Headline', 'RSS Headline']);
+  assert.strictEqual(body.headlines.length, 3);
+  const titles = new Set(body.headlines.map((item) => item.title));
+  assert.ok(titles.has('RSS One'));
+  assert.ok(titles.has('RSS Two'));
+  assert.ok(titles.has('NewsAPI Headline One'));
 
-  const rssHeadline = body.headlines.find(
-    (item) => item.title === 'RSS Headline'
-  );
-  assert.ok(rssHeadline);
-  assert.strictEqual(rssHeadline.source, 'Example Feed');
+  const rssOne = body.headlines.find((item) => item.title === 'RSS One');
+  assert.ok(rssOne);
+  assert.strictEqual(rssOne.source, 'Example Feed One');
+
+  const rssTwo = body.headlines.find((item) => item.title === 'RSS Two');
+  assert.ok(rssTwo);
+  assert.strictEqual(rssTwo.source, 'Example Feed Two');
 
   assert.ok(
-    body.queriesAttempted.some((entry) => entry === 'space' || entry === '"space"')
+    body.queriesAttempted.some(
+      (entry) =>
+        entry === 'space exploration' || entry === '"space exploration"'
+    )
   );
   assert.ok(
-    body.queriesAttempted.some((entry) => entry.includes('RSS: Example Feed'))
+    body.queriesAttempted.some((entry) => entry.includes('RSS: Example Feed One'))
+  );
+  assert.ok(
+    body.queriesAttempted.some((entry) => entry.includes('RSS: Example Feed Two'))
   );
 
-  assert.strictEqual(body.successfulQueries, 2);
+  assert.strictEqual(body.successfulQueries, 3);
+});
+
+test('later keyword searches contribute unique headlines', async () => {
+  globalThis.__openaiCreate = async () => {
+    throw new Error('should not call openai');
+  };
+
+  const manualQuery = 'deep space';
+  const combinedKeywords = 'Mars AND Jupiter';
+  const responses = new Map([
+    [
+      `${manualQuery}|1`,
+      [
+        {
+          title: 'Deep space telescope update',
+          description: 'Old update from telescope',
+          url: 'https://example.com/deep-space-1',
+          source: { name: 'Legacy Source' },
+          publishedAt: '2024-06-01T00:00:00Z',
+        },
+        {
+          title: 'Deep space mission plans',
+          description: 'Older mission plans',
+          url: 'https://example.com/deep-space-2',
+          source: { name: 'Legacy Source' },
+          publishedAt: '2024-06-02T00:00:00Z',
+        },
+      ],
+    ],
+    [
+      `${combinedKeywords}|1`,
+      [
+        {
+          title: 'Mars and Jupiter alignment',
+          description: 'Older planetary alignment news',
+          url: 'https://example.com/alignment',
+          source: { name: 'Planet News' },
+          publishedAt: '2024-06-03T00:00:00Z',
+        },
+        {
+          title: 'Joint Mars-Jupiter study',
+          description: 'Another older study',
+          url: 'https://example.com/study',
+          source: { name: 'Planet News' },
+          publishedAt: '2024-06-04T00:00:00Z',
+        },
+      ],
+    ],
+    [
+      'Mars|1',
+      [
+        {
+          title: 'Fresh Mars rover discovery',
+          description: 'Brand new rover discovery',
+          url: 'https://example.com/mars-rover',
+          source: { name: 'Modern Science' },
+          publishedAt: '2024-07-05T09:00:00Z',
+        },
+      ],
+    ],
+    [
+      'Jupiter|1',
+      [
+        {
+          title: 'New Jupiter storm observed',
+          description: 'Recent observation from probe',
+          url: 'https://example.com/jupiter-storm',
+          source: { name: 'Modern Science' },
+          publishedAt: '2024-07-04T10:00:00Z',
+        },
+      ],
+    ],
+  ]);
+
+  const fetchCalls = [];
+  globalThis.__fetchImpl = async (input) => {
+    const url = new URL(input.toString());
+    const query = url.searchParams.get('q') || '';
+    const pageSize = Number(url.searchParams.get('pageSize'));
+    const page = Number(url.searchParams.get('page'));
+    fetchCalls.push({ query, pageSize, page });
+    const articles = responses.get(`${query}|${page}`) ?? [];
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get(name) {
+          return name === 'content-type' ? 'application/json' : null;
+        },
+      },
+      async json() {
+        return { status: 'ok', articles };
+      },
+      async text() {
+        return JSON.stringify({ status: 'ok', articles });
+      },
+    };
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(
+    createRequest({
+      query: manualQuery,
+      keywords: ['Mars', 'Jupiter'],
+      limit: 4,
+    })
+  );
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+
+  assert.ok(
+    body.headlines.some((item) => item.url === 'https://example.com/mars-rover')
+  );
+  assert.ok(
+    body.headlines.some(
+      (item) => item.url === 'https://example.com/jupiter-storm'
+    )
+  );
+
+  assert.ok(
+    body.queriesAttempted.includes('Mars') &&
+      body.queriesAttempted.includes('Jupiter')
+  );
+
+  const marsCalls = fetchCalls.filter((entry) => entry.query === 'Mars');
+  const jupiterCalls = fetchCalls.filter((entry) => entry.query === 'Jupiter');
+  assert.ok(marsCalls.length >= 1);
+  assert.ok(jupiterCalls.length >= 1);
+
+  assert.ok(body.successfulQueries >= 3);
 });
 
 test('aggregates deduplicated results for derived keyword query', async () => {
@@ -386,8 +580,13 @@ test('aggregates deduplicated results for derived keyword query', async () => {
 
   assert.strictEqual(response.status, 200);
   const body = await response.json();
-  assert.deepStrictEqual(body.queriesAttempted, [keywordQuery]);
-  assert.strictEqual(body.successfulQueries, 1);
+  assert.deepStrictEqual(body.queriesAttempted, [
+    keywordQuery,
+    'AI',
+    'Robotics',
+    'healthcare',
+  ]);
+  assert.strictEqual(body.successfulQueries, 4);
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
   for (const headline of body.headlines) {
@@ -403,6 +602,9 @@ test('aggregates deduplicated results for derived keyword query', async () => {
   assert.deepStrictEqual(fetchCalls, [
     { query: keywordQuery, pageSize: 3, page: 1 },
     { query: keywordQuery, pageSize: 1, page: 2 },
+    { query: 'AI', pageSize: 3, page: 1 },
+    { query: 'Robotics', pageSize: 3, page: 1 },
+    { query: 'healthcare', pageSize: 3, page: 1 },
   ]);
 });
 
@@ -488,13 +690,16 @@ test('combines query and keyword string to reach the limit', async () => {
   assert.deepStrictEqual(body.queriesAttempted, [
     'innovation',
     'biology AND space',
+    'biology',
+    'space',
   ]);
   assert.deepStrictEqual(fetchCalls, [
     { query: 'innovation', pageSize: 2, page: 1 },
-    { query: 'innovation', pageSize: 2, page: 2 },
     { query: 'biology AND space', pageSize: 2, page: 1 },
+    { query: 'biology', pageSize: 2, page: 1 },
+    { query: 'space', pageSize: 2, page: 1 },
   ]);
-  assert.strictEqual(body.successfulQueries, 2);
+  assert.strictEqual(body.successfulQueries, 4);
   assert.strictEqual(body.totalResults, 4);
   assert.deepStrictEqual(
     body.headlines
@@ -642,7 +847,6 @@ test('continues paging when earlier results include duplicates', async () => {
   );
   assert.deepStrictEqual(fetchCalls, [
     { query: 'first spotlight', pageSize: 2, page: 1 },
-    { query: 'first spotlight', pageSize: 2, page: 2 },
     { query: '"second focus"', pageSize: 2, page: 1 },
     { query: '"second focus"', pageSize: 1, page: 2 },
   ]);
@@ -656,9 +860,14 @@ test('builds keyword query without OpenAI assistance', async () => {
   };
 
   const keywordQuery = '"renewable energy" AND investment';
+  const allowedQueries = new Set([
+    keywordQuery,
+    '"renewable energy"',
+    'investment',
+  ]);
   globalThis.__fetchImpl = async (input) => {
     const url = new URL(input.toString());
-    assert.strictEqual(url.searchParams.get('q'), keywordQuery);
+    assert.ok(allowedQueries.has(url.searchParams.get('q') || ''));
     return {
       ok: true,
       status: 200,
@@ -701,8 +910,12 @@ test('builds keyword query without OpenAI assistance', async () => {
 
   assert.strictEqual(response.status, 200);
   const body = await response.json();
-  assert.deepStrictEqual(body.queriesAttempted, [keywordQuery]);
-  assert.strictEqual(body.successfulQueries, 1);
+  assert.deepStrictEqual(body.queriesAttempted, [
+    keywordQuery,
+    '"renewable energy"',
+    'investment',
+  ]);
+  assert.strictEqual(body.successfulQueries, 3);
   assert.strictEqual(body.totalResults, 2);
   assert.strictEqual(body.headlines.length, 2);
   for (const headline of body.headlines) {

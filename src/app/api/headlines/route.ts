@@ -2140,25 +2140,20 @@ function createHeadlinesHandler(
   };
 
   for (const searchEntry of searchQueries) {
-    if (aggregatedHeadlines.length >= limit) {
-      break;
-    }
-
     const search = searchEntry.query;
 
     queriesAttempted.push(search);
     let page = 1;
     let querySucceeded = false;
+    let addedByQuery = 0;
 
-    while (aggregatedHeadlines.length < limit) {
-      const remaining = limit - aggregatedHeadlines.length;
-      const basePageSize = Math.min(remaining, perQuery);
-      const isCombinedKeywordQuery =
-        searchEntry.type === 'keyword' && !('keyword' in searchEntry);
-      const requestedPageSize = isCombinedKeywordQuery
-        ? remaining
-        : basePageSize;
-      const pageSize = Math.max(1, requestedPageSize);
+    while (addedByQuery < perQuery) {
+      const queryRemaining = perQuery - addedByQuery;
+      if (queryRemaining <= 0) {
+        break;
+      }
+
+      const pageSize = Math.max(1, queryRemaining);
       const requestUrl = buildUrl(search, pageSize, page);
 
       let response: Response;
@@ -2211,7 +2206,7 @@ function createHeadlinesHandler(
 
       querySucceeded = true;
 
-      const beforeAdd = aggregatedHeadlines.length;
+      let addedThisPage = 0;
 
       for (const article of data.articles) {
         const normalized: NormalizedHeadline = {
@@ -2231,35 +2226,37 @@ function createHeadlinesHandler(
           continue;
         }
 
-        addHeadlineIfUnique(aggregatedHeadlines, normalized, dedupeOptions);
+        if (addHeadlineIfUnique(aggregatedHeadlines, normalized, dedupeOptions)) {
+          addedByQuery += 1;
+          addedThisPage += 1;
+
+          if (addedByQuery >= perQuery) {
+            break;
+          }
+        }
 
         if (searchEntry.type === 'keyword' && searchEntry.keyword) {
           const keywordEntry = ensureKeywordEntry(searchEntry.keyword, search);
           addHeadlineIfUnique(keywordEntry.candidates, normalized, dedupeOptions);
         }
-
-        if (aggregatedHeadlines.length >= limit) {
-          break;
-        }
       }
 
-      if (aggregatedHeadlines.length >= limit) {
+      if (addedByQuery >= perQuery) {
         break;
       }
 
       const receivedCount = Array.isArray(data.articles)
         ? data.articles.length
         : 0;
-      const addedCount = aggregatedHeadlines.length - beforeAdd;
 
-      if (addedCount === 0 || receivedCount < pageSize) {
+      if (addedThisPage === 0 || receivedCount < pageSize) {
         break;
       }
 
       page += 1;
     }
 
-    if (serpApiConfigured && aggregatedHeadlines.length < limit) {
+    if (serpApiConfigured && addedByQuery < perQuery) {
       const baseParams: Record<string, string> = {
         tbs: serpTimeFilter,
       };
@@ -2272,6 +2269,7 @@ function createHeadlinesHandler(
         baseParams.gl = country;
       }
 
+      const serpQueryRemaining = Math.max(1, perQuery - addedByQuery);
       const serpEngines: Array<{
         engine: string;
         limit: number;
@@ -2279,27 +2277,27 @@ function createHeadlinesHandler(
       }> = [
         {
           engine: 'google_news',
-          limit: Math.max(6, perQuery * 2),
+          limit: Math.max(6, serpQueryRemaining * 2),
           params: {
             ...baseParams,
-            num: String(Math.max(6, perQuery * 2)),
+            num: String(Math.max(6, serpQueryRemaining * 2)),
           },
         },
       ];
 
-      if (aggregatedHeadlines.length < limit) {
+      if (addedByQuery < perQuery) {
         serpEngines.push({
           engine: 'google',
-          limit: Math.max(5, perQuery),
+          limit: Math.max(5, serpQueryRemaining),
           params: {
             ...baseParams,
-            num: String(Math.max(5, perQuery)),
+            num: String(Math.max(5, serpQueryRemaining)),
           },
         });
       }
 
       for (const { engine, limit: serpLimit, params } of serpEngines) {
-        if (aggregatedHeadlines.length >= limit) {
+        if (addedByQuery >= perQuery) {
           break;
         }
 
@@ -2311,7 +2309,7 @@ function createHeadlinesHandler(
         });
 
         for (const result of serpResults) {
-          if (aggregatedHeadlines.length >= limit) {
+          if (addedByQuery >= perQuery) {
             break;
           }
 
@@ -2326,7 +2324,9 @@ function createHeadlinesHandler(
             normalized.keyword = searchEntry.keyword;
           }
 
-          addHeadlineIfUnique(aggregatedHeadlines, normalized, dedupeOptions);
+          if (addHeadlineIfUnique(aggregatedHeadlines, normalized, dedupeOptions)) {
+            addedByQuery += 1;
+          }
 
           if (searchEntry.type === 'keyword' && searchEntry.keyword) {
             const keywordEntry = ensureKeywordEntry(searchEntry.keyword, search);
@@ -2336,28 +2336,29 @@ function createHeadlinesHandler(
       }
     }
 
-  if (querySucceeded) {
-    successfulQueries += 1;
+    if (querySucceeded) {
+      successfulQueries += 1;
+    }
   }
 
-  if (aggregatedHeadlines.length >= limit) {
-    break;
-  }
-}
-
-  if (rssFeeds.length > 0 && aggregatedHeadlines.length < limit) {
+  if (rssFeeds.length > 0) {
     const xmlParser = new XMLParser({
       ignoreAttributes: false,
       attributeNamePrefix: '@_',
     });
 
+    const rssPerFeedQuota = Math.max(1, Math.min(3, Math.ceil(perQuery / 2)));
+    const rssTotalQuota = Math.max(rssFeeds.length, rssPerFeedQuota * rssFeeds.length);
+    let rssAdded = 0;
+
     for (const feedUrl of rssFeeds) {
-      if (aggregatedHeadlines.length >= limit) {
+      if (rssAdded >= rssTotalQuota) {
         break;
       }
 
       let queryLabel = `RSS: ${feedUrl}`;
       let addedFromFeed = 0;
+      let feedQuotaRemaining = rssPerFeedQuota;
 
       try {
         const response = await requester(feedUrl);
@@ -2400,12 +2401,14 @@ function createHeadlinesHandler(
         );
 
         for (const headline of headlines) {
-          if (aggregatedHeadlines.length >= limit) {
+          if (rssAdded >= rssTotalQuota || feedQuotaRemaining <= 0) {
             break;
           }
 
           if (addHeadlineIfUnique(aggregatedHeadlines, headline, dedupeOptions)) {
             addedFromFeed += 1;
+            rssAdded += 1;
+            feedQuotaRemaining -= 1;
           }
         }
 
