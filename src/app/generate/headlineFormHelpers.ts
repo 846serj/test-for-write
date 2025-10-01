@@ -18,7 +18,6 @@ export type BuildHeadlineRequestArgs = {
   fromDate: string;
   toDate: string;
   searchIn: string[];
-  excludeDomainsInput: string;
   category: string;
   country: string;
   description: string;
@@ -26,7 +25,6 @@ export type BuildHeadlineRequestArgs = {
 };
 
 export type BuildHeadlineRequestBaseResult = {
-  sanitizedExcludeDomains: string[];
   sanitizedRssFeeds: string[];
 };
 
@@ -169,7 +167,6 @@ export function buildHeadlineRequest(
     fromDate,
     toDate,
     searchIn,
-    excludeDomainsInput,
     category,
     country,
     description,
@@ -187,13 +184,9 @@ export function buildHeadlineRequest(
     ? normalizedCategory
     : null;
 
-  const sanitizedExcludeDomains = sanitizeListInput(excludeDomainsInput, {
-    lowercase: true,
-  });
   const sanitizedRssFeeds = sanitizeRssFeeds(rssFeeds);
 
   const baseResult: BuildHeadlineRequestBaseResult = {
-    sanitizedExcludeDomains,
     sanitizedRssFeeds,
   };
 
@@ -290,9 +283,6 @@ export function buildHeadlineRequest(
       payload.searchIn = orderedSearchIn;
     }
 
-    if (sanitizedExcludeDomains.length > 0) {
-      payload.excludeDomains = sanitizedExcludeDomains;
-    }
   }
 
   if (trimmedDescription) {
