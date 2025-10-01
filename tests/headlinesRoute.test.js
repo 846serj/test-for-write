@@ -167,37 +167,71 @@ test('infers keywords when only a description is provided', async () => {
   const fetchCalls = [];
   const keywordQuery =
     'Focus AND technology AND driven AND robotics AND transforming';
-  globalThis.__fetchImpl = async (input) => {
-    const url = new URL(input.toString());
-    fetchCalls.push({
-      query: url.searchParams.get('q') || '',
-      pageSize: Number(url.searchParams.get('pageSize')),
-      page: Number(url.searchParams.get('page')),
-    });
-
-    const articles = [
+  const articlePayloads = {
+    [keywordQuery]: [
       {
-        title: 'AI robotics breakthrough',
-        description: 'desc1',
-        url: 'https://example.com/1',
-        source: { name: 'Source A' },
+        title: 'Combined robotics outlook',
+        description: 'Hospitals explore automation for patient recovery',
+        url: 'https://example.com/combined-1',
+        source: { name: 'Combined Source' },
         publishedAt: '2024-03-01T00:00:00Z',
       },
+    ],
+    Focus: [
       {
-        title: 'Healthcare automation',
-        description: 'desc2',
-        url: 'https://example.com/2',
-        source: { name: 'Source B' },
+        title: 'Precision nursing assistants arrive',
+        description: 'Clinics trial bedside robotic attendants',
+        url: 'https://example.com/focus-1',
+        source: { name: 'Focus Daily' },
         publishedAt: '2024-03-02T00:00:00Z',
       },
+    ],
+    technology: [
       {
-        title: 'Robot nurses on the rise',
-        description: 'desc3',
-        url: 'https://example.com/3',
-        source: { name: 'Source C' },
+        title: 'Technology budgets favor robotics',
+        description: 'Chip investments target surgical automation',
+        url: 'https://example.com/technology-1',
+        source: { name: 'Tech World' },
         publishedAt: '2024-03-03T00:00:00Z',
       },
-    ];
+    ],
+    driven: [
+      {
+        title: 'Data-driven staffing insights',
+        description: 'Analytics reshape intensive care operations',
+        url: 'https://example.com/driven-1',
+        source: { name: 'Driven Report' },
+        publishedAt: '2024-03-04T00:00:00Z',
+      },
+    ],
+    robotics: [
+      {
+        title: 'Robotics upgrades improve grip',
+        description: 'Engineers debut adaptive surgical tools',
+        url: 'https://example.com/robotics-1',
+        source: { name: 'Robotics Journal' },
+        publishedAt: '2024-03-05T00:00:00Z',
+      },
+    ],
+    transforming: [
+      {
+        title: 'Transforming rehab with AI coaches',
+        description: 'Virtual assistants guide patient exercises',
+        url: 'https://example.com/transforming-1',
+        source: { name: 'Transforming Times' },
+        publishedAt: '2024-03-06T00:00:00Z',
+      },
+    ],
+  };
+  globalThis.__fetchImpl = async (input) => {
+    const url = new URL(input.toString());
+    const query = url.searchParams.get('q') || '';
+    const pageSize = Number(url.searchParams.get('pageSize'));
+    const page = Number(url.searchParams.get('page'));
+    fetchCalls.push({ query, pageSize, page });
+
+    const payload = articlePayloads[query] ?? [];
+    const articles = payload.slice(0, pageSize);
 
     return {
       ok: true,
@@ -238,19 +272,14 @@ test('infers keywords when only a description is provided', async () => {
     keywordQuery,
     'Focus',
     'technology',
-    'driven',
-    'robotics',
-    'transforming',
   ]);
   assert.deepStrictEqual(fetchCalls, [
     { query: keywordQuery, pageSize: 3, page: 1 },
-    { query: 'Focus', pageSize: 3, page: 1 },
-    { query: 'technology', pageSize: 3, page: 1 },
-    { query: 'driven', pageSize: 3, page: 1 },
-    { query: 'robotics', pageSize: 3, page: 1 },
-    { query: 'transforming', pageSize: 3, page: 1 },
+    { query: 'Focus', pageSize: 1, page: 1 },
+    { query: 'technology', pageSize: 1, page: 1 },
   ]);
-  assert.strictEqual(body.successfulQueries, 6);
+  assert.ok(!fetchCalls.some((call) => call.query === 'driven'));
+  assert.strictEqual(body.successfulQueries, 3);
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
   for (const headline of body.headlines) {
@@ -419,13 +448,6 @@ test('later keyword searches contribute unique headlines', async () => {
           source: { name: 'Legacy Source' },
           publishedAt: '2024-06-01T00:00:00Z',
         },
-        {
-          title: 'Deep space mission plans',
-          description: 'Older mission plans',
-          url: 'https://example.com/deep-space-2',
-          source: { name: 'Legacy Source' },
-          publishedAt: '2024-06-02T00:00:00Z',
-        },
       ],
     ],
     [
@@ -437,13 +459,6 @@ test('later keyword searches contribute unique headlines', async () => {
           url: 'https://example.com/alignment',
           source: { name: 'Planet News' },
           publishedAt: '2024-06-03T00:00:00Z',
-        },
-        {
-          title: 'Joint Mars-Jupiter study',
-          description: 'Another older study',
-          url: 'https://example.com/study',
-          source: { name: 'Planet News' },
-          publishedAt: '2024-06-04T00:00:00Z',
         },
       ],
     ],
@@ -611,13 +626,9 @@ test('aggregates deduplicated results for derived keyword query', async () => {
 
   assert.strictEqual(response.status, 200);
   const body = await response.json();
-  assert.deepStrictEqual(body.queriesAttempted, [
-    keywordQuery,
-    'AI',
-    'Robotics',
-    'healthcare',
-  ]);
-  assert.strictEqual(body.successfulQueries, 4);
+
+  assert.deepStrictEqual(body.queriesAttempted, [keywordQuery]);
+  assert.strictEqual(body.successfulQueries, 1);
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
   for (const headline of body.headlines) {
@@ -633,9 +644,6 @@ test('aggregates deduplicated results for derived keyword query', async () => {
   assert.deepStrictEqual(fetchCalls, [
     { query: keywordQuery, pageSize: 3, page: 1 },
     { query: keywordQuery, pageSize: 1, page: 2 },
-    { query: 'AI', pageSize: 3, page: 1 },
-    { query: 'Robotics', pageSize: 3, page: 1 },
-    { query: 'healthcare', pageSize: 3, page: 1 },
   ]);
 });
 
@@ -718,19 +726,16 @@ test('combines query and keyword string to reach the limit', async () => {
 
   assert.strictEqual(response.status, 200);
   const body = await response.json();
+
   assert.deepStrictEqual(body.queriesAttempted, [
     'innovation',
     'biology AND space',
-    'biology',
-    'space',
   ]);
   assert.deepStrictEqual(fetchCalls, [
     { query: 'innovation', pageSize: 2, page: 1 },
     { query: 'biology AND space', pageSize: 2, page: 1 },
-    { query: 'biology', pageSize: 2, page: 1 },
-    { query: 'space', pageSize: 2, page: 1 },
   ]);
-  assert.strictEqual(body.successfulQueries, 4);
+  assert.strictEqual(body.successfulQueries, 2);
   assert.strictEqual(body.totalResults, 4);
   assert.deepStrictEqual(
     body.headlines
@@ -941,12 +946,8 @@ test('builds keyword query without OpenAI assistance', async () => {
 
   assert.strictEqual(response.status, 200);
   const body = await response.json();
-  assert.deepStrictEqual(body.queriesAttempted, [
-    keywordQuery,
-    '"renewable energy"',
-    'investment',
-  ]);
-  assert.strictEqual(body.successfulQueries, 3);
+  assert.deepStrictEqual(body.queriesAttempted, [keywordQuery]);
+  assert.strictEqual(body.successfulQueries, 1);
   assert.strictEqual(body.totalResults, 2);
   assert.strictEqual(body.headlines.length, 2);
   for (const headline of body.headlines) {
