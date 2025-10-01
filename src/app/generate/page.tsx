@@ -1232,7 +1232,8 @@ export default function GeneratePage() {
                   max={toDate || undefined}
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Limits the earliest article date. Leave blank to use NewsAPI defaults.
+                  Limits the earliest article date. Leave blank to automatically
+                  cover the last 30 days.
                 </p>
               </div>
               <div>
@@ -1245,7 +1246,8 @@ export default function GeneratePage() {
                   min={fromDate || undefined}
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Must be on or after the "From" date when both are set.
+                  Must be on or after the "From" date when both are set. Leave
+                  blank to include today.
                 </p>
               </div>
             </div>

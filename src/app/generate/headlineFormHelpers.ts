@@ -275,12 +275,26 @@ export function buildHeadlineRequest(
       payload.language = normalizedLanguage;
     }
 
-    if (fromValue) {
-      payload.from = fromValue;
+    let effectiveFrom = fromValue;
+    let effectiveTo = toValue;
+
+    if (!effectiveFrom && !effectiveTo) {
+      const today = new Date(Date.now());
+      const defaultTo = today.toISOString().slice(0, 10);
+      const fromDate = new Date(today);
+      fromDate.setUTCDate(fromDate.getUTCDate() - 30);
+      const defaultFrom = fromDate.toISOString().slice(0, 10);
+
+      effectiveFrom = defaultFrom;
+      effectiveTo = defaultTo;
     }
 
-    if (toValue) {
-      payload.to = toValue;
+    if (effectiveFrom) {
+      payload.from = effectiveFrom;
+    }
+
+    if (effectiveTo) {
+      payload.to = effectiveTo;
     }
 
     if (orderedSearchIn.length > 0) {

@@ -1764,6 +1764,17 @@ function createHeadlinesHandler(
     );
   }
 
+  if (!from && !to && !isCategoryRequest) {
+    const today = new Date(Date.now());
+    const defaultTo = today.toISOString().slice(0, 10);
+    const fromDate = new Date(today);
+    fromDate.setUTCDate(fromDate.getUTCDate() - 30);
+    const defaultFrom = fromDate.toISOString().slice(0, 10);
+
+    from = defaultFrom;
+    to = defaultTo;
+  }
+
   if (from && to && new Date(from).getTime() > new Date(to).getTime()) {
     return badRequest('from must be earlier than or equal to to');
   }

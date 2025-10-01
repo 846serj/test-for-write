@@ -1101,11 +1101,19 @@ test('falls back to SERP with a default time filter when NewsAPI has no results'
   process.env.SERPAPI_KEY = 'serp-test-key';
 
   const serpCalls = [];
+  const fixedNow = Date.UTC(2024, 6, 31, 12, 0, 0);
+  const realDateNow = Date.now;
+  Date.now = () => fixedNow;
+  const defaultTo = new Date(fixedNow).toISOString().slice(0, 10);
+  const fromDate = new Date(fixedNow);
+  fromDate.setUTCDate(fromDate.getUTCDate() - 30);
+  const defaultFrom = fromDate.toISOString().slice(0, 10);
 
   globalThis.__fetchImpl = async (input) => {
     const url = new URL(input.toString());
 
-    assert.strictEqual(url.searchParams.get('from'), null);
+    assert.strictEqual(url.searchParams.get('from'), defaultFrom);
+    assert.strictEqual(url.searchParams.get('to'), defaultTo);
 
     return {
       ok: true,
@@ -1140,9 +1148,10 @@ test('falls back to SERP with a default time filter when NewsAPI has no results'
 
     assert.strictEqual(serpCalls.length, 2);
     for (const call of serpCalls) {
-      assert.strictEqual(call.extraParams?.tbs, 'qdr:w2');
+      assert.strictEqual(call.extraParams?.tbs, 'qdr:m');
     }
   } finally {
+    Date.now = realDateNow;
     if (originalSerpKey === undefined) {
       delete process.env.SERPAPI_KEY;
     } else {
