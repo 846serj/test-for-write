@@ -2135,6 +2135,10 @@ function createHeadlinesHandler(
   let successfulQueries = 0;
   const primaryQueryCount = searchQueries.filter((entry) => !entry.fallback).length;
   const perQuery = Math.max(1, Math.ceil(limit / Math.max(1, primaryQueryCount)));
+  const fallbackPerQuery = Math.max(
+    1,
+    Math.min(2, Math.ceil(limit / Math.max(1, searchQueries.length)))
+  );
   const serpApiConfigured = Boolean(process.env.SERPAPI_KEY);
   const serpTimeFilter = computeSerpTimeFilter(from, to);
   const keywordHeadlineResults = new Map<string, KeywordAggregation>();
@@ -2153,13 +2157,21 @@ function createHeadlinesHandler(
   for (const searchEntry of searchQueries) {
     const search = searchEntry.query;
 
+    if (searchEntry.fallback && aggregatedHeadlines.length >= limit) {
+      continue;
+    }
+
     queriesAttempted.push(search);
     let page = 1;
     let querySucceeded = false;
     let addedByQuery = 0;
 
-    while (addedByQuery < perQuery) {
-      const queryRemaining = perQuery - addedByQuery;
+    const maxForQuery = searchEntry.fallback ? fallbackPerQuery : perQuery;
+
+    while (addedByQuery < maxForQuery && aggregatedHeadlines.length < limit) {
+      const globalRemaining = Math.max(0, limit - aggregatedHeadlines.length);
+      const perQueryRemaining = maxForQuery - addedByQuery;
+      const queryRemaining = Math.min(globalRemaining, perQueryRemaining);
       if (queryRemaining <= 0) {
         break;
       }
@@ -2241,7 +2253,7 @@ function createHeadlinesHandler(
           addedByQuery += 1;
           addedThisPage += 1;
 
-          if (addedByQuery >= perQuery) {
+          if (addedByQuery >= maxForQuery || aggregatedHeadlines.length >= limit) {
             break;
           }
         }
@@ -2252,7 +2264,7 @@ function createHeadlinesHandler(
         }
       }
 
-      if (addedByQuery >= perQuery) {
+      if (addedByQuery >= maxForQuery || aggregatedHeadlines.length >= limit) {
         break;
       }
 
@@ -2267,7 +2279,11 @@ function createHeadlinesHandler(
       page += 1;
     }
 
-    if (serpApiConfigured && addedByQuery < perQuery) {
+    if (
+      serpApiConfigured &&
+      addedByQuery < maxForQuery &&
+      aggregatedHeadlines.length < limit
+    ) {
       const baseParams: Record<string, string> = {
         tbs: serpTimeFilter,
       };
@@ -2280,7 +2296,10 @@ function createHeadlinesHandler(
         baseParams.gl = country;
       }
 
-      const serpQueryRemaining = Math.max(1, perQuery - addedByQuery);
+      const serpQueryRemaining = Math.max(
+        1,
+        Math.min(maxForQuery - addedByQuery, limit - aggregatedHeadlines.length)
+      );
       const serpEngines: Array<{
         engine: string;
         limit: number;
@@ -2296,7 +2315,7 @@ function createHeadlinesHandler(
         },
       ];
 
-      if (addedByQuery < perQuery) {
+      if (addedByQuery < maxForQuery) {
         serpEngines.push({
           engine: 'google',
           limit: Math.max(5, serpQueryRemaining),
@@ -2308,7 +2327,7 @@ function createHeadlinesHandler(
       }
 
       for (const { engine, limit: serpLimit, params } of serpEngines) {
-        if (addedByQuery >= perQuery) {
+        if (addedByQuery >= maxForQuery || aggregatedHeadlines.length >= limit) {
           break;
         }
 
@@ -2320,7 +2339,7 @@ function createHeadlinesHandler(
         });
 
         for (const result of serpResults) {
-          if (addedByQuery >= perQuery) {
+          if (addedByQuery >= maxForQuery || aggregatedHeadlines.length >= limit) {
             break;
           }
 
