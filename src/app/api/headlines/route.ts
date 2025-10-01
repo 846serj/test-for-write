@@ -11,6 +11,7 @@ const MAX_DESCRIPTION_QUERY_LENGTH = 500;
 const MAX_RSS_FEEDS = 10;
 const MAX_RSS_ITEMS_PER_FEED = 50;
 const RSS_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
+const MAX_EXCLUDE_URLS = 200;
 
 const LANGUAGE_CODES = [
   'ar',
@@ -386,6 +387,52 @@ function normalizeRssFeeds(raw: unknown): string[] {
   return normalized;
 }
 
+function normalizeExcludeUrls(raw: unknown): string[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+
+  const entries: unknown[] = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+    ? raw.split(/[\r\n,;]+/)
+    : (() => {
+        throw new Error('excludeUrls must be provided as an array or string list of URLs');
+      })();
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of entries) {
+    if (typeof entry !== 'string') {
+      continue;
+    }
+
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const normalizedUrl = normalizeUrlForComparison(trimmed);
+    if (!normalizedUrl) {
+      continue;
+    }
+
+    if (seen.has(normalizedUrl)) {
+      continue;
+    }
+
+    seen.add(normalizedUrl);
+    normalized.push(normalizedUrl);
+
+    if (normalized.length >= MAX_EXCLUDE_URLS) {
+      break;
+    }
+  }
+
+  return normalized;
+}
+
 type HeadlinesRequestBody = {
   query?: unknown;
   keywords?: unknown;
@@ -402,6 +449,7 @@ type HeadlinesRequestBody = {
   country?: unknown;
   rssFeeds?: unknown;
   dedupeMode?: unknown;
+  excludeUrls?: unknown;
 };
 
 type OpenAIClient = {
@@ -968,6 +1016,7 @@ type HeadlineCandidate = {
 
 type DedupeOptions = {
   mode: DedupeMode;
+  excludedUrls?: Set<string>;
 };
 
 type HeadlineRankingComponents = {
@@ -1281,6 +1330,14 @@ function addHeadlineIfUnique(
   options: DedupeOptions
 ): boolean {
   const enriched = createHeadlineCandidate(candidate, options);
+
+  if (
+    enriched.normalizedUrl &&
+    options.excludedUrls &&
+    options.excludedUrls.has(enriched.normalizedUrl)
+  ) {
+    return false;
+  }
 
   for (const existing of aggregated) {
     if (areHeadlinesNearDuplicate(existing, enriched, options)) {
@@ -1696,15 +1753,21 @@ function createHeadlinesHandler(
   let domains: string[];
   let excludeDomains: string[];
   let rssFeeds: string[];
+  let excludeUrls: string[];
   try {
     sources = normalizeSources(body.sources);
     domains = normalizeDomains(body.domains, 'domains');
     excludeDomains = normalizeDomains(body.excludeDomains, 'excludeDomains');
     rssFeeds = normalizeRssFeeds(body.rssFeeds);
+    excludeUrls = normalizeExcludeUrls(body.excludeUrls);
   } catch (error) {
     return badRequest(
       error instanceof Error ? error.message : 'Invalid domain or RSS feed filters'
     );
+  }
+
+  if (excludeUrls.length > 0) {
+    dedupeOptions.excludedUrls = new Set(excludeUrls);
   }
 
   if (sources.length > 0 && (domains.length > 0 || excludeDomains.length > 0)) {
