@@ -10,6 +10,7 @@ const DEFAULT_LIMIT = 5;
 const MAX_FILTER_LIST_ITEMS = 20;
 const MAX_RSS_FEEDS = 10;
 const MAX_RSS_ITEMS_PER_FEED = 50;
+const RSS_FEED_REQUEST_TIMEOUT_MS = 5000;
 const RSS_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 const MAX_EXCLUDE_URLS = 200;
 
@@ -507,7 +508,43 @@ type HeadlinesHandlerDependencies = {
   fetchImpl?: typeof fetch;
   openaiClient?: OpenAIClient;
   logger?: Pick<typeof console, 'error'>;
+  rssRequestTimeoutMs?: number;
 };
+
+type TimeoutSignalHandle = {
+  signal?: AbortSignal;
+  cleanup: () => void;
+};
+
+function createAbortSignalWithTimeout(timeoutMs: number): TimeoutSignalHandle {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return { cleanup: () => {} };
+  }
+
+  if (typeof AbortSignal !== 'undefined') {
+    const timeoutFn = (AbortSignal as any)?.timeout;
+    if (typeof timeoutFn === 'function') {
+      const signal = timeoutFn.call(AbortSignal, timeoutMs) as AbortSignal;
+      return { signal, cleanup: () => {} };
+    }
+  }
+
+  if (typeof AbortController === 'undefined') {
+    return { cleanup: () => {} };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeoutId);
+    },
+  };
+}
 
 function normalizeKeywords(raw: unknown): string[] {
   if (raw === undefined || raw === null) {
@@ -1645,10 +1682,19 @@ function computeSerpTimeFilter(from: string | null, to: string | null): string {
 }
 
 function createHeadlinesHandler(
-  { fetchImpl, openaiClient, logger }: HeadlinesHandlerDependencies = {}
+  {
+    fetchImpl,
+    openaiClient,
+    logger,
+    rssRequestTimeoutMs,
+  }: HeadlinesHandlerDependencies = {}
 ) {
   const requester = fetchImpl ?? fetch;
   const log = (logger ?? console) as Pick<typeof console, 'error'>;
+  const rssTimeoutMs =
+    typeof rssRequestTimeoutMs === 'number' && Number.isFinite(rssRequestTimeoutMs)
+      ? Math.max(1, Math.trunc(rssRequestTimeoutMs))
+      : RSS_FEED_REQUEST_TIMEOUT_MS;
 
   return async function handler(req: NextRequest) {
     const aiClient = openaiClient ?? getOpenAI();
@@ -2205,7 +2251,24 @@ function createHeadlinesHandler(
       let feedQuotaRemaining = rssPerFeedQuota;
 
       try {
-        const response = await requester(feedUrl);
+        let response: Response;
+        const { signal, cleanup } = createAbortSignalWithTimeout(rssTimeoutMs);
+        try {
+          if (signal) {
+            response = await requester(feedUrl, { signal });
+          } else {
+            response = await requester(feedUrl);
+          }
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') {
+            queryWarnings.push(`RSS feed request timed out for ${feedUrl}`);
+            queriesAttempted.push(queryLabel);
+            continue;
+          }
+          throw error;
+        } finally {
+          cleanup();
+        }
         if (!response.ok) {
           queryWarnings.push(
             `RSS feed request failed (${response.status}) for ${feedUrl}`
