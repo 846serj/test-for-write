@@ -711,6 +711,147 @@ test('builds keyword query without OpenAI assistance', async () => {
   assert.strictEqual(openaiCalls, 0);
 });
 
+test('default dedupe keeps near-matching headlines separate', async () => {
+  globalThis.__openaiCreate = async () => {
+    throw new Error('should not call openai');
+  };
+
+  const articles = [
+    {
+      title: 'AI testing leaps ahead',
+      description: 'A new AI testing framework leaps ahead in clinical trials.',
+      url: 'https://example.com/ai-testing-leaps',
+      source: { name: 'Tech Source' },
+      publishedAt: '2024-07-01T10:00:00Z',
+    },
+    {
+      title: 'AI tests leap ahead',
+      description: 'Latest AI tests leap ahead amid new frameworks and trials.',
+      url: 'https://example.com/ai-tests-leap',
+      source: { name: 'Science Daily' },
+      publishedAt: '2024-07-01T12:00:00Z',
+    },
+  ];
+
+  const newsApiUrl = 'https://newsapi.org/v2/everything';
+
+  globalThis.__fetchImpl = async (input) => {
+    const url = input.toString();
+    if (url.startsWith(newsApiUrl)) {
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get(name) {
+            return name === 'content-type' ? 'application/json' : null;
+          },
+        },
+        async json() {
+          return { status: 'ok', articles };
+        },
+        async text() {
+          return JSON.stringify({ status: 'ok', articles });
+        },
+      };
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  globalThis.__serpapiSearch = async () => {
+    throw new Error('serpapi should not be called');
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(
+    createRequest({ query: 'ai testing breakthroughs', limit: 5 })
+  );
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+  assert.strictEqual(body.headlines.length, 2);
+  const returnedUrls = body.headlines.map((item) => item.url).sort();
+  assert.deepStrictEqual(returnedUrls, [
+    'https://example.com/ai-testing-leaps',
+    'https://example.com/ai-tests-leap',
+  ]);
+  for (const headline of body.headlines) {
+    assert.ok(!headline.relatedArticles);
+  }
+});
+
+test('strict dedupe collapses near-matching headlines', async () => {
+  globalThis.__openaiCreate = async () => {
+    throw new Error('should not call openai');
+  };
+
+  const articles = [
+    {
+      title: 'AI testing leaps ahead',
+      description: 'A new AI testing framework leaps ahead in clinical trials.',
+      url: 'https://example.com/ai-testing-leaps',
+      source: { name: 'Tech Source' },
+      publishedAt: '2024-07-01T10:00:00Z',
+    },
+    {
+      title: 'AI tests leap ahead',
+      description: 'Latest AI tests leap ahead amid new frameworks and trials.',
+      url: 'https://example.com/ai-tests-leap',
+      source: { name: 'Science Daily' },
+      publishedAt: '2024-07-01T12:00:00Z',
+    },
+  ];
+
+  const newsApiUrl = 'https://newsapi.org/v2/everything';
+
+  globalThis.__fetchImpl = async (input) => {
+    const url = input.toString();
+    if (url.startsWith(newsApiUrl)) {
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get(name) {
+            return name === 'content-type' ? 'application/json' : null;
+          },
+        },
+        async json() {
+          return { status: 'ok', articles };
+        },
+        async text() {
+          return JSON.stringify({ status: 'ok', articles });
+        },
+      };
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  globalThis.__serpapiSearch = async () => {
+    throw new Error('serpapi should not be called');
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(
+    createRequest({
+      query: 'ai testing breakthroughs',
+      limit: 5,
+      dedupeMode: 'strict',
+    })
+  );
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+  assert.strictEqual(body.headlines.length, 1);
+  const [headline] = body.headlines;
+  assert.strictEqual(headline.url, 'https://example.com/ai-testing-leaps');
+  assert.ok(Array.isArray(headline.relatedArticles));
+  assert.strictEqual(headline.relatedArticles.length, 1);
+  const related = headline.relatedArticles[0];
+  assert.strictEqual(related.url, 'https://example.com/ai-tests-leap');
+  assert.ok(related.title.includes('AI tests'));
+});
+
 test('falls back to SERP with a default time filter when NewsAPI has no results', async () => {
   const originalSerpKey = process.env.SERPAPI_KEY;
   process.env.SERPAPI_KEY = 'serp-test-key';
