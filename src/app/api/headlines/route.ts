@@ -8,7 +8,7 @@ import { getOpenAI } from '../../../lib/openai';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
 const MIN_LIMIT = 1;
-const MAX_LIMIT = 50;
+const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 5;
 const MAX_FILTER_LIST_ITEMS = 20;
 const MAX_DESCRIPTION_QUERY_LENGTH = 500;

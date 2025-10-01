@@ -1,7 +1,7 @@
 import { NormalizedSiteProfile, TargetCategoryQuota } from '../types/profile';
 
 const DEFAULT_LANGUAGE = 'en';
-const TARGET_HEADLINE_COUNT = 50;
+const TARGET_HEADLINE_COUNT = 100;
 
 function toStringArray(value: unknown): string[] {
   const seen = new Set<string>();

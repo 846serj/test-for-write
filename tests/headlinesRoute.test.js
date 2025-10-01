@@ -118,6 +118,37 @@ test('rejects requests without query or keywords', async () => {
   );
 });
 
+test('category requests permit requesting up to 100 headlines', async () => {
+  const fetchCalls = [];
+  globalThis.__fetchImpl = async (input) => {
+    const url = new URL(input.toString());
+    fetchCalls.push({
+      pageSize: Number(url.searchParams.get('pageSize')),
+      page: Number(url.searchParams.get('page')),
+    });
+
+    return {
+      ok: true,
+      headers: {
+        get() {
+          return 'application/json';
+        },
+      },
+      async json() {
+        return { status: 'ok', articles: [] };
+      },
+    };
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(
+    createRequest({ category: 'business', country: 'us', limit: 100 })
+  );
+
+  assert.strictEqual(response.status, 200);
+  assert.deepStrictEqual(fetchCalls, [{ pageSize: 100, page: 1 }]);
+});
+
 test('infers keywords when only a description is provided', async () => {
   const openaiCalls = [];
   globalThis.__openaiCreate = async (options) => {
