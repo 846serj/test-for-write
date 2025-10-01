@@ -5,59 +5,23 @@ export type PresetCategory = {
 };
 
 const MORNING_OVERVIEW_CATEGORIES: readonly PresetCategory[] = [
+  { id: 'gadgets-devices', label: 'Gadgets & Devices' },
   {
-    id: 'global-affairs',
-    label: 'Global Affairs & Security',
+    id: 'science-tech-news',
+    label: 'Science & Tech News',
     children: [
-      { id: 'geopolitics', label: 'Overnight Geopolitics' },
-      { id: 'conflicts', label: 'Conflicts & Flashpoints' },
-      { id: 'diplomacy', label: 'Diplomacy & Alliances' },
+      { id: 'ai', label: 'AI' },
+      { id: 'space', label: 'Space' },
     ],
   },
+  { id: 'software-apps', label: 'Software & Apps' },
   {
-    id: 'us-policy',
-    label: 'U.S. Policy & Politics',
+    id: 'transportation',
+    label: 'Transportation',
     children: [
-      { id: 'white-house', label: 'White House & Administration' },
-      { id: 'congress', label: 'Congress & Regulation' },
-      { id: 'elections', label: 'Elections & Campaigns' },
-    ],
-  },
-  {
-    id: 'market-moves',
-    label: 'Market Moves',
-    children: [
-      { id: 'equities', label: 'Equities & Futures' },
-      { id: 'fixed-income', label: 'Fixed Income & Rates' },
-      { id: 'commodities', label: 'Commodities & Energy' },
-      { id: 'currencies', label: 'Currencies & Crypto' },
-    ],
-  },
-  {
-    id: 'corporate-tech',
-    label: 'Corporate & Tech',
-    children: [
-      { id: 'earnings', label: 'Earnings & Deals' },
-      { id: 'big-tech', label: 'Big Tech & Innovation' },
-      { id: 'startups', label: 'Startups & Venture' },
-    ],
-  },
-  {
-    id: 'science-health',
-    label: 'Science, Health & Climate',
-    children: [
-      { id: 'public-health', label: 'Medical & Public Health' },
-      { id: 'climate', label: 'Climate & Environment' },
-      { id: 'space', label: 'Space & Advanced Research' },
-    ],
-  },
-  {
-    id: 'culture-trends',
-    label: 'Culture & Trends',
-    children: [
-      { id: 'media', label: 'Media & Entertainment' },
-      { id: 'sports', label: 'Sports Business' },
-      { id: 'lifestyle', label: 'Lifestyle & Travel' },
+      { id: 'automotive', label: 'Automotive' },
+      { id: 'boats', label: 'Boats' },
+      { id: 'planes', label: 'Planes' },
     ],
   },
 ];
