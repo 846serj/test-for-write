@@ -52,6 +52,71 @@ const HEADLINE_COPY_FORMAT_LABELS: Record<HeadlineClipboardFormat, string> = {
   tsv: 'tab-separated text',
 };
 
+const DEFAULT_FETCH_ERROR_MESSAGE = 'Failed to fetch headlines.';
+
+type HeadlineFetchErrorInput = {
+  data: any;
+  fallbackText: string | null;
+  response: Response;
+};
+
+const sanitizeFallbackText = (text: string | null): string | null => {
+  if (!text) {
+    return null;
+  }
+
+  const stripped = text.replace(/<[^>]*>/g, ' ');
+  const collapsed = stripped.replace(/\s+/g, ' ').trim();
+
+  if (!collapsed) {
+    return null;
+  }
+
+  const hasPlainText =
+    /[A-Za-z0-9]/.test(collapsed) ||
+    Array.from(collapsed).some((char) => char.charCodeAt(0) > 127);
+
+  if (!hasPlainText) {
+    return null;
+  }
+
+  const MAX_LENGTH = 200;
+  if (collapsed.length > MAX_LENGTH) {
+    return `${collapsed.slice(0, MAX_LENGTH - 1).trimEnd()}…`;
+  }
+
+  return collapsed;
+};
+
+const deriveHeadlineFetchErrorMessage = ({
+  data,
+  fallbackText,
+  response,
+}: HeadlineFetchErrorInput): string => {
+  const dataMessage =
+    typeof data?.error === 'string'
+      ? data.error.trim()
+      : typeof data?.message === 'string'
+      ? data.message.trim()
+      : null;
+
+  if (dataMessage) {
+    return dataMessage;
+  }
+
+  const sanitizedFallback = sanitizeFallbackText(fallbackText);
+  if (sanitizedFallback) {
+    return sanitizedFallback;
+  }
+
+  const statusText = response?.statusText?.trim();
+  if (statusText) {
+    return statusText;
+  }
+
+  return DEFAULT_FETCH_ERROR_MESSAGE;
+};
+
 export default function GeneratePage() {
   const router = useRouter();
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -610,17 +675,31 @@ export default function GeneratePage() {
       }
 
       if (!response.ok) {
-        throw new Error(
-          data?.error ||
-            data?.message ||
-            fallbackText ||
-            response.statusText ||
-            'Failed to fetch headlines'
-        );
+        const errorMessage = deriveHeadlineFetchErrorMessage({
+          data,
+          fallbackText,
+          response,
+        });
+        console.error('[headlines] fetch error response', {
+          status: response.status,
+          statusText: response.statusText,
+          fallbackText,
+        });
+        throw new Error(errorMessage);
       }
 
       if (!data) {
-        throw new Error(fallbackText || 'Invalid response from server');
+        const errorMessage = deriveHeadlineFetchErrorMessage({
+          data,
+          fallbackText,
+          response,
+        });
+        console.error('[headlines] empty response payload', {
+          status: response.status,
+          statusText: response.statusText,
+          fallbackText,
+        });
+        throw new Error(errorMessage);
       }
 
       const rawHeadlines = Array.isArray(data?.headlines)
