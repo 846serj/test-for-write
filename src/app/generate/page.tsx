@@ -1,7 +1,7 @@
 // page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
@@ -18,6 +18,7 @@ import {
   type HeadlineSiteKey,
   type PresetCategory,
 } from '../../constants/headlineSites';
+import type { HeadlineCategoryReviewResult } from '../../lib/headlineCategoryReview';
 import type {
   HeadlineItem,
   RelatedArticle,
@@ -237,6 +238,15 @@ export default function GeneratePage() {
   const [headlineError, setHeadlineError] = useState<string | null>(null);
   const [headlineResults, setHeadlineResults] = useState<HeadlineItem[]>([]);
   const [headlineQueries, setHeadlineQueries] = useState<string[]>([]);
+  const [headlineReviewResults, setHeadlineReviewResults] = useState<
+    HeadlineCategoryReviewResult[]
+  >([]);
+  const [headlineReviewStatus, setHeadlineReviewStatus] = useState<
+    'idle' | 'loading' | 'error' | 'success'
+  >('idle');
+  const [headlineReviewError, setHeadlineReviewError] = useState<string | null>(
+    null
+  );
   const [headlineDescription, setHeadlineDescription] = useState('');
   const [activeSiteKey, setActiveSiteKey] = useState<HeadlineSiteKey | null>(
     null
@@ -267,6 +277,20 @@ export default function GeneratePage() {
   useEffect(() => {
     setCopyFeedback(null);
   }, [headlineResults]);
+
+  const reviewResultsByIndex = useMemo(() => {
+    const map = new Map<number, HeadlineCategoryReviewResult>();
+    for (const result of headlineReviewResults) {
+      map.set(result.index, result);
+    }
+    return map;
+  }, [headlineReviewResults]);
+
+  const unmatchedReviewCount = useMemo(() => {
+    return headlineReviewResults.reduce((total, entry) => {
+      return entry.status === 'unmatched' ? total + 1 : total;
+    }, 0);
+  }, [headlineReviewResults]);
 
   const handleCopyHeadlines = async (format: HeadlineClipboardFormat) => {
     setCopyFeedback(null);
@@ -726,6 +750,9 @@ export default function GeneratePage() {
     setHeadlineLoading(true);
     setHeadlineError(null);
     setHeadlineQueries([]);
+    setHeadlineReviewResults([]);
+    setHeadlineReviewStatus('idle');
+    setHeadlineReviewError(null);
 
     try {
       const response = await fetch('/api/headlines', {
@@ -890,6 +917,73 @@ export default function GeneratePage() {
 
       setHeadlineResults(normalized);
       setHeadlineQueries(normalizedQueries);
+
+      if (activeSiteCategories.length > 0) {
+        if (normalized.length === 0) {
+          setHeadlineReviewResults([]);
+          setHeadlineReviewStatus('success');
+          setHeadlineReviewError(null);
+        } else {
+          setHeadlineReviewStatus('loading');
+          try {
+            const reviewResponse = await fetch('/api/headlines/review', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                categories: activeSiteCategories,
+                headlines: normalized.map((item) => ({
+                  title: item.title,
+                  description: item.description,
+                  source: item.source,
+                })),
+              }),
+            });
+
+            const reviewContentType = reviewResponse.headers.get('content-type') ?? '';
+            let reviewData: any = null;
+            let reviewFallback: string | null = null;
+
+            if (reviewContentType.includes('application/json')) {
+              try {
+                reviewData = await reviewResponse.json();
+              } catch (error) {
+                console.error('[headlines] review parse error:', error);
+                reviewFallback = await reviewResponse.text();
+              }
+            } else {
+              reviewFallback = await reviewResponse.text();
+            }
+
+            if (!reviewResponse.ok) {
+              const fallbackMessage = sanitizeFallbackText(reviewFallback);
+              const message =
+                typeof reviewData?.error === 'string'
+                  ? reviewData.error
+                  : fallbackMessage || 'Failed to review headlines.';
+              throw new Error(message);
+            }
+
+            if (!reviewData || !Array.isArray(reviewData.results)) {
+              throw new Error('Received an invalid review response.');
+            }
+
+            setHeadlineReviewResults(reviewData.results);
+            setHeadlineReviewStatus('success');
+            setHeadlineReviewError(null);
+          } catch (reviewError: any) {
+            console.error('[headlines] review error:', reviewError);
+            setHeadlineReviewResults([]);
+            setHeadlineReviewStatus('error');
+            setHeadlineReviewError(
+              reviewError?.message || 'Unable to review headlines.'
+            );
+          }
+        }
+      } else {
+        setHeadlineReviewResults([]);
+        setHeadlineReviewStatus('idle');
+        setHeadlineReviewError(null);
+      }
     } catch (error: any) {
       console.error('[headlines] fetch error:', error);
       setHeadlineError(error?.message || 'Unable to fetch headlines.');
@@ -903,6 +997,7 @@ export default function GeneratePage() {
   const labelStyle = 'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1';
   const inputStyle =
     'border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-black dark:text-white rounded-md px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500';
+  const hasPresetCategories = activeSiteCategories.length > 0;
 
   return (
     <div
@@ -1457,6 +1552,33 @@ export default function GeneratePage() {
                         {copyFeedback.message}
                       </p>
                     )}
+                    {hasPresetCategories && headlineResults.length > 0 ? (
+                      <div className="mt-4 space-y-1">
+                        {headlineReviewStatus === 'loading' ? (
+                          <p className="text-sm text-blue-700 dark:text-blue-300">
+                            Categorizing headlines…
+                          </p>
+                        ) : null}
+                        {headlineReviewStatus === 'error' && headlineReviewError ? (
+                          <p className="text-sm text-red-600 dark:text-red-400">
+                            {headlineReviewError}
+                          </p>
+                        ) : null}
+                        {headlineReviewStatus === 'success' ? (
+                          unmatchedReviewCount > 0 ? (
+                            <p className="text-sm text-amber-700 dark:text-amber-300">
+                              {unmatchedReviewCount} of {headlineResults.length} headline
+                              {headlineResults.length === 1 ? '' : 's'} fall outside the
+                              preset categories.
+                            </p>
+                          ) : (
+                            <p className="text-sm text-green-700 dark:text-green-300">
+                              All headlines match the preset categories.
+                            </p>
+                          )
+                        ) : null}
+                      </div>
+                    ) : null}
                     <div className="overflow-x-auto">
                       <table className="min-w-full table-auto divide-y divide-gray-200 dark:divide-gray-700">
                         <thead className="bg-gray-100 dark:bg-gray-800">
@@ -1469,7 +1591,13 @@ export default function GeneratePage() {
                             </th>
                             <th
                               scope="col"
-                              className="min-w-[11rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[30%]"
+                              className="min-w-[10rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[20%]"
+                            >
+                              Category Review
+                            </th>
+                            <th
+                              scope="col"
+                              className="min-w-[11rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[20%]"
                             >
                               Source &amp; Published
                             </th>
@@ -1487,11 +1615,21 @@ export default function GeneratePage() {
                             const formattedDate = formatPublishedDate(
                               headline.publishedAt
                             );
+                            const review = reviewResultsByIndex.get(index);
+                            const isUnmatched =
+                              hasPresetCategories &&
+                              headlineReviewStatus === 'success' &&
+                              (!review || review.status === 'unmatched');
 
                             return (
                               <tr
                                 key={headlineUrl || index}
-                                className="odd:bg-white even:bg-gray-50 dark:odd:bg-gray-900 dark:even:bg-gray-800"
+                                className={clsx(
+                                  'odd:bg-white even:bg-gray-50 dark:odd:bg-gray-900 dark:even:bg-gray-800 border-l-4',
+                                  isUnmatched
+                                    ? 'border-red-400 dark:border-red-500'
+                                    : 'border-transparent'
+                                )}
                               >
                                 <td className="min-w-[14rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100 sm:w-[45%]">
                                   <div className="font-semibold">
@@ -1555,7 +1693,42 @@ export default function GeneratePage() {
                                     </div>
                                   ) : null}
                                 </td>
-                                <td className="min-w-[11rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[30%]">
+                                <td className="min-w-[10rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[20%]">
+                                  {!hasPresetCategories ? (
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                      No preset categories
+                                    </span>
+                                  ) : headlineReviewStatus === 'loading' ? (
+                                    <span className="text-xs text-blue-700 dark:text-blue-300">
+                                      Reviewing…
+                                    </span>
+                                  ) : headlineReviewStatus === 'error' ? (
+                                    <span className="text-xs text-red-600 dark:text-red-400">
+                                      Review unavailable
+                                    </span>
+                                  ) : review && review.status === 'matched' ? (
+                                    <div>
+                                      <span className="inline-flex items-center rounded-md bg-green-100 px-2 py-1 text-xs font-semibold text-green-700 dark:bg-green-900/50 dark:text-green-200">
+                                        {review.categoryLabel || 'Matched'}
+                                      </span>
+                                      {review.matchedTerms.length > 0 ? (
+                                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                          Matched: {review.matchedTerms.join(', ')}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      <span className="inline-flex items-center rounded-md bg-red-100 px-2 py-1 text-xs font-semibold text-red-700 dark:bg-red-900/60 dark:text-red-200">
+                                        Unmatched
+                                      </span>
+                                      <div className="mt-1 text-xs text-red-600 dark:text-red-300">
+                                        Outside preset taxonomy
+                                      </div>
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="min-w-[11rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[20%]">
                                   <div className="space-y-1">
                                     {headline.source ? (
                                       <div className="font-medium text-gray-900 dark:text-gray-100">
