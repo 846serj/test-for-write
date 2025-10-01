@@ -1387,55 +1387,6 @@ export default function GeneratePage() {
                                       </span>
                                     </div>
                                   )}
-                                  {headline.relatedArticles?.length ? (
-                                    <div className="mt-3 space-y-1">
-                                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                        Supporting sources
-                                      </p>
-                                      <ul className="space-y-1">
-                                        {headline.relatedArticles
-                                          .slice(0, 3)
-                                          .map((related, relatedIndex) => {
-                                            const label =
-                                              related.title ||
-                                              related.source ||
-                                              'Related coverage';
-                                            const key =
-                                              related.url || `${relatedIndex}-${label}`;
-                                            return (
-                                              <li
-                                                key={key}
-                                                className="text-xs text-gray-600 dark:text-gray-400"
-                                              >
-                                                {related.url ? (
-                                                  <a
-                                                    href={related.url}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                                                  >
-                                                    {label}
-                                                  </a>
-                                                ) : (
-                                                  <span className="font-medium">{label}</span>
-                                                )}
-                                                {related.source && (
-                                                  <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">
-                                                    ({related.source})
-                                                  </span>
-                                                )}
-                                              </li>
-                                            );
-                                          })}
-                                        {headline.relatedArticles.length > 3 && (
-                                          <li className="text-xs text-gray-500 dark:text-gray-400">
-                                            +{headline.relatedArticles.length - 3} more source
-                                            {headline.relatedArticles.length - 3 === 1 ? '' : 's'}
-                                          </li>
-                                        )}
-                                      </ul>
-                                    </div>
-                                  ) : null}
                                 </td>
                                 <td className="min-w-[11rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[30%]">
                                   <div className="space-y-1">
