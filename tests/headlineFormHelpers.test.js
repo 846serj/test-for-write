@@ -4,24 +4,10 @@ import * as ts from 'typescript';
 import { test } from 'node:test';
 
 const helpersPath = new URL('../src/app/generate/headlineFormHelpers.ts', import.meta.url);
-const categoryConfigPath = new URL('../src/constants/categoryFeeds.ts', import.meta.url);
 const tsSource = fs.readFileSync(helpersPath, 'utf8');
-const categorySource = fs.readFileSync(categoryConfigPath, 'utf8');
 
-const sanitizedHelpersSource = tsSource
-  .replace(
-    "import { CATEGORY_FEED_SET } from '../../constants/categoryFeeds';\n\n",
-    ''
-  )
-  .replace(
-    "import { isCategoryFeedValue } from '../../constants/categoryFeeds';\n\n",
-    ''
-  );
-
-const snippet = `
-${categorySource}
-${sanitizedHelpersSource}
-export { normalizeKeywordInput, buildHeadlineRequest, CATEGORY_FEED_CONFIG, CATEGORY_FEED_VALUES };
+const snippet = `${tsSource}
+export { normalizeKeywordInput, buildHeadlineRequest };
 `;
 
 const jsCode = ts
@@ -32,12 +18,7 @@ const jsCode = ts
 
 const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString('base64');
 
-const {
-  normalizeKeywordInput,
-  buildHeadlineRequest,
-  CATEGORY_FEED_CONFIG,
-  CATEGORY_FEED_VALUES,
-} = await import(moduleUrl);
+const { normalizeKeywordInput, buildHeadlineRequest } = await import(moduleUrl);
 
 const FIXED_NOW = Date.UTC(2024, 6, 31, 12, 0, 0);
 
@@ -65,7 +46,7 @@ test('normalizeKeywordInput deduplicates mixed separators while preserving order
   assert.deepStrictEqual(result, ['AI', 'robotics', 'space exploration']);
 });
 
-test('buildHeadlineRequest enforces keywords or category', () => {
+test('buildHeadlineRequest requires keywords, description, or query', () => {
   const result = buildHeadlineRequest({
     keywords: [],
     profileQuery: '',
@@ -76,8 +57,6 @@ test('buildHeadlineRequest enforces keywords or category', () => {
     fromDate: '',
     toDate: '',
     searchIn: [],
-    category: '',
-    country: '',
     description: '',
   });
 
@@ -102,8 +81,6 @@ test('buildHeadlineRequest accepts description-only payloads', () => {
       fromDate: '',
       toDate: '',
       searchIn: [],
-      category: '',
-      country: '',
       description: instructions,
     });
 
@@ -117,9 +94,7 @@ test('buildHeadlineRequest accepts description-only payloads', () => {
 });
 
 test('buildHeadlineRequest creates keyword-only payloads', () => {
-  const keywords = normalizeKeywordInput(
-    'climate change, Climate Change, renewables'
-  );
+  const keywords = normalizeKeywordInput('climate change, Climate Change, renewables');
 
   withMockedNow(() => {
     const result = buildHeadlineRequest({
@@ -132,10 +107,9 @@ test('buildHeadlineRequest creates keyword-only payloads', () => {
       fromDate: '',
       toDate: '',
       searchIn: ['description', 'content'],
-      category: '',
-      country: '',
       description: '',
       rssFeeds: ['https://example.com/feed'],
+      dedupeMode: 'strict',
     });
 
     assert.strictEqual(result.ok, true);
@@ -148,6 +122,7 @@ test('buildHeadlineRequest creates keyword-only payloads', () => {
       rssFeeds: ['https://example.com/feed'],
       from: defaultFrom,
       to: defaultTo,
+      dedupeMode: 'strict',
     });
     assert.deepStrictEqual(result.sanitizedRssFeeds, ['https://example.com/feed']);
   });
@@ -165,8 +140,6 @@ test('buildHeadlineRequest normalizes language for profile queries', () => {
       fromDate: '',
       toDate: '',
       searchIn: [],
-      category: '',
-      country: '',
       description: '',
     });
 
@@ -191,8 +164,6 @@ test('buildHeadlineRequest sanitizes rss feeds', () => {
       fromDate: '',
       toDate: '',
       searchIn: [],
-      category: '',
-      country: '',
       description: '',
       rssFeeds: [
         ' https://example.com/feed ',
@@ -229,8 +200,6 @@ test('buildHeadlineRequest accepts profile queries without keywords', () => {
       fromDate: '',
       toDate: '',
       searchIn: [],
-      category: '',
-      country: '',
       description: '',
     });
 
@@ -241,49 +210,4 @@ test('buildHeadlineRequest accepts profile queries without keywords', () => {
     assert.strictEqual(result.payload.to, defaultTo);
     assert.ok(!('description' in result.payload));
   });
-});
-
-test('buildHeadlineRequest accepts every configured category feed', () => {
-  for (const feed of CATEGORY_FEED_CONFIG) {
-    const result = buildHeadlineRequest({
-      keywords: [],
-      profileQuery: '',
-      profileLanguage: null,
-      limit: 5,
-      sortBy: 'publishedAt',
-      language: 'all',
-      fromDate: '',
-      toDate: '',
-      searchIn: [],
-      category: feed.value,
-      country: '',
-      description: '',
-    });
-
-    assert.strictEqual(result.ok, true, `Expected ${feed.value} to be accepted`);
-    assert.strictEqual(result.payload.category, feed.value);
-  }
-});
-
-test('buildHeadlineRequest rejects unsupported categories', () => {
-  const unsupported = 'not-real-category';
-  assert.ok(!CATEGORY_FEED_VALUES.includes(unsupported));
-
-  const result = buildHeadlineRequest({
-    keywords: [],
-    profileQuery: '',
-    profileLanguage: null,
-    limit: 5,
-    sortBy: 'publishedAt',
-    language: 'all',
-    fromDate: '',
-    toDate: '',
-    searchIn: [],
-    category: unsupported,
-    country: '',
-    description: '',
-  });
-
-  assert.strictEqual(result.ok, false);
-  assert.strictEqual(result.error, 'Unsupported category feed: not-real-category');
 });

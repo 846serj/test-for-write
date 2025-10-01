@@ -1,5 +1,3 @@
-import { isCategoryFeedValue } from '../../constants/categoryFeeds';
-
 const MAX_LIST_ITEMS = 20;
 const MAX_RSS_FEEDS = 10;
 const ALLOWED_RSS_PROTOCOLS = new Set(['http:', 'https:']);
@@ -20,8 +18,6 @@ export type BuildHeadlineRequestArgs = {
   fromDate: string;
   toDate: string;
   searchIn: string[];
-  category: string;
-  country: string;
   description: string;
   rssFeeds?: string[];
   dedupeMode?: HeadlineDedupeMode;
@@ -170,8 +166,6 @@ export function buildHeadlineRequest(
     fromDate,
     toDate,
     searchIn,
-    category,
-    country,
     description,
     rssFeeds,
     dedupeMode,
@@ -181,26 +175,11 @@ export function buildHeadlineRequest(
   const hasProfileQuery = Boolean(trimmedProfileQuery);
   const trimmedDescription = description.trim();
 
-  const trimmedCategory = category.trim();
-  const normalizedCategory = trimmedCategory.toLowerCase();
-  const normalizedCountry = country.trim().toLowerCase();
-  const categoryFeedValue = isCategoryFeedValue(normalizedCategory)
-    ? normalizedCategory
-    : null;
-
   const sanitizedRssFeeds = sanitizeRssFeeds(rssFeeds);
 
   const baseResult: BuildHeadlineRequestBaseResult = {
     sanitizedRssFeeds,
   };
-
-  if (normalizedCategory && categoryFeedValue === null) {
-    return {
-      ok: false,
-      error: `Unsupported category feed: ${trimmedCategory || category}`,
-      ...baseResult,
-    };
-  }
 
   const { raw: fromValue, timestamp: fromTimestamp } = clampDateValue(fromDate);
   const { raw: toValue, timestamp: toTimestamp } = clampDateValue(toDate);
@@ -236,7 +215,6 @@ export function buildHeadlineRequest(
   if (
     !hasProfileQuery &&
     keywords.length === 0 &&
-    categoryFeedValue === null &&
     !trimmedDescription
   ) {
     return {
@@ -253,54 +231,46 @@ export function buildHeadlineRequest(
 
   const payload: Record<string, unknown> = {
     limit,
+    sortBy,
   };
 
-  if (categoryFeedValue !== null) {
-    payload.category = categoryFeedValue;
-    if (normalizedCountry) {
-      payload.country = normalizedCountry;
-    }
-  } else {
-    payload.sortBy = sortBy;
-    if (hasProfileQuery) {
-      payload.query = trimmedProfileQuery;
-    }
-    if (keywords.length > 0) {
-      payload.keywords = keywords;
-    }
+  if (hasProfileQuery) {
+    payload.query = trimmedProfileQuery;
   }
-  if (categoryFeedValue === null) {
-    const normalizedLanguage = normalizeLanguage(language, profileLanguage);
-    if (normalizedLanguage) {
-      payload.language = normalizedLanguage;
-    }
 
-    let effectiveFrom = fromValue;
-    let effectiveTo = toValue;
+  if (keywords.length > 0) {
+    payload.keywords = keywords;
+  }
 
-    if (!effectiveFrom && !effectiveTo) {
-      const today = new Date(Date.now());
-      const defaultTo = today.toISOString().slice(0, 10);
-      const fromDate = new Date(today);
-      fromDate.setUTCDate(fromDate.getUTCDate() - 30);
-      const defaultFrom = fromDate.toISOString().slice(0, 10);
+  const normalizedLanguage = normalizeLanguage(language, profileLanguage);
+  if (normalizedLanguage) {
+    payload.language = normalizedLanguage;
+  }
 
-      effectiveFrom = defaultFrom;
-      effectiveTo = defaultTo;
-    }
+  let effectiveFrom = fromValue;
+  let effectiveTo = toValue;
 
-    if (effectiveFrom) {
-      payload.from = effectiveFrom;
-    }
+  if (!effectiveFrom && !effectiveTo) {
+    const today = new Date(Date.now());
+    const defaultTo = today.toISOString().slice(0, 10);
+    const fromDate = new Date(today);
+    fromDate.setUTCDate(fromDate.getUTCDate() - 30);
+    const defaultFrom = fromDate.toISOString().slice(0, 10);
 
-    if (effectiveTo) {
-      payload.to = effectiveTo;
-    }
+    effectiveFrom = defaultFrom;
+    effectiveTo = defaultTo;
+  }
 
-    if (orderedSearchIn.length > 0) {
-      payload.searchIn = orderedSearchIn;
-    }
+  if (effectiveFrom) {
+    payload.from = effectiveFrom;
+  }
 
+  if (effectiveTo) {
+    payload.to = effectiveTo;
+  }
+
+  if (orderedSearchIn.length > 0) {
+    payload.searchIn = orderedSearchIn;
   }
 
   if (trimmedDescription) {

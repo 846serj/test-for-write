@@ -180,7 +180,6 @@ export default function GeneratePage() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const searchIn: string[] = [];
-  const [headlineCountry, setHeadlineCountry] = useState('');
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [selectedCopyColumn, setSelectedCopyColumn] =
     useState<HeadlineClipboardColumn>('all');
@@ -334,7 +333,6 @@ export default function GeneratePage() {
     setActiveSiteKey(null);
     setActiveSiteRssFeeds([]);
     setHeadlineDescription('');
-    setHeadlineCountry('');
     setKeywords([]);
   };
 
@@ -345,8 +343,6 @@ export default function GeneratePage() {
     }
 
     setActiveSiteKey(siteKey);
-    const presetCountry = preset.country ?? '';
-    setHeadlineCountry(presetCountry);
     const presetKeywords =
       'keywords' in preset && Array.isArray(preset.keywords)
         ? [...preset.keywords]
@@ -361,7 +357,6 @@ export default function GeneratePage() {
     await handleFetchHeadlines({
       description: preset.instructions,
       keywords: presetKeywords,
-      country: presetCountry,
       rssFeeds: presetRssFeeds,
       presetKey: siteKey,
     });
@@ -583,7 +578,6 @@ export default function GeneratePage() {
     overrides?: {
       description?: string;
       keywords?: string[];
-      country?: string;
       rssFeeds?: string[];
       presetKey?: HeadlineSiteKey | null;
     }
@@ -594,7 +588,6 @@ export default function GeneratePage() {
         : headlineDescription;
     const nextDescription = nextDescriptionRaw.trim();
     const nextKeywords = overrides?.keywords ?? keywords;
-    const nextCountry = overrides?.country ?? headlineCountry;
     const nextRssFeeds = overrides?.rssFeeds ?? activeSiteRssFeeds;
 
     if (nextDescription !== headlineDescription) {
@@ -603,10 +596,6 @@ export default function GeneratePage() {
 
     if (overrides?.keywords) {
       setKeywords(overrides.keywords);
-    }
-
-    if (overrides?.country !== undefined && overrides.country !== headlineCountry) {
-      setHeadlineCountry(overrides.country);
     }
 
     if (overrides?.rssFeeds) {
@@ -623,8 +612,6 @@ export default function GeneratePage() {
       fromDate,
       toDate,
       searchIn,
-      category: '',
-      country: nextCountry,
       description: nextDescription,
       rssFeeds: nextRssFeeds,
       dedupeMode: 'strict',
