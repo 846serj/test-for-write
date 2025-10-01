@@ -8,7 +8,6 @@ const MIN_LIMIT = 1;
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 5;
 const MAX_FILTER_LIST_ITEMS = 20;
-const MAX_DESCRIPTION_QUERY_LENGTH = 500;
 const MAX_RSS_FEEDS = 10;
 const MAX_RSS_ITEMS_PER_FEED = 50;
 const RSS_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
@@ -804,30 +803,6 @@ function fallbackKeywordsFromDescription(
   }
 
   return normalized;
-}
-
-function sanitizeDescriptionQuery(description: string): string {
-  if (!description) {
-    return '';
-  }
-
-  const normalized = description.replace(/\s+/g, ' ').trim();
-  if (!normalized) {
-    return '';
-  }
-
-  if (normalized.length <= MAX_DESCRIPTION_QUERY_LENGTH) {
-    return normalized;
-  }
-
-  const truncated = normalized.slice(0, MAX_DESCRIPTION_QUERY_LENGTH);
-  const lastSpace = truncated.lastIndexOf(' ');
-
-  if (lastSpace > MAX_DESCRIPTION_QUERY_LENGTH * 0.6) {
-    return truncated.slice(0, lastSpace).trim();
-  }
-
-  return truncated.trim();
 }
 
 async function inferKeywordsFromDescription(
@@ -1869,16 +1844,6 @@ function createHeadlinesHandler(
     }
   }
 
-  if (searchQueryCandidates.length === 0 && description) {
-    const sanitized = sanitizeDescriptionQuery(description);
-    if (sanitized) {
-      searchQueryCandidates.push({
-        query: sanitized,
-        type: 'description',
-      });
-    }
-  }
-
   const seenQueries = new Set<string>();
   const searchQueries: SearchQueryDefinition[] = [];
 
@@ -1903,14 +1868,8 @@ function createHeadlinesHandler(
     });
   }
 
-  if (searchQueries.length === 0 && description) {
-    const sanitized = sanitizeDescriptionQuery(description);
-    if (sanitized) {
-      searchQueries.push({
-        query: sanitized,
-        type: 'description',
-      });
-    }
+  if (searchQueries.length === 0) {
+    return badRequest('No valid search queries were provided');
   }
 
   const buildUrl = (q: string, pageSize: number, page = 1) => {

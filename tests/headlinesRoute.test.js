@@ -135,15 +135,6 @@ test('infers keywords when only a description is provided', async () => {
   const descriptionQuery =
     'Focus on technology-driven AI robotics transforming hospital care.';
   const articlePayloads = {
-    [descriptionQuery]: [
-      {
-        title: 'Combined robotics outlook',
-        description: 'Hospitals explore automation for patient recovery',
-        url: 'https://example.com/combined-1',
-        source: { name: 'Combined Source' },
-        publishedAt: '2024-03-01T00:00:00Z',
-      },
-    ],
     Focus: [
       {
         title: 'Precision nursing assistants arrive',
@@ -195,6 +186,10 @@ test('infers keywords when only a description is provided', async () => {
     const query = url.searchParams.get('q') || '';
     const pageSize = Number(url.searchParams.get('pageSize'));
     const page = Number(url.searchParams.get('page'));
+
+    if (query === descriptionQuery) {
+      throw new Error('should not query with description text');
+    }
     fetchCalls.push({ query, pageSize, page });
 
     const payload = articlePayloads[query] ?? [];
@@ -235,16 +230,18 @@ test('infers keywords when only a description is provided', async () => {
     'transforming',
   ]);
   assert.deepStrictEqual(body.queriesAttempted, [
-    descriptionQuery,
     'Focus',
     'technology',
+    'driven',
   ]);
   assert.deepStrictEqual(fetchCalls, [
-    { query: descriptionQuery, pageSize: 3, page: 1 },
     { query: 'Focus', pageSize: 1, page: 1 },
     { query: 'technology', pageSize: 1, page: 1 },
+    { query: 'driven', pageSize: 1, page: 1 },
   ]);
-  assert.ok(!fetchCalls.some((call) => call.query === 'driven'));
+  assert.ok(!fetchCalls.some((call) => call.query === 'robotics'));
+  assert.ok(!fetchCalls.some((call) => call.query === 'transforming'));
+  assert.ok(!body.queriesAttempted.includes(descriptionQuery));
   assert.strictEqual(body.successfulQueries, 3);
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
