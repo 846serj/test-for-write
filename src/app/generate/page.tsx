@@ -595,12 +595,32 @@ export default function GeneratePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildResult.payload),
       });
-      const data = await response.json();
+      const contentType = response.headers.get('content-type') ?? '';
+      let data: any = null;
+      let fallbackText: string | null = null;
+
+      if (contentType.includes('application/json')) {
+        try {
+          data = await response.json();
+        } catch (error) {
+          fallbackText = await response.text();
+        }
+      } else {
+        fallbackText = await response.text();
+      }
 
       if (!response.ok) {
         throw new Error(
-          data?.error || response.statusText || 'Failed to fetch headlines'
+          data?.error ||
+            data?.message ||
+            fallbackText ||
+            response.statusText ||
+            'Failed to fetch headlines'
         );
+      }
+
+      if (!data) {
+        throw new Error(fallbackText || 'Invalid response from server');
       }
 
       const rawHeadlines = Array.isArray(data?.headlines)
