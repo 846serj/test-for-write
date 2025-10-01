@@ -58,6 +58,6 @@ recent stories from NewsAPI.org. Supply a NewsAPI key in `.env.local` (see
 requests. You can refine the feed with NewsAPI-compatible filters including
 language, sort order, optional from/to dates, specific search fields, and
 comma-separated lists of sources or domains to include/exclude. The UI enforces
-NewsAPI rules—for example, you can request 1–50 results, but you cannot combine
+NewsAPI rules—for example, you can request 1–100 results, but you cannot combine
 explicit sources with domain filters. When no overrides are selected the backend
 defaults to English headlines sorted by publish time.
