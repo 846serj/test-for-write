@@ -132,10 +132,10 @@ test('infers keywords when only a description is provided', async () => {
   };
 
   const fetchCalls = [];
-  const keywordQuery =
-    'Focus AND technology AND driven AND robotics AND transforming';
+  const descriptionQuery =
+    'Focus on technology-driven AI robotics transforming hospital care.';
   const articlePayloads = {
-    [keywordQuery]: [
+    [descriptionQuery]: [
       {
         title: 'Combined robotics outlook',
         description: 'Hospitals explore automation for patient recovery',
@@ -235,12 +235,12 @@ test('infers keywords when only a description is provided', async () => {
     'transforming',
   ]);
   assert.deepStrictEqual(body.queriesAttempted, [
-    keywordQuery,
+    descriptionQuery,
     'Focus',
     'technology',
   ]);
   assert.deepStrictEqual(fetchCalls, [
-    { query: keywordQuery, pageSize: 3, page: 1 },
+    { query: descriptionQuery, pageSize: 3, page: 1 },
     { query: 'Focus', pageSize: 1, page: 1 },
     { query: 'technology', pageSize: 1, page: 1 },
   ]);
@@ -634,15 +634,14 @@ test('later keyword searches contribute unique headlines', async () => {
   assert.ok(body.successfulQueries >= 3);
 });
 
-test('aggregates deduplicated results for derived keyword query', async () => {
+test('aggregates deduplicated results for derived keyword queries', async () => {
   globalThis.__openaiCreate = async () => {
     throw new Error('should not call openai');
   };
 
-  const keywordQuery = 'AI AND Robotics AND healthcare';
   const responses = new Map([
     [
-      `${keywordQuery}|1`,
+      'AI|1',
       [
         {
           title: 'Robotic surgeons',
@@ -651,13 +650,11 @@ test('aggregates deduplicated results for derived keyword query', async () => {
           source: { name: 'Source A' },
           publishedAt: '2024-01-01T00:00:00Z',
         },
-        {
-          title: 'AI in hospitals',
-          description: 'Hospitals adopt AI for patient care',
-          url: 'https://example.com/2',
-          source: { name: 'Source B' },
-          publishedAt: '2024-01-02T00:00:00Z',
-        },
+      ],
+    ],
+    [
+      'Robotics|1',
+      [
         {
           title: 'Duplicate entry',
           description: 'Duplicate entry for deduplication test',
@@ -668,8 +665,15 @@ test('aggregates deduplicated results for derived keyword query', async () => {
       ],
     ],
     [
-      `${keywordQuery}|2`,
+      'healthcare|1',
       [
+        {
+          title: 'AI in hospitals',
+          description: 'Hospitals adopt AI for patient care',
+          url: 'https://example.com/2',
+          source: { name: 'Source B' },
+          publishedAt: '2024-01-02T00:00:00Z',
+        },
         {
           title: 'Care robots expand',
           description: 'Care robots enter more clinics',
@@ -714,8 +718,8 @@ test('aggregates deduplicated results for derived keyword query', async () => {
   assert.strictEqual(response.status, 200);
   const body = await response.json();
 
-  assert.deepStrictEqual(body.queriesAttempted, [keywordQuery]);
-  assert.strictEqual(body.successfulQueries, 1);
+  assert.deepStrictEqual(body.queriesAttempted, ['AI', 'Robotics', 'healthcare']);
+  assert.strictEqual(body.successfulQueries, 3);
   assert.strictEqual(body.totalResults, 3);
   assert.strictEqual(body.headlines.length, 3);
   for (const headline of body.headlines) {
@@ -729,12 +733,13 @@ test('aggregates deduplicated results for derived keyword query', async () => {
       .sort()
   );
   assert.deepStrictEqual(fetchCalls, [
-    { query: keywordQuery, pageSize: 3, page: 1 },
-    { query: keywordQuery, pageSize: 1, page: 2 },
+    { query: 'AI', pageSize: 1, page: 1 },
+    { query: 'Robotics', pageSize: 1, page: 1 },
+    { query: 'healthcare', pageSize: 2, page: 1 },
   ]);
 });
 
-test('combines query and keyword string to reach the limit', async () => {
+test('uses query and keyword fallbacks to reach the limit', async () => {
   globalThis.__openaiCreate = async () => {
     throw new Error('should not call openai');
   };
@@ -757,11 +762,11 @@ test('combines query and keyword string to reach the limit', async () => {
           source: { name: 'Source B' },
           publishedAt: '2024-01-02T00:00:00Z',
         },
-      ],
     ],
-    ['innovation|2', []],
-    [
-      'biology AND space|1',
+  ],
+  ['innovation|2', []],
+  [
+      'biology|1',
       [
         {
           title: 'Genome editing milestones',
@@ -770,6 +775,11 @@ test('combines query and keyword string to reach the limit', async () => {
           source: { name: 'Source C' },
           publishedAt: '2024-01-03T00:00:00Z',
         },
+      ],
+    ],
+    [
+      'space|1',
+      [
         {
           title: 'Mars mission update',
           description: 'Mars mission update released',
@@ -816,13 +826,15 @@ test('combines query and keyword string to reach the limit', async () => {
 
   assert.deepStrictEqual(body.queriesAttempted, [
     'innovation',
-    'biology AND space',
+    'biology',
+    'space',
   ]);
   assert.deepStrictEqual(fetchCalls, [
-    { query: 'innovation', pageSize: 2, page: 1 },
-    { query: 'biology AND space', pageSize: 2, page: 1 },
+    { query: 'innovation', pageSize: 4, page: 1 },
+    { query: 'biology', pageSize: 1, page: 1 },
+    { query: 'space', pageSize: 1, page: 1 },
   ]);
-  assert.strictEqual(body.successfulQueries, 2);
+  assert.strictEqual(body.successfulQueries, 3);
   assert.strictEqual(body.totalResults, 4);
   assert.deepStrictEqual(
     body.headlines
@@ -969,7 +981,7 @@ test('continues paging when earlier results include duplicates', async () => {
     ].sort()
   );
   assert.deepStrictEqual(fetchCalls, [
-    { query: 'first spotlight', pageSize: 2, page: 1 },
+    { query: 'first spotlight', pageSize: 4, page: 1 },
     { query: '"second focus"', pageSize: 2, page: 1 },
     { query: '"second focus"', pageSize: 1, page: 2 },
   ]);
@@ -982,15 +994,31 @@ test('builds keyword query without OpenAI assistance', async () => {
     throw new Error('openai should not be called for direct keyword searches');
   };
 
-  const keywordQuery = '"renewable energy" AND investment';
-  const allowedQueries = new Set([
-    keywordQuery,
-    '"renewable energy"',
-    'investment',
-  ]);
+  const allowedQueries = new Set(['"renewable energy"', 'investment']);
   globalThis.__fetchImpl = async (input) => {
     const url = new URL(input.toString());
-    assert.ok(allowedQueries.has(url.searchParams.get('q') || ''));
+    const query = url.searchParams.get('q') || '';
+    assert.ok(allowedQueries.has(query));
+    const articlesByQuery = {
+      '"renewable energy"': [
+        {
+          title: 'Renewable energy investments climb',
+          description: 'Investments in renewable energy climb globally.',
+          url: 'https://example.com/renewable',
+          source: { name: 'Energy Daily' },
+          publishedAt: '2024-07-01T00:00:00Z',
+        },
+      ],
+      investment: [
+        {
+          title: 'Solar funding surges',
+          description: 'Solar funding surges across multiple markets.',
+          url: 'https://example.com/solar',
+          source: { name: 'Solar Journal' },
+          publishedAt: '2024-07-02T00:00:00Z',
+        },
+      ],
+    };
     return {
       ok: true,
       status: 200,
@@ -1002,22 +1030,7 @@ test('builds keyword query without OpenAI assistance', async () => {
       async json() {
         return {
           status: 'ok',
-          articles: [
-            {
-              title: 'Renewable energy investments climb',
-              description: 'Investments in renewable energy climb globally.',
-              url: 'https://example.com/renewable',
-              source: { name: 'Energy Daily' },
-              publishedAt: '2024-07-01T00:00:00Z',
-            },
-            {
-              title: 'Solar funding surges',
-              description: 'Solar funding surges across multiple markets.',
-              url: 'https://example.com/solar',
-              source: { name: 'Solar Journal' },
-              publishedAt: '2024-07-02T00:00:00Z',
-            },
-          ],
+          articles: articlesByQuery[query] ?? [],
         };
       },
       async text() {
@@ -1033,8 +1046,8 @@ test('builds keyword query without OpenAI assistance', async () => {
 
   assert.strictEqual(response.status, 200);
   const body = await response.json();
-  assert.deepStrictEqual(body.queriesAttempted, [keywordQuery]);
-  assert.strictEqual(body.successfulQueries, 1);
+  assert.deepStrictEqual(body.queriesAttempted, ['"renewable energy"', 'investment']);
+  assert.strictEqual(body.successfulQueries, 2);
   assert.strictEqual(body.totalResults, 2);
   assert.strictEqual(body.headlines.length, 2);
   for (const headline of body.headlines) {

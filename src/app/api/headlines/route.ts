@@ -1854,14 +1854,6 @@ function createHeadlinesHandler(
       .filter((keyword) => keyword.length > 0);
 
     if (trimmedKeywords.length > 0) {
-      const combinedQuery = trimmedKeywords
-        .map((keyword) => (/\s/.test(keyword) ? `"${keyword}"` : keyword))
-        .join(' AND ');
-
-      if (combinedQuery) {
-        searchQueryCandidates.push({ query: combinedQuery, type: 'keyword' });
-      }
-
       for (const trimmedKeyword of trimmedKeywords) {
         const queryValue = /\s/.test(trimmedKeyword)
           ? `"${trimmedKeyword}"`
