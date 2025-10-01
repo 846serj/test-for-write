@@ -120,6 +120,9 @@ export default function GeneratePage() {
   const searchIn: string[] = [];
   const [headlineCategory, setHeadlineCategory] = useState('');
   const [headlineCountry, setHeadlineCountry] = useState('');
+  const [headlineDedupeMode, setHeadlineDedupeMode] = useState<'default' | 'strict'>(
+    'default'
+  );
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [selectedCopyColumn, setSelectedCopyColumn] =
     useState<HeadlineClipboardColumn>('all');
@@ -574,6 +577,7 @@ export default function GeneratePage() {
       country: nextCountry,
       description: nextDescription,
       rssFeeds: nextRssFeeds,
+      dedupeMode: headlineDedupeMode,
     });
 
     setActiveSiteRssFeeds(buildResult.sanitizedRssFeeds);
@@ -1148,6 +1152,29 @@ export default function GeneratePage() {
                   Must be on or after the "From" date when both are set.
                 </p>
               </div>
+            </div>
+
+            <div className="flex items-start gap-3 pt-2">
+              <input
+                id="strict-headline-dedup"
+                type="checkbox"
+                checked={headlineDedupeMode === 'strict'}
+                onChange={(event) =>
+                  setHeadlineDedupeMode(event.target.checked ? 'strict' : 'default')
+                }
+                className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900"
+              />
+              <label
+                htmlFor="strict-headline-dedup"
+                className="text-sm text-gray-700 dark:text-gray-300"
+              >
+                <span className="font-medium">Merge near-duplicate headlines</span>
+                <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">
+                  Strict deduplication uses expanded token matching and similarity
+                  checks to group headlines that only differ by small wording
+                  changes. Filtered headlines still appear under related coverage.
+                </span>
+              </label>
             </div>
 
             <div className="pt-2">

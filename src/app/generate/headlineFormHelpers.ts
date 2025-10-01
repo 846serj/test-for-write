@@ -8,6 +8,8 @@ export const SEARCH_IN_ORDER = ['title', 'description', 'content'] as const;
 
 export type SortByValue = 'publishedAt' | 'relevancy' | 'popularity';
 
+export type HeadlineDedupeMode = 'default' | 'strict';
+
 export type BuildHeadlineRequestArgs = {
   keywords: string[];
   profileQuery: string;
@@ -22,6 +24,7 @@ export type BuildHeadlineRequestArgs = {
   country: string;
   description: string;
   rssFeeds?: string[];
+  dedupeMode?: HeadlineDedupeMode;
 };
 
 export type BuildHeadlineRequestBaseResult = {
@@ -171,6 +174,7 @@ export function buildHeadlineRequest(
     country,
     description,
     rssFeeds,
+    dedupeMode,
   } = args;
 
   const trimmedProfileQuery = profileQuery.trim();
@@ -291,6 +295,17 @@ export function buildHeadlineRequest(
 
   if (sanitizedRssFeeds.length > 0) {
     payload.rssFeeds = sanitizedRssFeeds;
+  }
+
+  const normalizedDedupeMode: HeadlineDedupeMode | undefined =
+    dedupeMode === 'strict'
+      ? 'strict'
+      : dedupeMode === 'default'
+      ? 'default'
+      : undefined;
+
+  if (normalizedDedupeMode && normalizedDedupeMode !== 'default') {
+    payload.dedupeMode = normalizedDedupeMode;
   }
 
   return {

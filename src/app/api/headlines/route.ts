@@ -105,6 +105,10 @@ const SEARCH_IN_VALUES = ['title', 'description', 'content'] as const;
 type SearchInValue = (typeof SEARCH_IN_VALUES)[number];
 const SEARCH_IN_SET = new Set<string>(SEARCH_IN_VALUES);
 
+const DEDUPE_MODES = ['default', 'strict'] as const;
+type DedupeMode = (typeof DEDUPE_MODES)[number];
+const DEDUPE_MODE_SET = new Set<string>(DEDUPE_MODES);
+
 const ISO_DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_DATE_TIME_REGEX =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/i;
@@ -429,6 +433,7 @@ type HeadlinesRequestBody = {
   category?: unknown;
   country?: unknown;
   rssFeeds?: unknown;
+  dedupeMode?: unknown;
 };
 
 type OpenAIClient = {
@@ -532,6 +537,27 @@ function normalizeStringList(
   }
 
   return normalized;
+}
+
+function normalizeDedupeMode(raw: unknown): DedupeMode {
+  if (raw === undefined || raw === null) {
+    return 'default';
+  }
+
+  if (typeof raw !== 'string') {
+    throw new Error('dedupeMode must be a string value');
+  }
+
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) {
+    return 'default';
+  }
+
+  if (!DEDUPE_MODE_SET.has(trimmed)) {
+    throw new Error(`Unsupported dedupeMode value: ${raw}`);
+  }
+
+  return trimmed as DedupeMode;
 }
 
 function toArray<T>(value: T | T[] | undefined | null): T[] {
@@ -1021,6 +1047,10 @@ type HeadlineCandidate = {
   related: RelatedArticle[];
 };
 
+type DedupeOptions = {
+  mode: DedupeMode;
+};
+
 type HeadlineRankingComponents = {
   recency: number;
   sourceDiversity: number;
@@ -1055,9 +1085,12 @@ type KeywordAggregation = {
   candidates: HeadlineCandidate[];
 };
 
-const TOKEN_MIN_LENGTH = 3;
 const MAX_TOKEN_COUNT = 64;
-const TOKEN_OVERLAP_THRESHOLD = 0.7;
+const TOKEN_MIN_LENGTH_DEFAULT = 3;
+const TOKEN_MIN_LENGTH_STRICT = 2;
+const TOKEN_OVERLAP_THRESHOLD_DEFAULT = 0.7;
+const TOKEN_OVERLAP_THRESHOLD_STRICT = 0.55;
+const STRICT_TITLE_SIMILARITY_THRESHOLD = 0.88;
 const RANKING_RECENCY_WEIGHT = 0.5;
 const RANKING_SOURCE_WEIGHT = 0.25;
 const RANKING_TOPIC_WEIGHT = 0.25;
@@ -1082,23 +1115,86 @@ function normalizeHeadlineText(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-function buildTokenSet(title: string, description: string): Set<string> {
+function getTokenMinLength(mode: DedupeMode): number {
+  return mode === 'strict' ? TOKEN_MIN_LENGTH_STRICT : TOKEN_MIN_LENGTH_DEFAULT;
+}
+
+function normalizeTokenVariants(token: string, mode: DedupeMode): string[] {
+  if (mode !== 'strict') {
+    return [token];
+  }
+
+  let base = token;
+  base = base.replace(/'(?:s|re|d)$/g, '');
+
+  if (base.endsWith('ies') && base.length > 4) {
+    base = `${base.slice(0, -3)}y`;
+  } else if (base.endsWith('ied') && base.length > 4) {
+    base = `${base.slice(0, -3)}y`;
+  }
+
+  const suffixes = [
+    'ations',
+    'ation',
+    'ments',
+    'ment',
+    'izing',
+    'ingly',
+    'ing',
+    'ers',
+    'er',
+    'ied',
+    'ies',
+    'ed',
+    'ly',
+    'es',
+    's',
+  ];
+
+  let stemmed = base;
+  for (const suffix of suffixes) {
+    if (stemmed.endsWith(suffix) && stemmed.length - suffix.length >= 3) {
+      stemmed = stemmed.slice(0, -suffix.length);
+      break;
+    }
+  }
+
+  const variants = new Set<string>();
+  variants.add(token);
+  variants.add(base);
+  variants.add(stemmed);
+
+  return Array.from(variants).filter(Boolean);
+}
+
+function buildTokenSet(
+  title: string,
+  description: string,
+  mode: DedupeMode
+): Set<string> {
   const combined = `${title} ${description}`;
+  const minLength = getTokenMinLength(mode);
   const rawTokens = combined
     .toLowerCase()
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/[^a-z0-9\s]+/g, ' ')
     .split(/\s+/)
-    .filter((token) => token.length >= TOKEN_MIN_LENGTH);
+    .filter((token) => token.length >= minLength);
 
   const tokenSet = new Set<string>();
   for (const token of rawTokens) {
     if (!token) {
       continue;
     }
-    tokenSet.add(token);
-    if (tokenSet.size >= MAX_TOKEN_COUNT) {
-      break;
+    const variants = normalizeTokenVariants(token, mode);
+    for (const variant of variants) {
+      if (!variant || variant.length < minLength) {
+        continue;
+      }
+      tokenSet.add(variant);
+      if (tokenSet.size >= MAX_TOKEN_COUNT) {
+        return tokenSet;
+      }
     }
   }
 
@@ -1123,7 +1219,91 @@ function computeTokenOverlapRatio(a: Set<string>, b: Set<string>): number {
   return intersection / Math.max(1, smaller.size);
 }
 
-function areHeadlinesNearDuplicate(a: HeadlineCandidate, b: HeadlineCandidate): boolean {
+function getTokenOverlapThreshold(mode: DedupeMode): number {
+  return mode === 'strict'
+    ? TOKEN_OVERLAP_THRESHOLD_STRICT
+    : TOKEN_OVERLAP_THRESHOLD_DEFAULT;
+}
+
+function computeJaroWinklerSimilarity(a: string, b: string): number {
+  if (!a || !b) {
+    return 0;
+  }
+
+  if (a === b) {
+    return 1;
+  }
+
+  const aLength = a.length;
+  const bLength = b.length;
+  const matchDistance = Math.max(0, Math.floor(Math.max(aLength, bLength) / 2) - 1);
+
+  const aMatches = new Array<boolean>(aLength).fill(false);
+  const bMatches = new Array<boolean>(bLength).fill(false);
+
+  let matches = 0;
+  for (let i = 0; i < aLength; i += 1) {
+    const start = Math.max(0, i - matchDistance);
+    const end = Math.min(i + matchDistance + 1, bLength);
+
+    for (let j = start; j < end; j += 1) {
+      if (bMatches[j]) {
+        continue;
+      }
+      if (a[i] !== b[j]) {
+        continue;
+      }
+      aMatches[i] = true;
+      bMatches[j] = true;
+      matches += 1;
+      break;
+    }
+  }
+
+  if (matches === 0) {
+    return 0;
+  }
+
+  let k = 0;
+  let transpositions = 0;
+  for (let i = 0; i < aLength; i += 1) {
+    if (!aMatches[i]) {
+      continue;
+    }
+
+    while (k < bLength && !bMatches[k]) {
+      k += 1;
+    }
+
+    if (k >= bLength) {
+      break;
+    }
+
+    if (a[i] !== b[k]) {
+      transpositions += 1;
+    }
+    k += 1;
+  }
+
+  const m = matches;
+  const jaro =
+    (m / aLength + m / bLength + (m - transpositions / 2) / m) / 3;
+
+  let prefix = 0;
+  const maxPrefix = Math.min(4, aLength, bLength);
+  while (prefix < maxPrefix && a[prefix] === b[prefix]) {
+    prefix += 1;
+  }
+
+  const winkler = jaro + prefix * 0.1 * (1 - jaro);
+  return Math.min(1, winkler);
+}
+
+function areHeadlinesNearDuplicate(
+  a: HeadlineCandidate,
+  b: HeadlineCandidate,
+  options: DedupeOptions
+): boolean {
   if (a.normalizedUrl && b.normalizedUrl && a.normalizedUrl === b.normalizedUrl) {
     return true;
   }
@@ -1145,32 +1325,46 @@ function areHeadlinesNearDuplicate(a: HeadlineCandidate, b: HeadlineCandidate): 
   }
 
   const overlap = computeTokenOverlapRatio(a.tokenSet, b.tokenSet);
-  if (overlap >= TOKEN_OVERLAP_THRESHOLD) {
+  if (overlap >= getTokenOverlapThreshold(options.mode)) {
     return true;
+  }
+
+  if (options.mode === 'strict') {
+    const titleSimilarity = computeJaroWinklerSimilarity(
+      a.normalizedTitle,
+      b.normalizedTitle
+    );
+    if (titleSimilarity >= STRICT_TITLE_SIMILARITY_THRESHOLD) {
+      return true;
+    }
   }
 
   return false;
 }
 
-function createHeadlineCandidate(headline: NormalizedHeadline): HeadlineCandidate {
+function createHeadlineCandidate(
+  headline: NormalizedHeadline,
+  options: DedupeOptions
+): HeadlineCandidate {
   return {
     data: headline,
     normalizedUrl: normalizeUrlForComparison(headline.url),
     normalizedTitle: normalizeHeadlineText(headline.title),
     normalizedDescription: normalizeHeadlineText(headline.description),
-    tokenSet: buildTokenSet(headline.title, headline.description),
+    tokenSet: buildTokenSet(headline.title, headline.description, options.mode),
     related: [],
   };
 }
 
 function addHeadlineIfUnique(
   aggregated: HeadlineCandidate[],
-  candidate: NormalizedHeadline
+  candidate: NormalizedHeadline,
+  options: DedupeOptions
 ): boolean {
-  const enriched = createHeadlineCandidate(candidate);
+  const enriched = createHeadlineCandidate(candidate, options);
 
   for (const existing of aggregated) {
-    if (areHeadlinesNearDuplicate(existing, enriched)) {
+    if (areHeadlinesNearDuplicate(existing, enriched, options)) {
       const normalizedCandidateUrl = normalizeUrlForComparison(candidate.url);
       if (
         normalizedCandidateUrl &&
@@ -1530,6 +1724,17 @@ function createHeadlinesHandler(
 
   const limit = resolveLimit(body.limit);
 
+  let dedupeMode: DedupeMode;
+  try {
+    dedupeMode = normalizeDedupeMode(body.dedupeMode);
+  } catch (error) {
+    return badRequest(
+      error instanceof Error ? error.message : 'Invalid dedupeMode parameter'
+    );
+  }
+
+  const dedupeOptions: DedupeOptions = { mode: dedupeMode };
+
   let language: LanguageCode | null | undefined;
   try {
     language = normalizeLanguage(body.language);
@@ -1745,7 +1950,7 @@ function createHeadlinesHandler(
         continue;
       }
 
-      addHeadlineIfUnique(aggregatedHeadlines, normalized);
+      addHeadlineIfUnique(aggregatedHeadlines, normalized, dedupeOptions);
 
       if (aggregatedHeadlines.length >= limit) {
         break;
@@ -2026,11 +2231,11 @@ function createHeadlinesHandler(
           continue;
         }
 
-        addHeadlineIfUnique(aggregatedHeadlines, normalized);
+        addHeadlineIfUnique(aggregatedHeadlines, normalized, dedupeOptions);
 
         if (searchEntry.type === 'keyword' && searchEntry.keyword) {
           const keywordEntry = ensureKeywordEntry(searchEntry.keyword, search);
-          addHeadlineIfUnique(keywordEntry.candidates, normalized);
+          addHeadlineIfUnique(keywordEntry.candidates, normalized, dedupeOptions);
         }
 
         if (aggregatedHeadlines.length >= limit) {
@@ -2121,11 +2326,11 @@ function createHeadlinesHandler(
             normalized.keyword = searchEntry.keyword;
           }
 
-          addHeadlineIfUnique(aggregatedHeadlines, normalized);
+          addHeadlineIfUnique(aggregatedHeadlines, normalized, dedupeOptions);
 
           if (searchEntry.type === 'keyword' && searchEntry.keyword) {
             const keywordEntry = ensureKeywordEntry(searchEntry.keyword, search);
-            addHeadlineIfUnique(keywordEntry.candidates, normalized);
+            addHeadlineIfUnique(keywordEntry.candidates, normalized, dedupeOptions);
           }
         }
       }
@@ -2199,7 +2404,7 @@ function createHeadlinesHandler(
             break;
           }
 
-          if (addHeadlineIfUnique(aggregatedHeadlines, headline)) {
+          if (addHeadlineIfUnique(aggregatedHeadlines, headline, dedupeOptions)) {
             addedFromFeed += 1;
           }
         }
