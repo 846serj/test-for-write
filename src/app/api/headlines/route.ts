@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { XMLParser } from 'fast-xml-parser';
+import he from 'he';
 import { getOpenAI } from '../../../lib/openai';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
@@ -108,6 +109,36 @@ const ISO_DATE_TIME_REGEX =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/i;
 const SOURCE_ID_REGEX = /^[a-z0-9._-]+$/;
 const DOMAIN_ALLOWED_REGEX = /^[a-z0-9.-]+$/;
+
+function decodeHtmlEntities(value: string): string {
+  if (!value) {
+    return '';
+  }
+
+  const decoded = he.decode(value);
+
+  return decoded
+    .replace(/\u00a0/g, ' ')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .trim();
+}
+
+function decodeTextField(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return decodeHtmlEntities(value);
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return decodeHtmlEntities(String(value));
+  }
+
+  return '';
+}
 
 function resolveLimit(rawLimit: unknown): number {
   let numeric: number | null = null;
@@ -590,7 +621,7 @@ function toArray<T>(value: T | T[] | undefined | null): T[] {
 
 function extractTextValue(value: unknown): string {
   if (typeof value === 'string') {
-    return value.trim();
+    return decodeHtmlEntities(value);
   }
 
   if (Array.isArray(value)) {
@@ -609,7 +640,7 @@ function extractTextValue(value: unknown): string {
       (value as Record<string, unknown>).text ??
       (value as Record<string, unknown>).value;
     if (typeof candidate === 'string') {
-      return candidate.trim();
+      return decodeHtmlEntities(candidate);
     }
   }
 
@@ -1576,16 +1607,20 @@ function buildHeadlineResponses(
 }
 
 function normalizeSerpResult(result: SerpApiResult): NormalizedHeadline | null {
-  const title = (result?.title ?? '').trim();
-  const url = (result?.link ?? '').trim();
+  const title = decodeTextField(result?.title);
+  const url = typeof result?.link === 'string' ? result.link.trim() : '';
 
   if (!title || !url) {
     return null;
   }
 
-  const description = (result?.snippet ?? '').trim();
-  const source = (result?.source ?? '').trim();
-  const publishedAt = (result?.date ?? result?.published_at ?? '').trim();
+  const description =
+    decodeTextField(result?.snippet) || decodeTextField(result?.summary);
+  const source = decodeTextField(result?.source);
+  const publishedAt =
+    decodeTextField(result?.date) ||
+    decodeTextField(result?.published_at) ||
+    decodeTextField(result?.date_published);
 
   return {
     title,
@@ -2048,11 +2083,20 @@ function createHeadlinesHandler(
 
       for (const article of data.articles) {
         const normalized: NormalizedHeadline = {
-          title: article?.title ?? '',
-          description: article?.description ?? article?.content ?? '',
-          url: article?.url ?? '',
-          source: article?.source?.name ?? '',
-          publishedAt: article?.publishedAt ?? article?.published_at ?? '',
+          title: decodeTextField(article?.title),
+          description:
+            decodeTextField(article?.description) ||
+            decodeTextField(article?.content),
+          url: typeof article?.url === 'string' ? article.url.trim() : '',
+          source:
+            decodeTextField(
+              typeof article?.source === 'string'
+                ? article.source
+                : article?.source?.name
+            ),
+          publishedAt:
+            decodeTextField(article?.publishedAt) ||
+            decodeTextField(article?.published_at),
           queryUsed: search,
           searchQuery: search,
           ...(searchEntry.type === 'keyword' && searchEntry.keyword
