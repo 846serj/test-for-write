@@ -19,7 +19,6 @@ import {
 } from '../../constants/headlineSites';
 import type {
   HeadlineItem,
-  KeywordHeadlineGroup,
   RelatedArticle,
 } from './types';
 
@@ -107,9 +106,6 @@ export default function GeneratePage() {
   const [headlineLoading, setHeadlineLoading] = useState(false);
   const [headlineError, setHeadlineError] = useState<string | null>(null);
   const [headlineResults, setHeadlineResults] = useState<HeadlineItem[]>([]);
-  const [keywordHeadlineGroups, setKeywordHeadlineGroups] = useState<
-    KeywordHeadlineGroup[]
-  >([]);
   const [headlineQueries, setHeadlineQueries] = useState<string[]>([]);
   const [headlineDescription, setHeadlineDescription] = useState('');
   const [activeSiteKey, setActiveSiteKey] = useState<HeadlineSiteKey | null>(
@@ -301,7 +297,6 @@ export default function GeneratePage() {
         : [];
     setKeywords(presetKeywords);
     setActiveSiteRssFeeds(presetRssFeeds);
-    setExcludeDomainsInput('');
 
     await handleFetchHeadlines({
       description: preset.instructions,
@@ -586,14 +581,12 @@ export default function GeneratePage() {
     if (buildResult.ok === false) {
       setHeadlineError(buildResult.error);
       setHeadlineQueries([]);
-      setKeywordHeadlineGroups([]);
       return;
     }
 
     setHeadlineLoading(true);
     setHeadlineError(null);
     setHeadlineQueries([]);
-    setKeywordHeadlineGroups([]);
 
     try {
       const response = await fetch('/api/headlines', {
@@ -722,75 +715,12 @@ export default function GeneratePage() {
 
       const normalized = rawHeadlines.map((item: any) => normalizeHeadline(item));
 
-      const keywordGroups = Array.isArray(data?.keywordHeadlines)
-        ? data.keywordHeadlines
-            .map((group: any) => {
-              if (!group || typeof group !== 'object') {
-                return null;
-              }
-
-              const keyword =
-                typeof group.keyword === 'string' ? group.keyword.trim() : '';
-              if (!keyword) {
-                return null;
-              }
-
-              const groupHeadlinesRaw = Array.isArray(group.headlines)
-                ? group.headlines
-                : [];
-
-              const groupHeadlines = groupHeadlinesRaw
-                .map((item: any) => {
-                  const normalizedHeadline = normalizeHeadline(item);
-                  if (!normalizedHeadline.keyword) {
-                    normalizedHeadline.keyword = keyword;
-                  }
-                  if (!normalizedHeadline.matchedQuery) {
-                    normalizedHeadline.matchedQuery =
-                      normalizedHeadline.keyword ||
-                      normalizedHeadline.searchQuery ||
-                      (typeof group.query === 'string' ? group.query : undefined) ||
-                      keyword;
-                  }
-                  return normalizedHeadline;
-                })
-                .filter((headline: HeadlineItem) =>
-                  Boolean(headline.title || headline.description || headline.url)
-                );
-
-              if (groupHeadlines.length === 0) {
-                return null;
-              }
-
-              const totalResults =
-                typeof group.totalResults === 'number' &&
-                Number.isFinite(group.totalResults)
-                  ? group.totalResults
-                  : undefined;
-
-              const queryValue =
-                typeof group.query === 'string' ? group.query : undefined;
-
-              const builtGroup: KeywordHeadlineGroup = {
-                keyword,
-                query: queryValue,
-                totalResults,
-                headlines: groupHeadlines,
-              };
-
-              return builtGroup;
-            })
-            .filter((group): group is KeywordHeadlineGroup => Boolean(group))
-        : [];
-
       setHeadlineResults(normalized);
-      setKeywordHeadlineGroups(keywordGroups);
       setHeadlineQueries(normalizedQueries);
     } catch (error: any) {
       console.error('[headlines] fetch error:', error);
       setHeadlineError(error?.message || 'Unable to fetch headlines.');
       setHeadlineResults([]);
-      setKeywordHeadlineGroups([]);
       setHeadlineQueries([]);
     } finally {
       setHeadlineLoading(false);
@@ -1249,8 +1179,7 @@ export default function GeneratePage() {
 
             {!headlineLoading &&
               !headlineError &&
-              headlineResults.length === 0 &&
-              keywordHeadlineGroups.length === 0 && (
+              headlineResults.length === 0 && (
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Headlines will appear here after fetching.
               </p>
@@ -1274,7 +1203,7 @@ export default function GeneratePage() {
               </div>
             )}
 
-            {(headlineResults.length > 0 || keywordHeadlineGroups.length > 0) && (
+            {headlineResults.length > 0 && (
               <div className="space-y-6">
                 <h2 className="text-lg font-semibold">Headlines</h2>
 
@@ -1473,93 +1402,6 @@ export default function GeneratePage() {
                           })}
                         </tbody>
                       </table>
-                    </div>
-                  </div>
-                )}
-
-                {keywordHeadlineGroups.length > 0 && (
-                  <div className="space-y-4">
-                    <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-                      Keyword breakdown
-                    </h3>
-                    <div className="space-y-4">
-                      {keywordHeadlineGroups.map((group) => (
-                        <div
-                          key={group.keyword}
-                          className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900"
-                        >
-                          <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                                {group.keyword}
-                              </p>
-                              {group.query && (
-                                <p className="text-xs text-gray-500 dark:text-gray-400">
-                                  Search query:{' '}
-                                  <span className="font-medium">{group.query}</span>
-                                </p>
-                              )}
-                            </div>
-                            {typeof group.totalResults === 'number' && (
-                              <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-                                {group.totalResults} total result
-                                {group.totalResults === 1 ? '' : 's'}
-                              </span>
-                            )}
-                          </div>
-                          <ul className="divide-y divide-gray-200 dark:divide-gray-700">
-                            {group.headlines.map((headline, index) => {
-                              const headlineUrl = headline.url;
-                              const formattedDate = formatPublishedDate(
-                                headline.publishedAt
-                              );
-                              return (
-                                <li
-                                  key={headlineUrl || `${group.keyword}-${index}`}
-                                  className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300"
-                                >
-                                  <div className="font-semibold text-gray-900 dark:text-gray-100">
-                                    {headline.title || 'Untitled headline'}
-                                  </div>
-                                  <div className="mt-1 flex flex-col gap-1 text-xs text-gray-500 dark:text-gray-400 sm:flex-row sm:items-center sm:gap-2">
-                                    {headline.source && (
-                                      <span className="font-medium">
-                                        {headline.source}
-                                      </span>
-                                    )}
-                                    {formattedDate && <span>{formattedDate}</span>}
-                                  </div>
-                                  {headline.matchedQuery && (
-                                    <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
-                                      Matched query:{' '}
-                                      <span className="font-medium">
-                                        {headline.matchedQuery}
-                                      </span>
-                                    </div>
-                                  )}
-                                  {headline.description && (
-                                    <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-                                      {headline.description}
-                                    </p>
-                                  )}
-                                  {headlineUrl && (
-                                    <div className="mt-2">
-                                      <a
-                                        href={headlineUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                                      >
-                                        View article
-                                      </a>
-                                    </div>
-                                  )}
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </div>
-                      ))}
                     </div>
                   </div>
                 )}
