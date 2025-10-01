@@ -1620,6 +1620,10 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|\[\]\\]/g, '\\$&');
+}
+
 function stripHtmlTags(value: string): string {
   if (!value) {
     return '';
@@ -2723,6 +2727,175 @@ function applyVerificationIssuesToPrompt(basePrompt: string, issues?: string[]):
   return `${basePrompt}\n\nThe previous draft was flagged for critical factual inaccuracies:\n${formattedIssues}\nRevise the article to resolve every issue without introducing new errors. Only output the corrected HTML article.`;
 }
 
+interface TravelStyleVerificationOptions {
+  travelState?: string | null;
+}
+
+interface TravelStyleVerificationResult {
+  isValid: boolean;
+  issues: string[];
+}
+
+function applyTravelStyleFeedbackToPrompt(
+  basePrompt: string,
+  issues: string[]
+): string {
+  if (!issues.length) {
+    return basePrompt;
+  }
+
+  const formattedIssues = issues
+    .map((issue, index) => `${index + 1}. ${issue.replace(/\s+/g, ' ').trim()}`)
+    .join('\n');
+
+  return `${basePrompt}\n\nThe previous travel draft missed required destination guidance:\n${formattedIssues}\nRewrite the HTML article so it addresses every point while preserving factual accuracy. Output only the updated HTML.`;
+}
+
+function verifyTravelStyle(
+  html: string,
+  options: TravelStyleVerificationOptions = {}
+): TravelStyleVerificationResult {
+  const trimmedHtml = (html || '').trim();
+  if (!trimmedHtml) {
+    return {
+      isValid: false,
+      issues: ['The generated article was empty; regenerate it with destination-specific guidance.'],
+    };
+  }
+
+  const normalizedText = stripHtmlTags(trimmedHtml)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  const travelState = typeof options.travelState === 'string' ? options.travelState.trim() : '';
+  const stateLower = travelState.toLowerCase();
+  const destinationLabel = travelState || 'the destination';
+  const issues: string[] = [];
+
+  if (travelState) {
+    const stateRegex = new RegExp(`\\b${escapeRegExp(stateLower)}\\b`, 'i');
+    if (!stateRegex.test(normalizedText)) {
+      issues.push(
+        `Mention ${travelState} frequently so readers understand every recommendation applies to the destination.`
+      );
+    }
+
+    const headingMatches = Array.from(
+      trimmedHtml.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)
+    );
+    if (headingMatches.length) {
+      const headingIssues = headingMatches.filter((match) => {
+        const headingHtml = match[1] || '';
+        const headingText = stripHtmlTags(headingHtml)
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (!headingText) {
+          return false;
+        }
+        return !stateRegex.test(headingText);
+      });
+      if (headingIssues.length) {
+        issues.push(
+          `Reference ${travelState} or its locales in every <h2> heading to keep each section grounded in the destination.`
+        );
+      }
+    }
+  }
+
+  const attractionKeywords = [
+    'must-see',
+    'must see',
+    'attraction',
+    'landmark',
+    'highlight',
+    'stop',
+    'sight',
+    'trail',
+    'park',
+  ];
+  if (!attractionKeywords.some((keyword) => normalizedText.includes(keyword))) {
+    issues.push(
+      `Call out must-see stops, standout attractions, or scenic highlights around ${destinationLabel}.`
+    );
+  }
+
+  const lodgingKeywords = [
+    'lodging',
+    'hotel',
+    'hotels',
+    'resort',
+    'resorts',
+    'stay',
+    'accommodation',
+    'accommodations',
+    'inn',
+    'airbnb',
+    'campground',
+  ];
+  if (!lodgingKeywords.some((keyword) => normalizedText.includes(keyword))) {
+    issues.push(`Include lodging recommendations or overnight options within ${destinationLabel}.`);
+  }
+
+  const diningKeywords = [
+    'dining',
+    'restaurant',
+    'restaurants',
+    'food',
+    'eatery',
+    'eateries',
+    'cuisine',
+    'bites',
+    'meals',
+  ];
+  if (!diningKeywords.some((keyword) => normalizedText.includes(keyword))) {
+    issues.push(`Provide dining or restaurant tips tied to ${destinationLabel}.`);
+  }
+
+  const itineraryPatterns = [
+    /\bitinerary\b/,
+    /\bplan\b/,
+    /\bplanning\b/,
+    /\broute\b/,
+    /\bstop\b/,
+    /\bvisit\b/,
+    /\bexplore\b/,
+    /\bstart\b/,
+    /\bdrive\b/,
+    /\bjourney\b/,
+    /\bday\b/,
+    /\bmorning\b/,
+    /\bafternoon\b/,
+    /\bevening\b/,
+  ];
+  if (!itineraryPatterns.some((pattern) => pattern.test(normalizedText))) {
+    issues.push(
+      `Add itinerary-style guidance (e.g., plan, explore, visit, start) so travelers can sequence their time in ${destinationLabel}.`
+    );
+  }
+
+  const seasonalKeywords = [
+    'season',
+    'spring',
+    'summer',
+    'fall',
+    'autumn',
+    'winter',
+    'peak season',
+    'off-season',
+    'shoulder season',
+    'best time',
+    'year-round',
+  ];
+  if (!seasonalKeywords.some((keyword) => normalizedText.includes(keyword))) {
+    issues.push(`Mention seasonal or timing considerations for visiting ${destinationLabel}.`);
+  }
+
+  return {
+    isValid: issues.length === 0,
+    issues,
+  };
+}
+
 async function generateWithVerification(
   generator: (issues?: string[]) => Promise<string>,
   sources: VerificationSource[],
@@ -2779,6 +2952,7 @@ export async function POST(request: Request) {
       modelVersion = 'gpt-4o-mini',
       useSerpApi = true,
       includeLinks = true,
+      travelState,
     }: {
       articleType: string;
       title: string;
@@ -2793,6 +2967,7 @@ export async function POST(request: Request) {
       modelVersion?: string;
       useSerpApi?: boolean;
       includeLinks?: boolean;
+      travelState?: string;
     } = await request.json();
 
     if (!title?.trim()) {
@@ -3231,6 +3406,26 @@ Write the full article in valid HTML below:
       'Center each section on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.',
     ];
     const extraRequirements = [...baseExtraRequirements];
+    const normalizedTravelState =
+      typeof travelState === 'string' ? travelState.trim() : '';
+    const destinationLabel = normalizedTravelState || 'the destination';
+    const isTravelArticle = articleType === 'Travel article';
+    if (isTravelArticle) {
+      extraRequirements.push(
+        `Highlight must-see attractions, scenic stops, and signature experiences across ${destinationLabel}, grounding every recommendation in the reporting.`,
+        `Blend in practical lodging and dining tips for ${destinationLabel}, citing the sources when mentioning hotels, inns, or restaurants.`,
+        `Offer itinerary-building guidance with seasonal or timing insights so readers know how to plan days around ${destinationLabel}.`
+      );
+      if (normalizedTravelState) {
+        extraRequirements.push(
+          `Name ${normalizedTravelState} directly in each section to keep the article anchored to the destination.`
+        );
+      } else {
+        extraRequirements.push(
+          'Keep every section anchored to the destination by reiterating the location within headings or lead sentences.'
+        );
+      }
+    }
 
     const articlePrompt = buildArticlePrompt({
       title,
@@ -3245,21 +3440,42 @@ Write the full article in valid HTML below:
       extraRequirements,
     });
 
-    const content = await generateWithVerification(
-      (issues) =>
-        generateWithLinks(
-          applyVerificationIssuesToPrompt(articlePrompt, issues),
-          modelVersion,
-          linkSources,
-          systemPrompt,
-          minLinks,
-          baseMaxTokens,
-          minWords,
-          reportingSources
-        ),
-      reportingSources,
-      linkSources
-    );
+    const runArticleGeneration = (prompt: string) =>
+      generateWithVerification(
+        (issues) =>
+          generateWithLinks(
+            applyVerificationIssuesToPrompt(prompt, issues),
+            modelVersion,
+            linkSources,
+            systemPrompt,
+            minLinks,
+            baseMaxTokens,
+            minWords,
+            reportingSources
+          ),
+        reportingSources,
+        linkSources
+      );
+
+    let content = await runArticleGeneration(articlePrompt);
+
+    if (isTravelArticle) {
+      const travelStyle = verifyTravelStyle(content, {
+        travelState: normalizedTravelState,
+      });
+      if (!travelStyle.isValid && travelStyle.issues.length) {
+        console.warn(
+          'Regenerating travel article to address style gaps',
+          travelStyle.issues
+        );
+        const travelPrompt = applyTravelStyleFeedbackToPrompt(
+          articlePrompt,
+          travelStyle.issues
+        );
+        content = await runArticleGeneration(travelPrompt);
+      }
+    }
+
     return NextResponse.json({
       content,
       sources: linkSources,
