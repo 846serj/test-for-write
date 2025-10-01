@@ -250,6 +250,105 @@ test('infers keywords when only a description is provided', async () => {
   }
 });
 
+test('times out stalled RSS feeds and records warnings', async () => {
+  const newsApiPayload = {
+    status: 'ok',
+    articles: [
+      {
+        title: 'Breaking tech news',
+        description: 'New breakthrough announced.',
+        url: 'https://example.com/article-1',
+        source: { name: 'Example Times' },
+        publishedAt: '2024-03-07T00:00:00Z',
+      },
+    ],
+  };
+
+  globalThis.__fetchImpl = async (input, init = {}) => {
+    const url = input.toString();
+    if (url.startsWith('https://newsapi.org/')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get(name) {
+            return name.toLowerCase() === 'content-type'
+              ? 'application/json'
+              : null;
+          },
+        },
+        async json() {
+          return newsApiPayload;
+        },
+        async text() {
+          return JSON.stringify(newsApiPayload);
+        },
+      };
+    }
+
+    if (url === 'https://timeout.test/rss') {
+      const { signal } = init;
+      return await new Promise((_, reject) => {
+        const rejectWithAbort = () => {
+          const abortError = new Error('aborted');
+          abortError.name = 'AbortError';
+          reject(abortError);
+        };
+
+        const timeoutId = setTimeout(rejectWithAbort, 250);
+
+        if (signal) {
+          if (signal.aborted) {
+            clearTimeout(timeoutId);
+            rejectWithAbort();
+            return;
+          }
+
+          signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timeoutId);
+              rejectWithAbort();
+            },
+            { once: true }
+          );
+        }
+      });
+    }
+
+    throw new Error(`unexpected request to ${url}`);
+  };
+
+  const handler = createHeadlinesHandler({
+    fetchImpl: (...args) => globalThis.__fetchImpl(...args),
+    logger: { error() {} },
+    rssRequestTimeoutMs: 25,
+  });
+
+  const requestBody = {
+    query: 'technology',
+    limit: 1,
+    rssFeeds: ['https://timeout.test/rss'],
+  };
+
+  const request = createRequest(requestBody);
+
+  const start = Date.now();
+  const response = await handler(request);
+  const duration = Date.now() - start;
+
+  assert.strictEqual(response.status, 200);
+  assert(duration < 1000, 'handler should resolve within timeout window');
+
+  const body = await response.json();
+  assert(Array.isArray(body.headlines));
+  assert.strictEqual(body.headlines.length, 1);
+  assert(Array.isArray(body.warnings));
+  assert(
+    body.warnings.includes('RSS feed request timed out for https://timeout.test/rss')
+  );
+});
+
 test('combines rss feeds with NewsAPI results', async () => {
   globalThis.__openaiCreate = async () => {
     throw new Error('should not call openai');
