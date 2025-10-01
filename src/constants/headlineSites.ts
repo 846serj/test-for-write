@@ -96,7 +96,6 @@ export const HEADLINE_SITES = {
     rssFeeds: [
       'https://traveloregon.com/feed',
       'https://www.travelportland.com/feed/',
-      'https://oregonisforadventure.com/feed/',
       'https://www.outdoorproject.com/feeds/latest',
       'https://hikeoregon.net/blog-feed.xml',
     ] as const,
