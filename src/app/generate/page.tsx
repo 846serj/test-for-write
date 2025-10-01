@@ -543,6 +543,8 @@ export default function GeneratePage() {
     setActiveSiteRssFeeds([]);
     setHeadlineDescription('');
     setKeywords([]);
+    setFromDate('');
+    setToDate('');
   };
 
   const handleGenerateSiteHeadlines = async (siteKey: HeadlineSiteKey) => {
@@ -552,6 +554,8 @@ export default function GeneratePage() {
     }
 
     setActiveSiteKey(siteKey);
+    setFromDate('');
+    setToDate('');
     const presetKeywords =
       'keywords' in preset && Array.isArray(preset.keywords)
         ? [...preset.keywords]
@@ -568,11 +572,36 @@ export default function GeneratePage() {
     setKeywords(presetKeywords);
     setActiveSiteRssFeeds(presetRssFeeds);
 
+    let dateOverrides: { fromDate?: string; toDate?: string } = {
+      fromDate: '',
+      toDate: '',
+    };
+
+    if (siteKey === 'oregonAdventure') {
+      const now = new Date();
+      const todayUtc = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+      );
+      const fiveYearsAgoUtc = new Date(todayUtc);
+      fiveYearsAgoUtc.setUTCFullYear(todayUtc.getUTCFullYear() - 5);
+
+      const nextFromDate = fiveYearsAgoUtc.toISOString().slice(0, 10);
+      const nextToDate = todayUtc.toISOString().slice(0, 10);
+
+      setFromDate(nextFromDate);
+      setToDate(nextToDate);
+      dateOverrides = {
+        fromDate: nextFromDate,
+        toDate: nextToDate,
+      };
+    }
+
     await handleFetchHeadlines({
       description: presetDescription,
       keywords: presetKeywords,
       rssFeeds: presetRssFeeds,
       presetKey: siteKey,
+      ...dateOverrides,
     });
   };
 
@@ -794,6 +823,8 @@ export default function GeneratePage() {
       keywords?: string[];
       rssFeeds?: string[];
       presetKey?: HeadlineSiteKey | null;
+      fromDate?: string;
+      toDate?: string;
     }
   ) => {
     const nextDescriptionRaw =
@@ -803,6 +834,12 @@ export default function GeneratePage() {
     const nextDescription = nextDescriptionRaw.trim();
     const nextKeywords = overrides?.keywords ?? keywords;
     const nextRssFeeds = overrides?.rssFeeds ?? activeSiteRssFeeds;
+    const nextFromDate =
+      overrides && overrides.fromDate !== undefined
+        ? overrides.fromDate
+        : fromDate;
+    const nextToDate =
+      overrides && overrides.toDate !== undefined ? overrides.toDate : toDate;
 
     if (nextDescription !== headlineDescription) {
       setHeadlineDescription(nextDescription);
@@ -816,6 +853,14 @@ export default function GeneratePage() {
       setActiveSiteRssFeeds(overrides.rssFeeds);
     }
 
+    if (overrides?.fromDate !== undefined) {
+      setFromDate(overrides.fromDate);
+    }
+
+    if (overrides?.toDate !== undefined) {
+      setToDate(overrides.toDate);
+    }
+
     const targetPresetKey = overrides?.presetKey ?? activeSiteKey;
     const storageKey = resolveSeenHeadlineKey(targetPresetKey);
     const excludeUrls = collectExcludeUrls(seenHeadlinesRef.current, storageKey);
@@ -827,8 +872,8 @@ export default function GeneratePage() {
       limit: DEFAULT_HEADLINE_LIMIT,
       sortBy,
       language: HEADLINE_LANGUAGE,
-      fromDate,
-      toDate,
+      fromDate: nextFromDate,
+      toDate: nextToDate,
       searchIn,
       description: nextDescription,
       rssFeeds: nextRssFeeds,
