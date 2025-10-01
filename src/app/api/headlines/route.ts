@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { XMLParser } from 'fast-xml-parser';
-import {
-  CATEGORY_FEED_SET,
-  type CategoryFeedValue,
-} from '../../../constants/categoryFeeds';
 import { getOpenAI } from '../../../lib/openai';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
@@ -34,9 +30,6 @@ const LANGUAGE_CODES = [
 ] as const;
 type LanguageCode = (typeof LANGUAGE_CODES)[number];
 const LANGUAGE_SET = new Set<string>(LANGUAGE_CODES);
-
-type CategoryValue = CategoryFeedValue;
-const CATEGORY_SET = CATEGORY_FEED_SET;
 
 const COUNTRY_CODES = [
   'ae',
@@ -219,30 +212,6 @@ function normalizeDate(raw: unknown, field: 'from' | 'to'): string | null {
   }
 
   return isoValue;
-}
-
-function normalizeCategory(raw: unknown): CategoryValue | null {
-  if (raw === undefined || raw === null) {
-    return null;
-  }
-
-  if (typeof raw !== 'string') {
-    throw new Error('category must be a string value');
-  }
-
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const lowered = trimmed.toLowerCase();
-  const candidate = lowered as CategoryValue;
-
-  if (!CATEGORY_SET.has(candidate)) {
-    throw new Error(`Unsupported category selection: ${trimmed}`);
-  }
-
-  return candidate;
 }
 
 function normalizeCountry(raw: unknown): CountryCode | null {
@@ -430,7 +399,6 @@ type HeadlinesRequestBody = {
   sources?: unknown;
   domains?: unknown;
   excludeDomains?: unknown;
-  category?: unknown;
   country?: unknown;
   rssFeeds?: unknown;
   dedupeMode?: unknown;
@@ -672,12 +640,9 @@ function extractSectionList(text: string, labels: string[]): string[] {
   return [];
 }
 
-function parseKeywordCategoryResponse(raw: string): {
-  keywords: string[];
-  categories: string[];
-} {
+function parseKeywordResponse(raw: string): string[] {
   if (!raw) {
-    return { keywords: [], categories: [] };
+    return [];
   }
 
   const attemptParse = (text: string) => {
@@ -694,7 +659,6 @@ function parseKeywordCategoryResponse(raw: string): {
   };
 
   const keywordKeys = ['keywords', 'keywordSuggestions', 'topics', 'queries'];
-  const categoryKeys = ['categories', 'categorySuggestions', 'sections'];
 
   const candidates: Record<string, unknown>[] = [];
 
@@ -714,28 +678,12 @@ function parseKeywordCategoryResponse(raw: string): {
   }
 
   for (const candidate of candidates) {
-    let keywords: string[] = [];
-    for (const key of keywordKeys) {
-      if (key in candidate) {
-        keywords = normalizeStringList(candidate[key]);
-      }
-      if (keywords.length > 0) {
-        break;
-      }
-    }
+    const keywords = keywordKeys.flatMap((key) =>
+      key in candidate ? normalizeStringList(candidate[key]) : []
+    );
 
-    let categories: string[] = [];
-    for (const key of categoryKeys) {
-      if (key in candidate) {
-        categories = normalizeStringList(candidate[key]);
-      }
-      if (categories.length > 0) {
-        break;
-      }
-    }
-
-    if (keywords.length > 0 || categories.length > 0) {
-      return { keywords, categories };
+    if (keywords.length > 0) {
+      return keywords;
     }
   }
 
@@ -746,14 +694,8 @@ function parseKeywordCategoryResponse(raw: string): {
     'key phrases',
     'search terms',
   ]);
-  const fallbackCategories = extractSectionList(raw, [
-    'categories',
-    'category suggestions',
-    'recommended categories',
-    'sections',
-  ]);
 
-  return { keywords: fallbackKeywords, categories: fallbackCategories };
+  return fallbackKeywords;
 }
 
 function fallbackKeywordsFromDescription(
@@ -809,26 +751,23 @@ function sanitizeDescriptionQuery(description: string): string {
   return truncated.trim();
 }
 
-async function inferKeywordsAndCategories(
+async function inferKeywordsFromDescription(
   client: OpenAIClient,
   description: string,
   requestedLimit: number
-): Promise<{ keywords: string[]; categories: CategoryValue[] }> {
+): Promise<string[]> {
   const keywordTarget = Math.min(
     MAX_FILTER_LIST_ITEMS,
     Math.max(4, Math.ceil(requestedLimit * 1.5))
   );
-  const allowedCategories = Array.from(CATEGORY_SET.values()).join(', ');
   const systemPrompt =
-    'You analyze news-focused website descriptions to recommend search keywords and NewsAPI categories. ' +
-    'Always respond with a valid JSON object that only contains "keywords" and "categories" properties. ' +
+    'You analyze news-focused website descriptions to recommend search keywords. ' +
+    'Always respond with a valid JSON object that only contains a "keywords" property. ' +
     'Keywords should be short search phrases suitable for the NewsAPI everything endpoint.';
   const userPrompt =
     `The description of the news site is:\n"""${description}"""\n\n` +
     `Return around ${keywordTarget} diverse keywords capturing geographic, topical, and audience angles. ` +
-    'Include up to 4 categories drawn from the following list when relevant: ' +
-    `${allowedCategories}. ` +
-    'Format: {"keywords": [..], "categories": [..]}.';
+    'Format: {"keywords": [..]}.';
 
   const response = await client.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -841,9 +780,9 @@ async function inferKeywordsAndCategories(
   });
 
   const content = response.choices?.[0]?.message?.content?.trim() ?? '';
-  const parsed = parseKeywordCategoryResponse(content);
+  const parsedKeywords = parseKeywordResponse(content);
 
-  let keywords = normalizeStringList(parsed.keywords, {
+  let keywords = normalizeStringList(parsedKeywords, {
     limit: keywordTarget,
     lowercaseDedup: true,
   });
@@ -856,27 +795,7 @@ async function inferKeywordsAndCategories(
     throw new Error('No keywords returned from OpenAI');
   }
 
-  let categories = normalizeStringList(parsed.categories, {
-    limit: 4,
-    lowercaseDedup: true,
-  })
-    .map((value) => value.toLowerCase())
-    .filter((value): value is CategoryValue =>
-      CATEGORY_SET.has(value as CategoryValue)
-    );
-
-  if (categories.length === 0) {
-    const loweredDescription = description.toLowerCase();
-    const inferred = new Set<CategoryValue>();
-    CATEGORY_SET.forEach((option) => {
-      if (loweredDescription.includes(option)) {
-        inferred.add(option);
-      }
-    });
-    categories = Array.from(inferred).slice(0, 4);
-  }
-
-  return { keywords, categories };
+  return keywords;
 }
 
 type RelatedArticle = {
@@ -1694,15 +1613,6 @@ function createHeadlinesHandler(
     return badRequest('description must be a string value');
   }
 
-  let category: CategoryValue | null;
-  try {
-    category = normalizeCategory(body.category);
-  } catch (error) {
-    return badRequest(
-      error instanceof Error ? error.message : 'Invalid category parameter'
-    );
-  }
-
   let country: CountryCode | null;
   try {
     country = normalizeCountry(body.country);
@@ -1712,13 +1622,7 @@ function createHeadlinesHandler(
     );
   }
 
-  if (country && !category) {
-    return badRequest('country can only be used when a category is selected');
-  }
-
-  const isCategoryRequest = category !== null;
-
-  if (!query && keywords.length === 0 && !description && !isCategoryRequest) {
+  if (!query && keywords.length === 0 && !description) {
     return badRequest('Either query, keywords, or description must be provided');
   }
 
@@ -1764,7 +1668,7 @@ function createHeadlinesHandler(
     );
   }
 
-  if (!from && !to && !isCategoryRequest) {
+  if (!from && !to) {
     const today = new Date(Date.now());
     const defaultTo = today.toISOString().slice(0, 10);
     const fromDate = new Date(today);
@@ -1816,21 +1720,16 @@ function createHeadlinesHandler(
     );
   }
 
-  if (isCategoryRequest && sources.length > 0) {
-    return badRequest('Category feeds cannot be combined with specific sources');
-  }
+  let inferredKeywords: string[] | null = null;
 
-  let inferenceResult: { keywords: string[]; categories: CategoryValue[] } | null =
-    null;
-
-  if (!isCategoryRequest && keywords.length === 0 && description) {
+  if (keywords.length === 0 && description) {
     try {
-      inferenceResult = await inferKeywordsAndCategories(
+      inferredKeywords = await inferKeywordsFromDescription(
         aiClient,
         description,
         limit
       );
-      keywords = inferenceResult.keywords;
+      keywords = inferredKeywords;
     } catch (error) {
       log.error('[api/headlines] keyword inference failed', error);
       return NextResponse.json(
@@ -1842,169 +1741,6 @@ function createHeadlinesHandler(
     if (keywords.length === 0) {
       return badRequest('Unable to infer keywords from the provided description');
     }
-  }
-
-  if (isCategoryRequest) {
-    const requestUrl = new URL('https://newsapi.org/v2/top-headlines');
-    requestUrl.searchParams.set('category', category);
-    requestUrl.searchParams.set('pageSize', String(Math.max(1, limit)));
-    requestUrl.searchParams.set('page', '1');
-
-    if (country) {
-      requestUrl.searchParams.set('country', country);
-    }
-
-    if (query) {
-      requestUrl.searchParams.set('q', query);
-    }
-
-    const requestLabelParts = [`category:${category}`];
-    if (country) {
-      requestLabelParts.push(`country:${country}`);
-    }
-    if (query) {
-      requestLabelParts.push(`q:${query}`);
-    }
-    const requestLabel = requestLabelParts.join(' ');
-    const queriesAttempted = [requestLabel];
-
-    let response: Response;
-    try {
-      response = await requester(requestUrl, {
-        method: 'GET',
-        headers: {
-          'X-Api-Key': apiKey,
-        },
-      });
-    } catch (error) {
-      log.error('[api/headlines] category request failed', error);
-      return NextResponse.json(
-        {
-          error: 'Failed to reach NewsAPI for the requested category feed',
-          queryErrors: [`Failed to reach NewsAPI for request: ${requestLabel}`],
-          queriesAttempted,
-        },
-        { status: 502 }
-      );
-    }
-
-    let data: any = null;
-    try {
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        data = await response.json();
-      } else {
-        const text = await response.text();
-        data = text ? { message: text } : null;
-      }
-    } catch (error) {
-      log.error('[api/headlines] failed to parse category response', error);
-      const queryErrors = [`Invalid response from NewsAPI for request: ${requestLabel}`];
-      if (!response.ok) {
-        return NextResponse.json(
-          {
-            error: `NewsAPI request failed for category feed: ${requestLabel}`,
-            queryErrors,
-            queriesAttempted,
-          },
-          { status: 502 }
-        );
-      }
-
-      return NextResponse.json(
-        {
-          error: 'Invalid response from NewsAPI for the requested category feed',
-          queryErrors,
-          queriesAttempted,
-        },
-        { status: 502 }
-      );
-    }
-
-    if (!response.ok) {
-      const message =
-        (data && typeof data.message === 'string' && data.message) ||
-        'NewsAPI request failed';
-      return NextResponse.json(
-        {
-          error: `NewsAPI error for category feed: ${message}`,
-          queryErrors: [`NewsAPI error for request: ${requestLabel}`],
-          queriesAttempted,
-        },
-        { status: 502 }
-      );
-    }
-
-    if (!data || data.status !== 'ok' || !Array.isArray(data.articles)) {
-      return NextResponse.json(
-        {
-          error: `Unexpected response from NewsAPI for request: ${requestLabel}`,
-          queryErrors: [`Unexpected response from NewsAPI for request: ${requestLabel}`],
-          queriesAttempted,
-        },
-        { status: 502 }
-      );
-    }
-
-    const aggregatedHeadlines: HeadlineCandidate[] = [];
-
-    for (const article of data.articles) {
-      const normalized: NormalizedHeadline = {
-        title: article?.title ?? '',
-        description: article?.description ?? article?.content ?? '',
-        url: article?.url ?? '',
-        source: article?.source?.name ?? '',
-        publishedAt: article?.publishedAt ?? article?.published_at ?? '',
-      };
-
-      if (!normalized.title || !normalized.url) {
-        continue;
-      }
-
-      addHeadlineIfUnique(aggregatedHeadlines, normalized, dedupeOptions);
-
-      if (aggregatedHeadlines.length >= limit) {
-        break;
-      }
-    }
-
-    const queryWarnings: string[] = [];
-    if (aggregatedHeadlines.length === 0) {
-      queryWarnings.push('No headlines returned for the selected category feed.');
-    }
-
-    const rankedCandidates = rankHeadlineCandidates(aggregatedHeadlines);
-    const topRanked = rankedCandidates.slice(0, limit);
-    const headlineEntries = buildHeadlineResponses(topRanked);
-
-    const payload: Record<string, unknown> = {
-      headlines: headlineEntries,
-      totalResults: aggregatedHeadlines.length,
-      queriesAttempted,
-      successfulQueries: 1,
-    };
-
-    if (rankedCandidates.length > 0) {
-      payload.ranking = {
-        totalRanked: rankedCandidates.length,
-        weights: {
-          recency: RANKING_RECENCY_WEIGHT,
-          sourceDiversity: RANKING_SOURCE_WEIGHT,
-          topicCoverage: RANKING_TOPIC_WEIGHT,
-        },
-      };
-    }
-
-    if (inferenceResult) {
-      payload.inferredKeywords = inferenceResult.keywords;
-      payload.inferredCategories = inferenceResult.categories;
-    }
-
-    if (queryWarnings.length > 0) {
-      payload.warnings = queryWarnings;
-    }
-
-    return NextResponse.json(payload);
   }
 
   const searchQueryCandidates: SearchQueryDefinition[] = [];
@@ -2486,9 +2222,8 @@ function createHeadlinesHandler(
       queriesAttempted,
     };
 
-    if (inferenceResult) {
-      errorPayload.inferredKeywords = inferenceResult.keywords;
-      errorPayload.inferredCategories = inferenceResult.categories;
+    if (inferredKeywords) {
+      errorPayload.inferredKeywords = inferredKeywords;
     }
 
     return NextResponse.json(errorPayload, { status: 502 });
@@ -2556,9 +2291,8 @@ function createHeadlinesHandler(
     };
   }
 
-  if (inferenceResult) {
-    payload.inferredKeywords = inferenceResult.keywords;
-    payload.inferredCategories = inferenceResult.categories;
+  if (inferredKeywords) {
+    payload.inferredKeywords = inferredKeywords;
   }
 
   if (queryWarnings.length > 0) {
