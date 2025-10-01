@@ -9,6 +9,7 @@ const tsSource = fs.readFileSync(routePath, 'utf8');
 const sanitizedSource = tsSource
   .replace("import { NextRequest, NextResponse } from 'next/server';", '')
   .replace("import { XMLParser } from 'fast-xml-parser';", '')
+  .replace("import he from 'he';", '')
   .replace("import { getOpenAI } from '../../../lib/openai';", '')
   .replace(
     "import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';",
@@ -21,6 +22,7 @@ const getOpenAI = () => globalThis.__openai;
 const fetch = globalThis.__fetch;
 const serpapiSearch = (...args) => globalThis.__serpapiSearch(...args);
 const { XMLParser } = globalThis.__fastXmlParser;
+const he = globalThis.__he;
 type SerpApiResult = any;
 type NextRequest = any;
 ${sanitizedSource}
@@ -73,6 +75,9 @@ globalThis.__openai = {
 
 const fastXmlParserModule = await import('fast-xml-parser');
 globalThis.__fastXmlParser = fastXmlParserModule;
+
+const heModule = await import('he');
+globalThis.__he = heModule.default ?? heModule;
 
 const { createHeadlinesHandler } = await import(moduleUrl);
 
@@ -389,6 +394,127 @@ test('combines rss feeds with NewsAPI results', async () => {
   );
 
   assert.strictEqual(body.successfulQueries, 3);
+});
+
+test('decodes HTML entities from NewsAPI, RSS, and SERP results', async () => {
+  const originalSerpKey = process.env.SERPAPI_KEY;
+  process.env.SERPAPI_KEY = 'serp-test-key';
+
+  const rssUrl = 'https://example.com/encoded-feed';
+  const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Neuro &#8216;Updates&#8217;</title>
+    <item>
+      <title>Machine learning enables &#8216;mind reading&#8217; insights</title>
+      <link>https://example.com/rss-story</link>
+      <description>Decoded &#8220;insights&#8221; emerge from trials</description>
+      <pubDate>Fri, 05 Jul 2024 10:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>`;
+
+  const newsArticles = [
+    {
+      title: 'Breakthrough &#8216;neural&#8217; interface',
+      description: 'Researchers call it &#8220;revolutionary&#8221;.',
+      url: 'https://example.com/news-story',
+      source: { name: 'Innovation &#038; Today' },
+      publishedAt: '2024-06-30T00:00:00Z',
+    },
+  ];
+
+  const serpResults = [
+    {
+      title: 'AI achieves &#8216;telepathy&#8217; milestone',
+      link: 'https://example.com/serp-story',
+      snippet: 'New model reads &#8220;thoughts&#8221; during trials',
+      source: 'Tech &#038; Science Daily',
+      date: '2024-07-02T00:00:00Z',
+    },
+  ];
+
+  globalThis.__fetchImpl = async (input) => {
+    const url = input.toString();
+    if (url.startsWith('https://newsapi.org')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get(name) {
+            return name === 'content-type' ? 'application/json' : null;
+          },
+        },
+        async json() {
+          return { status: 'ok', articles: newsArticles };
+        },
+        async text() {
+          return JSON.stringify({ status: 'ok', articles: newsArticles });
+        },
+      };
+    }
+
+    if (url === rssUrl) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return rssXml;
+        },
+      };
+    }
+
+    throw new Error(`Unexpected fetch request: ${url}`);
+  };
+
+  globalThis.__serpapiSearch = async () => serpResults;
+
+  try {
+    const handler = createHeadlinesHandler({ logger: { error() {} } });
+    const response = await handler(
+      createRequest({
+        query: 'mind reading breakthroughs',
+        limit: 5,
+        rssFeeds: [rssUrl],
+      })
+    );
+
+    assert.strictEqual(response.status, 200);
+    const body = await response.json();
+
+    const newsHeadline = body.headlines.find(
+      (item) => item.url === 'https://example.com/news-story'
+    );
+    assert.ok(newsHeadline, 'expected news headline');
+    assert.strictEqual(newsHeadline.title, "Breakthrough 'neural' interface");
+    assert.strictEqual(newsHeadline.description, 'Researchers call it "revolutionary".');
+    assert.strictEqual(newsHeadline.source, 'Innovation & Today');
+
+    const rssHeadline = body.headlines.find(
+      (item) => item.url === 'https://example.com/rss-story'
+    );
+    assert.ok(rssHeadline, 'expected rss headline');
+    assert.strictEqual(
+      rssHeadline.title,
+      "Machine learning enables 'mind reading' insights"
+    );
+    assert.strictEqual(rssHeadline.description, 'Decoded "insights" emerge from trials');
+    assert.strictEqual(rssHeadline.source, "Neuro 'Updates'");
+
+    const serpHeadline = body.headlines.find(
+      (item) => item.url === 'https://example.com/serp-story'
+    );
+    assert.ok(serpHeadline, 'expected serp headline');
+    assert.strictEqual(serpHeadline.title, "AI achieves 'telepathy' milestone");
+    assert.strictEqual(serpHeadline.description, 'New model reads "thoughts" during trials');
+    assert.strictEqual(serpHeadline.source, 'Tech & Science Daily');
+  } finally {
+    if (originalSerpKey === undefined) {
+      delete process.env.SERPAPI_KEY;
+    } else {
+      process.env.SERPAPI_KEY = originalSerpKey;
+    }
+  }
 });
 
 test('later keyword searches contribute unique headlines', async () => {
