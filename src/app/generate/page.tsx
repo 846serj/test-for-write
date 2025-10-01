@@ -560,11 +560,16 @@ export default function GeneratePage() {
       'rssFeeds' in preset && Array.isArray(preset.rssFeeds)
         ? [...preset.rssFeeds]
         : [];
+    const hasPresetFilters =
+      presetKeywords.length > 0 || presetRssFeeds.length > 0;
+    const presetDescription = hasPresetFilters
+      ? ''
+      : `Top headlines for ${preset.name}`;
     setKeywords(presetKeywords);
     setActiveSiteRssFeeds(presetRssFeeds);
 
     await handleFetchHeadlines({
-      description: preset.instructions,
+      description: presetDescription,
       keywords: presetKeywords,
       rssFeeds: presetRssFeeds,
       presetKey: siteKey,
@@ -1330,7 +1335,7 @@ export default function GeneratePage() {
                     Site presets
                   </h2>
                   <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-                    Apply a newsroom preset to load its custom instructions and instantly request 100 story leads tailored to that brand.
+                    Apply a newsroom preset to load curated filters and instantly request 100 story leads tailored to that brand.
                   </p>
                 </div>
                 {activeSiteKey && (
@@ -1346,6 +1351,33 @@ export default function GeneratePage() {
               <div className="grid gap-4">
                 {siteEntries.map(([siteKey, site]) => {
                   const isActive = activeSiteKey === siteKey;
+                  const keywordCount = Number(
+                    'keywords' in site && Array.isArray(site.keywords)
+                      ? site.keywords.length
+                      : 0
+                  );
+                  const rssFeedCount = Number(
+                    'rssFeeds' in site && Array.isArray(site.rssFeeds)
+                      ? site.rssFeeds.length
+                      : 0
+                  );
+                  const metadataSummary = (() => {
+                    const parts: string[] = [];
+                    if (keywordCount > 0) {
+                      parts.push(`${keywordCount} keyword${keywordCount === 1 ? '' : 's'}`);
+                    }
+                    if (rssFeedCount > 0) {
+                      parts.push(`${rssFeedCount} RSS feed${rssFeedCount === 1 ? '' : 's'}`);
+                    }
+                    if (parts.length === 0) {
+                      return 'Uses default discovery settings.';
+                    }
+                    if (parts.length === 1) {
+                      return `Includes ${parts[0]}.`;
+                    }
+                    return `Includes ${parts[0]} and ${parts[1]}.`;
+                  })();
+
                   return (
                     <div
                       key={siteKey}
@@ -1368,8 +1400,8 @@ export default function GeneratePage() {
                               </span>
                             )}
                           </div>
-                          <p className="mt-2 whitespace-pre-line text-sm text-gray-700 dark:text-gray-300">
-                            {site.instructions}
+                          <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">
+                            {metadataSummary}
                           </p>
                         </div>
                         <button
