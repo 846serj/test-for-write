@@ -492,6 +492,99 @@ test('combines rss feeds with NewsAPI results', async () => {
   assert.strictEqual(body.successfulQueries, 3);
 });
 
+test('fetches RSS feeds before NewsAPI queries', async () => {
+  globalThis.__openaiCreate = async () => {
+    throw new Error('should not call openai');
+  };
+
+  const rssUrl = 'https://ordering.test/rss';
+  const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Ordering Feed</title>
+    <item>
+      <title>Ordering RSS Headline</title>
+      <link>https://ordering.test/story</link>
+      <description>Ordering description</description>
+      <pubDate>Wed, 10 Jul 2024 09:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>`;
+
+  const newsArticles = [
+    {
+      title: 'Ordering News Headline',
+      description: 'News description',
+      url: 'https://news.example.com/ordering-story',
+      source: { name: 'Ordering News Source' },
+      publishedAt: '2024-07-10T09:00:00Z',
+    },
+  ];
+
+  const fetchCalls = [];
+  globalThis.__fetchImpl = async (input) => {
+    const url = input.toString();
+    fetchCalls.push(url);
+
+    if (url === rssUrl) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return rssXml;
+        },
+      };
+    }
+
+    if (url.startsWith('https://newsapi.org')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get(name) {
+            return name === 'content-type' ? 'application/json' : null;
+          },
+        },
+        async json() {
+          return { status: 'ok', articles: newsArticles };
+        },
+        async text() {
+          return JSON.stringify({ status: 'ok', articles: newsArticles });
+        },
+      };
+    }
+
+    throw new Error(`Unexpected fetch request: ${url}`);
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(
+    createRequest({
+      query: 'climate change',
+      limit: 2,
+      rssFeeds: [rssUrl],
+    })
+  );
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+
+  assert.ok(fetchCalls.length >= 2);
+  assert.strictEqual(fetchCalls[0], rssUrl);
+  const firstNewsIndex = fetchCalls.findIndex((url) =>
+    url.startsWith('https://newsapi.org')
+  );
+  assert(firstNewsIndex > 0, 'NewsAPI should be requested after RSS feeds');
+
+  assert.ok(body.queriesAttempted.length >= 2);
+  assert.ok(body.queriesAttempted[0].startsWith('RSS:'));
+  assert.ok(
+    body.queriesAttempted.some(
+      (entry) => entry === 'climate change' || entry === '"climate change"'
+    )
+  );
+});
+
 test('decodes HTML entities from NewsAPI, RSS, and SERP results', async () => {
   const originalSerpKey = process.env.SERPAPI_KEY;
   process.env.SERPAPI_KEY = 'serp-test-key';

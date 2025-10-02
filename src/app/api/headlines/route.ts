@@ -1983,7 +1983,114 @@ function createHeadlinesHandler(
     return existing;
   };
 
+  if (rssFeeds.length > 0) {
+    const xmlParser = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '@_',
+    });
+
+    const rssPerFeedQuota = Math.max(1, Math.min(3, Math.ceil(perQuery / 2)));
+    const rssTotalQuota = Math.max(rssFeeds.length, rssPerFeedQuota * rssFeeds.length);
+    let rssAdded = 0;
+
+    for (const feedUrl of rssFeeds) {
+      if (rssAdded >= rssTotalQuota) {
+        break;
+      }
+
+      let queryLabel = `RSS: ${feedUrl}`;
+      let addedFromFeed = 0;
+      let feedQuotaRemaining = rssPerFeedQuota;
+
+      try {
+        let response: Response;
+        const { signal, cleanup } = createAbortSignalWithTimeout(rssTimeoutMs);
+        try {
+          if (signal) {
+            response = await requester(feedUrl, { signal });
+          } else {
+            response = await requester(feedUrl);
+          }
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') {
+            queryWarnings.push(`RSS feed request timed out for ${feedUrl}`);
+            queriesAttempted.push(queryLabel);
+            continue;
+          }
+          throw error;
+        } finally {
+          cleanup();
+        }
+        if (!response.ok) {
+          queryWarnings.push(
+            `RSS feed request failed (${response.status}) for ${feedUrl}`
+          );
+          queriesAttempted.push(queryLabel);
+          continue;
+        }
+
+        const bodyText = await response.text();
+        if (!bodyText.trim()) {
+          queryWarnings.push(`RSS feed returned empty response for ${feedUrl}`);
+          queriesAttempted.push(queryLabel);
+          continue;
+        }
+
+        let parsedFeed: unknown;
+        try {
+          parsedFeed = xmlParser.parse(bodyText);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Unable to parse RSS XML';
+          queryWarnings.push(`RSS feed parse error (${feedUrl}): ${message}`);
+          queriesAttempted.push(queryLabel);
+          continue;
+        }
+
+        const { feedTitle, items } = extractRssFeedPayload(parsedFeed);
+        if (feedTitle) {
+          queryLabel = `RSS: ${feedTitle}`;
+        }
+
+        const headlines = mapRssItemsToHeadlines(
+          items,
+          feedTitle,
+          feedUrl,
+          queryLabel
+        );
+
+        for (const headline of headlines) {
+          if (rssAdded >= rssTotalQuota || feedQuotaRemaining <= 0) {
+            break;
+          }
+
+          if (addHeadlineIfUnique(aggregatedHeadlines, headline, dedupeOptions)) {
+            addedFromFeed += 1;
+            rssAdded += 1;
+            feedQuotaRemaining -= 1;
+          }
+        }
+
+        if (addedFromFeed > 0) {
+          successfulQueries += 1;
+        } else {
+          queryWarnings.push(`No headlines found for RSS feed: ${feedUrl}`);
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Unknown RSS error';
+        queryWarnings.push(`RSS feed error (${feedUrl}): ${message}`);
+      }
+
+      queriesAttempted.push(queryLabel);
+    }
+  }
+
   for (const searchEntry of searchQueries) {
+    if (aggregatedHeadlines.length >= limit) {
+      break;
+    }
+
     const search = searchEntry.query;
 
     if (searchEntry.fallback && aggregatedHeadlines.length >= limit) {
@@ -2228,109 +2335,6 @@ function createHeadlinesHandler(
 
     if (querySucceeded) {
       successfulQueries += 1;
-    }
-  }
-
-  if (rssFeeds.length > 0) {
-    const xmlParser = new XMLParser({
-      ignoreAttributes: false,
-      attributeNamePrefix: '@_',
-    });
-
-    const rssPerFeedQuota = Math.max(1, Math.min(3, Math.ceil(perQuery / 2)));
-    const rssTotalQuota = Math.max(rssFeeds.length, rssPerFeedQuota * rssFeeds.length);
-    let rssAdded = 0;
-
-    for (const feedUrl of rssFeeds) {
-      if (rssAdded >= rssTotalQuota) {
-        break;
-      }
-
-      let queryLabel = `RSS: ${feedUrl}`;
-      let addedFromFeed = 0;
-      let feedQuotaRemaining = rssPerFeedQuota;
-
-      try {
-        let response: Response;
-        const { signal, cleanup } = createAbortSignalWithTimeout(rssTimeoutMs);
-        try {
-          if (signal) {
-            response = await requester(feedUrl, { signal });
-          } else {
-            response = await requester(feedUrl);
-          }
-        } catch (error) {
-          if (error instanceof Error && error.name === 'AbortError') {
-            queryWarnings.push(`RSS feed request timed out for ${feedUrl}`);
-            queriesAttempted.push(queryLabel);
-            continue;
-          }
-          throw error;
-        } finally {
-          cleanup();
-        }
-        if (!response.ok) {
-          queryWarnings.push(
-            `RSS feed request failed (${response.status}) for ${feedUrl}`
-          );
-          queriesAttempted.push(queryLabel);
-          continue;
-        }
-
-        const bodyText = await response.text();
-        if (!bodyText.trim()) {
-          queryWarnings.push(`RSS feed returned empty response for ${feedUrl}`);
-          queriesAttempted.push(queryLabel);
-          continue;
-        }
-
-        let parsedFeed: unknown;
-        try {
-          parsedFeed = xmlParser.parse(bodyText);
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : 'Unable to parse RSS XML';
-          queryWarnings.push(`RSS feed parse error (${feedUrl}): ${message}`);
-          queriesAttempted.push(queryLabel);
-          continue;
-        }
-
-        const { feedTitle, items } = extractRssFeedPayload(parsedFeed);
-        if (feedTitle) {
-          queryLabel = `RSS: ${feedTitle}`;
-        }
-
-        const headlines = mapRssItemsToHeadlines(
-          items,
-          feedTitle,
-          feedUrl,
-          queryLabel
-        );
-
-        for (const headline of headlines) {
-          if (rssAdded >= rssTotalQuota || feedQuotaRemaining <= 0) {
-            break;
-          }
-
-          if (addHeadlineIfUnique(aggregatedHeadlines, headline, dedupeOptions)) {
-            addedFromFeed += 1;
-            rssAdded += 1;
-            feedQuotaRemaining -= 1;
-          }
-        }
-
-        if (addedFromFeed > 0) {
-          successfulQueries += 1;
-        } else {
-          queryWarnings.push(`No headlines found for RSS feed: ${feedUrl}`);
-        }
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'Unknown RSS error';
-        queryWarnings.push(`RSS feed error (${feedUrl}): ${message}`);
-      }
-
-      queriesAttempted.push(queryLabel);
     }
   }
 
