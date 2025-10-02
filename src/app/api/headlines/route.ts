@@ -192,7 +192,7 @@ function normalizeLanguage(raw: unknown): LanguageCode | null | undefined {
 
 function normalizeSortBy(raw: unknown): SortBy {
   if (raw === undefined || raw === null) {
-    return 'publishedAt';
+    return 'popularity';
   }
 
   if (typeof raw !== 'string') {

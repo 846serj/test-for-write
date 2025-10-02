@@ -371,7 +371,7 @@ export default function GeneratePage() {
   );
   const [activeSiteRssFeeds, setActiveSiteRssFeeds] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<'publishedAt' | 'relevancy' | 'popularity'>(
-    'publishedAt'
+    'popularity'
   );
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
