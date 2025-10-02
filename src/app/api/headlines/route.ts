@@ -989,17 +989,20 @@ function mapRssItemsToHeadlines(
   items: unknown[],
   feedTitle: string,
   feedUrl: string,
-  queryLabel: string
+  queryLabel: string,
+  fromTimestamp: number | null,
+  toTimestamp: number | null
 ): NormalizedHeadline[] {
   if (!Array.isArray(items) || items.length === 0) {
     return [];
   }
 
   const normalized: NormalizedHeadline[] = [];
-  const limit = Math.min(MAX_RSS_ITEMS_PER_FEED, items.length);
+  for (const rawItem of items) {
+    if (normalized.length >= MAX_RSS_ITEMS_PER_FEED) {
+      break;
+    }
 
-  for (let index = 0; index < limit; index += 1) {
-    const rawItem = items[index];
     if (!rawItem || typeof rawItem !== 'object') {
       continue;
     }
@@ -1047,6 +1050,25 @@ function mapRssItemsToHeadlines(
 
     const source =
       itemSource || feedTitle || resolveHostnameFromUrl(url) || 'RSS Feed';
+
+    let publishedTimestamp: number | null = null;
+    if (publishedAt) {
+      const parsed = new Date(publishedAt);
+      if (!Number.isNaN(parsed.getTime())) {
+        publishedTimestamp = parsed.getTime();
+      }
+    }
+
+    if (publishedTimestamp === null) {
+      continue;
+    }
+
+    if (
+      (fromTimestamp !== null && publishedTimestamp < fromTimestamp) ||
+      (toTimestamp !== null && publishedTimestamp > toTimestamp)
+    ) {
+      continue;
+    }
 
     normalized.push({
       title,
@@ -2146,31 +2168,14 @@ function createHeadlinesHandler(
           items,
           feedTitle,
           feedUrl,
-          queryLabel
+          queryLabel,
+          fromTimestamp,
+          toTimestamp
         );
 
         for (const headline of headlines) {
           if (rssAdded >= rssTotalQuota || feedQuotaRemaining <= 0) {
             break;
-          }
-
-          const publishedAtDate = headline.publishedAt
-            ? new Date(headline.publishedAt)
-            : null;
-          const publishedTimestamp =
-            publishedAtDate && !Number.isNaN(publishedAtDate.getTime())
-              ? publishedAtDate.getTime()
-              : null;
-
-          if (publishedTimestamp === null) {
-            continue;
-          }
-
-          if (
-            (fromTimestamp !== null && publishedTimestamp < fromTimestamp) ||
-            (toTimestamp !== null && publishedTimestamp > toTimestamp)
-          ) {
-            continue;
           }
 
           if (addHeadlineIfUnique(aggregatedHeadlines, headline, dedupeOptions)) {
