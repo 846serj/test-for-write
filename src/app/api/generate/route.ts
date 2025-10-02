@@ -386,6 +386,8 @@ const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'gpt-3.5-turbo': 16000,
 };
 
+const COMPLETION_SAFETY_MARGIN_TOKENS = 256;
+
 // Encourage more concrete examples by default
 const DETAIL_INSTRUCTION =
   '- Provide specific real-world examples (e.g., car model years or actual app names) instead of generic placeholders like "App 1".\n' +
@@ -2370,10 +2372,28 @@ async function generateWithLinks(
     augmentedPrompt = `${trimmedPrompt}\n\nCite every required source inside natural sentences exactly once. Include at least ${totalLinksNeeded} total hyperlinks and do not fabricate extra citations.\nRequired sources (one citation per URL):\n${reminderList}`;
   }
 
-  const promptLengthTokens = Math.ceil(augmentedPrompt.length / 4);
+  const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+  const promptLengthTokens = estimateTokens(augmentedPrompt);
+  const systemPromptTokens = systemPrompt ? estimateTokens(systemPrompt) : 0;
   const expectedFromWords = minWords > 0 ? Math.ceil(minWords * 1.6) : 0;
   const baseBudget = Math.max(maxTokens, expectedFromWords, promptLengthTokens * 2, 800);
-  let tokens = Math.min(baseBudget, limit);
+  const availableContext = Math.max(limit - promptLengthTokens - systemPromptTokens, 0);
+  const safetyAdjustedBudget = Math.max(
+    availableContext - COMPLETION_SAFETY_MARGIN_TOKENS,
+    0
+  );
+  const maxCompletionTokens = Math.max(
+    safetyAdjustedBudget,
+    availableContext > 0 ? Math.min(availableContext, 1) : 0
+  );
+  let tokens = Math.min(baseBudget, maxCompletionTokens);
+  if (tokens <= 0 && availableContext > 0) {
+    tokens = Math.min(baseBudget, availableContext);
+    tokens = Math.max(tokens, 1);
+  }
+  if (tokens <= 0 && availableContext === 0) {
+    throw new Error('Prompt exceeds the model context limit.');
+  }
   const buildMessages = (content: string) =>
     systemPrompt
       ? [
@@ -2391,14 +2411,17 @@ async function generateWithLinks(
   });
 
   // If the response was cut off due to max_tokens, retry once with more room
-  if (baseRes.choices[0]?.finish_reason === 'length' && tokens < limit) {
-    tokens = limit;
-    baseRes = await openai.chat.completions.create({
-      model,
-      messages: buildMessages(augmentedPrompt),
-      temperature: FACTUAL_TEMPERATURE,
-      max_tokens: tokens,
-    });
+  if (baseRes.choices[0]?.finish_reason === 'length') {
+    const retryBudget = Math.max(maxCompletionTokens, tokens);
+    if (retryBudget > tokens) {
+      tokens = retryBudget;
+      baseRes = await openai.chat.completions.create({
+        model,
+        messages: buildMessages(augmentedPrompt),
+        temperature: FACTUAL_TEMPERATURE,
+        max_tokens: tokens,
+      });
+    }
   }
 
   let content = cleanModelOutput(baseRes.choices[0]?.message?.content) || '';
