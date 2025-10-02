@@ -17,6 +17,16 @@ export type HeadlineItem = {
   keyword?: string;
   queryUsed?: string;
   searchQuery?: string;
+  ranking?: {
+    score?: number;
+    components?: {
+      clusterSupport?: number;
+    };
+    details?: {
+      clusterSize?: number;
+      clusterUniqueSources?: number;
+    };
+  };
 };
 
 export type KeywordHeadlineGroup = {
