@@ -699,6 +699,86 @@ test('fetchTravelReportingSources uses only travel evergreen queries and dedupes
   });
 });
 
+test('fetchEvergreenTravelSources skips homepage results lacking headline tokens', async () => {
+  await withMockedNow(async () => {
+    serpCalls.length = 0;
+    clearTravelPresetStubs();
+    setTravelPresetStub('ca', {
+      state: 'ca',
+      stateName: 'California',
+      keywords: ['California travel ideas'],
+      rssFeeds: [],
+      instructions: ['Highlight scenic drives throughout California.'],
+      siteKey: 'californiaExplorer',
+    });
+    setSerpResults([
+      {
+        link: 'https://travel.com/',
+        title: 'California travel inspiration',
+        summary: 'Travel tips for exploring California state parks',
+        date: isoDaysAgo(80),
+      },
+      {
+        link: 'https://travel.com/california-roadtrips',
+        title: 'California road trip itinerary ideas',
+        summary: 'Travel guide for California state park road trips',
+        date: isoDaysAgo(60),
+      },
+      {
+        link: 'https://travel.com/national-deals',
+        title: 'National travel deals roundup',
+        summary: 'General travel deals without regional specifics',
+        date: isoDaysAgo(40),
+      },
+    ]);
+
+    const sources = await fetchEvergreenTravelSources('US', { travelState: 'ca' });
+
+    assert.deepStrictEqual(sources.map(({ url }) => url), [
+      'https://travel.com/california-roadtrips',
+    ]);
+  });
+});
+
+test('fetchEvergreenTravelSources keeps homepage results when headline tokens match', async () => {
+  await withMockedNow(async () => {
+    serpCalls.length = 0;
+    clearTravelPresetStubs();
+    setTravelPresetStub('hi', {
+      state: 'hi',
+      stateName: 'Hawaii',
+      keywords: ['Hawaii snorkeling'],
+      rssFeeds: [],
+      instructions: ['Surface beach adventures around the islands.'],
+      siteKey: 'hawaiiAdventures',
+    });
+    setSerpResults([
+      {
+        link: 'https://island.com/',
+        title: 'Lanai snorkeling travel guide',
+        summary: 'Lanai snorkeling tips with reef safety guidance',
+        date: isoDaysAgo(95),
+      },
+      {
+        link: 'https://island.com/lanai-snorkeling',
+        title: 'Lanai snorkeling spots to explore',
+        summary: 'Lanai snorkeling travel guide with hidden coves',
+        date: isoDaysAgo(120),
+      },
+    ]);
+
+    const sources = await fetchEvergreenTravelSources(
+      'Lanai snorkeling highlights',
+      { travelState: 'hi' }
+    );
+
+    assert.deepStrictEqual(sources.map(({ url }) => url), [
+      'https://island.com/',
+      'https://island.com/lanai-snorkeling',
+    ]);
+  });
+});
+
 test('mergeEvergreenTravelSources dedupes and merges all unique evergreen sources', () => {
   const reportingSources = [
     {
