@@ -456,6 +456,8 @@ test('combines rss feeds with NewsAPI results', async () => {
       query: 'space exploration',
       limit: 3,
       rssFeeds: [rssUrlOne, rssUrlTwo],
+      from: '2024-06-20T00:00:00.000Z',
+      to: '2024-07-10T23:59:59.000Z',
     })
   );
 
@@ -585,6 +587,102 @@ test('fetches RSS feeds before NewsAPI queries', async () => {
   );
 });
 
+test('filters RSS headlines using from/to date range', async () => {
+  globalThis.__openaiCreate = async () => {
+    throw new Error('should not call openai');
+  };
+
+  const rssUrl = 'https://filter.test/rss';
+  const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Filter Feed</title>
+    <item>
+      <title>Inside Lower Bound</title>
+      <link>https://filter.test/inside-lower</link>
+      <pubDate>2024-03-05T00:00:00Z</pubDate>
+    </item>
+    <item>
+      <title>Before Range</title>
+      <link>https://filter.test/before</link>
+      <pubDate>2024-03-04T23:59:59Z</pubDate>
+    </item>
+    <item>
+      <title>Inside Upper Bound</title>
+      <link>https://filter.test/inside-upper</link>
+      <pubDate>2024-03-06T23:59:59Z</pubDate>
+    </item>
+    <item>
+      <title>After Range</title>
+      <link>https://filter.test/after</link>
+      <pubDate>2024-03-07T00:00:00Z</pubDate>
+    </item>
+    <item>
+      <title>Invalid Timestamp</title>
+      <link>https://filter.test/invalid</link>
+      <pubDate>not-a-date</pubDate>
+    </item>
+  </channel>
+</rss>`;
+
+  const emptyNewsPayload = { status: 'ok', articles: [] };
+
+  globalThis.__fetchImpl = async (input) => {
+    const url = input.toString();
+
+    if (url === rssUrl) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return rssXml;
+        },
+      };
+    }
+
+    if (url.startsWith('https://newsapi.org')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get(name) {
+            return name === 'content-type' ? 'application/json' : null;
+          },
+        },
+        async json() {
+          return emptyNewsPayload;
+        },
+        async text() {
+          return JSON.stringify(emptyNewsPayload);
+        },
+      };
+    }
+
+    throw new Error(`Unexpected fetch request: ${url}`);
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(
+    createRequest({
+      query: 'filter example',
+      limit: 4,
+      rssFeeds: [rssUrl],
+      from: '2024-03-05T00:00:00.000Z',
+      to: '2024-03-06T23:59:59.000Z',
+    })
+  );
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+
+  const titles = body.headlines.map((item) => item.title);
+  assert.deepStrictEqual(new Set(titles), new Set(['Inside Lower Bound', 'Inside Upper Bound']));
+  assert.strictEqual(body.headlines.length, 2);
+  assert.ok(!titles.includes('Before Range'));
+  assert.ok(!titles.includes('After Range'));
+  assert.ok(!titles.includes('Invalid Timestamp'));
+});
+
 test('decodes HTML entities from NewsAPI, RSS, and SERP results', async () => {
   const originalSerpKey = process.env.SERPAPI_KEY;
   process.env.SERPAPI_KEY = 'serp-test-key';
@@ -665,6 +763,8 @@ test('decodes HTML entities from NewsAPI, RSS, and SERP results', async () => {
         query: 'mind reading breakthroughs',
         limit: 5,
         rssFeeds: [rssUrl],
+        from: '2024-06-20T00:00:00.000Z',
+        to: '2024-07-10T23:59:59.000Z',
       })
     );
 
