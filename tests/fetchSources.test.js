@@ -612,6 +612,40 @@ test('fetchEvergreenTravelSources prefers headline-relevant travel pages across 
   });
 });
 
+test('fetchEvergreenTravelSources filters Pinterest sources from results', async () => {
+  await withMockedNow(async () => {
+    serpCalls.length = 0;
+    clearTravelPresetStubs();
+    setSerpResults([
+      {
+        link: 'https://www.pinterest.com/pin/123456/',
+        source: 'Pinterest',
+        title: 'Lanai snorkeling inspiration',
+        snippet: 'Photo ideas for snorkeling adventures',
+        date: isoDaysAgo(60),
+      },
+      {
+        link: 'https://islandguides.com/lanai-snorkeling',
+        source: 'Island Guides',
+        title: 'Lanai snorkeling guide and reef tips',
+        snippet:
+          'Comprehensive Lanai snorkeling guide with reef safety and travel tips',
+        date: isoDaysAgo(90),
+      },
+    ]);
+
+    const sources = await fetchEvergreenTravelSources(
+      'Lanai snorkeling adventures',
+      { travelState: 'hi' }
+    );
+
+    assert.strictEqual(serpCalls.length, 1);
+    assert.deepStrictEqual(sources.map((item) => item.url), [
+      'https://islandguides.com/lanai-snorkeling',
+    ]);
+  });
+});
+
 test('fetchTravelReportingSources uses only travel evergreen queries and dedupes results', async () => {
   await withMockedNow(async () => {
     serpCalls.length = 0;

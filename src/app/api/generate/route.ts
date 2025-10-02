@@ -970,6 +970,11 @@ const TRAVEL_KEYWORDS = [
 
 const TRAVEL_QUERY_DEFAULTS = ['travel guide', 'things to do', 'itinerary'];
 
+const TRAVEL_SOURCE_DOMAIN_BLOCKLIST = ['pinterest.com', 'pin.it'];
+const TRAVEL_SOURCE_DOMAIN_BLOCKSET = new Set(
+  TRAVEL_SOURCE_DOMAIN_BLOCKLIST.map((domain) => domain.toLowerCase())
+);
+
 const TRAVEL_HEADLINE_STOP_WORDS = new Set(
   [
     'the',
@@ -1022,6 +1027,39 @@ const TRAVEL_HEADLINE_STOP_WORDS = new Set(
 
 function normalizeHeadlineWhitespace(headline: string): string {
   return headline.replace(/\s+/g, ' ').trim();
+}
+
+function getRegistrableDomain(hostname: string): string | null {
+  if (!hostname) {
+    return null;
+  }
+
+  const normalized = hostname.toLowerCase();
+  const parts = normalized.split('.').filter(Boolean);
+  if (!parts.length) {
+    return null;
+  }
+
+  if (parts.length <= 2) {
+    return parts.join('.');
+  }
+
+  const lastTwo = parts.slice(-2).join('.');
+  const secondLevelTlds = new Set([
+    'co.uk',
+    'org.uk',
+    'gov.uk',
+    'ac.uk',
+    'co.jp',
+    'com.au',
+    'net.au',
+  ]);
+
+  if (secondLevelTlds.has(lastTwo) && parts.length >= 3) {
+    return `${parts[parts.length - 3]}.${lastTwo}`;
+  }
+
+  return lastTwo;
 }
 
 function extractHeadlineSegments(headline: string): string[] {
@@ -1252,6 +1290,28 @@ async function fetchEvergreenTravelSources(
   for (const result of results) {
     const url = normalizeHrefValue(result.link || '');
     if (!url) {
+      continue;
+    }
+
+    const sourceLabel =
+      typeof result.source === 'string' ? result.source.toLowerCase() : '';
+    if (sourceLabel.includes('pinterest')) {
+      continue;
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      continue;
+    }
+
+    const hostname = parsedUrl.hostname.toLowerCase();
+    const registrableDomain = getRegistrableDomain(hostname);
+    if (
+      TRAVEL_SOURCE_DOMAIN_BLOCKSET.has(hostname) ||
+      (registrableDomain && TRAVEL_SOURCE_DOMAIN_BLOCKSET.has(registrableDomain))
+    ) {
       continue;
     }
 
