@@ -10,6 +10,17 @@ import {
   type TravelPreset,
   buildDefaultTravelPreset,
 } from '../../../lib/travelPresets';
+import {
+  TRAVEL_THEME_AUDIENCE_REPLACEMENTS,
+  TRAVEL_THEME_INDICATOR_PATTERN,
+} from '../../../lib/travelThemeAudience';
+import {
+  formatThemeCoverageIssue,
+  parseThemeCoverageIssue,
+  resolveThemeThreshold,
+  validateThemeCoverage,
+  type ThemeCoverageIssue,
+} from '../../../lib/themeCoverage';
 
 export const runtime = 'edge';
 export const revalidate = 0;
@@ -376,6 +387,18 @@ const VERIFICATION_TIMEOUT_MS = (() => {
 })();
 
 const VERIFICATION_MODEL = process.env.OPENAI_VERIFICATION_MODEL ?? 'gpt-4o-mini';
+
+const THEME_COVERAGE_THRESHOLD = (() => {
+  const raw = process.env.TRAVEL_THEME_COVERAGE_THRESHOLD;
+  if (!raw) {
+    return resolveThemeThreshold(undefined);
+  }
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed)) {
+    return resolveThemeThreshold(undefined);
+  }
+  return resolveThemeThreshold(parsed);
+})();
 
 // Low temperature to encourage factual consistency for reporting prompts
 const FACTUAL_TEMPERATURE = 0.2;
@@ -1184,51 +1207,6 @@ type TravelThemeInfo = {
   label: string;
   source: 'explicit' | 'headline';
 };
-
-const TRAVEL_THEME_AUDIENCE_REPLACEMENTS: Record<string, string> = {
-  lover: 'lovers',
-  lovers: 'lovers',
-  "lover's": 'lovers',
-  enthusiast: 'enthusiasts',
-  enthusiasts: 'enthusiasts',
-  "enthusiast's": 'enthusiasts',
-  fan: 'fans',
-  fans: 'fans',
-  "fan's": 'fans',
-  fanatic: 'fanatics',
-  fanatics: 'fanatics',
-  "fanatic's": 'fanatics',
-  buff: 'buffs',
-  buffs: 'buffs',
-  "buff's": 'buffs',
-  seeker: 'seekers',
-  seekers: 'seekers',
-  "seeker's": 'seekers',
-  hunter: 'hunters',
-  hunters: 'hunters',
-  "hunter's": 'hunters',
-  aficionado: 'aficionados',
-  aficionados: 'aficionados',
-  "aficionado's": 'aficionados',
-  devotee: 'devotees',
-  devotees: 'devotees',
-  "devotee's": 'devotees',
-  geek: 'geeks',
-  geeks: 'geeks',
-  "geek's": 'geeks',
-  nerd: 'nerds',
-  nerds: 'nerds',
-  "nerd's": 'nerds',
-  junkie: 'junkies',
-  junkies: 'junkies',
-  "junkie's": 'junkies',
-  addict: 'addicts',
-  addicts: 'addicts',
-  "addict's": 'addicts',
-};
-
-const TRAVEL_THEME_INDICATOR_PATTERN =
-  "(?:lover(?:s)?|lover['’]s|enthusiast(?:s)?|enthusiast['’]s|fan(?:s)?|fan['’]s|fanatic(?:s)?|fanatic['’]s|buff(?:s)?|buff['’]s|seeker(?:s)?|seeker['’]s|hunter(?:s)?|hunter['’]s|aficionado(?:s)?|aficionado['’]s|devotee(?:s)?|devotee['’]s|geek(?:s)?|geek['’]s|nerd(?:s)?|nerd['’]s|junkie(?:s)?|junkie['’]s|addict(?:s)?|addict['’]s)";
 
 function normalizeTravelThemeAudience(raw: string): string {
   if (!raw) {
@@ -3208,6 +3186,12 @@ async function generateWithLinks(
 interface VerificationResult {
   isAccurate: boolean;
   discrepancies: string[];
+  themeCoverageIssue?: ThemeCoverageIssue | null;
+}
+
+interface VerifyOutputOptions {
+  themeLabel?: string | null;
+  themeCoverageThreshold?: number;
 }
 
 function truncateField(value: string | null | undefined): string {
@@ -3336,16 +3320,39 @@ async function runOpenAIVerificationWithRetry(prompt: string): Promise<string> {
 
 async function verifyOutput(
   content: string,
-  sources: VerificationSource[]
+  sources: VerificationSource[],
+  options: VerifyOutputOptions = {}
 ): Promise<VerificationResult> {
   const trimmedContent = content?.trim();
   if (!trimmedContent) {
-    return { isAccurate: true, discrepancies: [] };
+    return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
   }
 
+  const themeLabel = options.themeLabel?.trim();
+  const themeThreshold =
+    typeof options.themeCoverageThreshold === 'number'
+      ? resolveThemeThreshold(options.themeCoverageThreshold)
+      : THEME_COVERAGE_THRESHOLD;
+  const themeCoverageIssue = themeLabel
+    ? validateThemeCoverage(trimmedContent, themeLabel, {
+        threshold: themeThreshold,
+      })
+    : null;
+
   const normalizedSources = normalizeVerificationSources(sources);
-  if (!process.env.OPENAI_API_KEY || normalizedSources.length === 0) {
-    return { isAccurate: true, discrepancies: [] };
+  const shouldRunAccuracyCheck =
+    Boolean(process.env.OPENAI_API_KEY) && normalizedSources.length > 0;
+
+  if (!shouldRunAccuracyCheck) {
+    if (themeCoverageIssue) {
+      console.warn('Theme coverage issue detected:', themeCoverageIssue);
+      return {
+        isAccurate: false,
+        discrepancies: [formatThemeCoverageIssue(themeCoverageIssue)],
+        themeCoverageIssue,
+      };
+    }
+    return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
   }
 
   const formattedSources = normalizedSources
@@ -3395,7 +3402,15 @@ async function verifyOutput(
     }
 
     if (!parsed || !Array.isArray(parsed.discrepancies)) {
-      return { isAccurate: true, discrepancies: [] };
+      if (themeCoverageIssue) {
+        console.warn('Theme coverage issue detected:', themeCoverageIssue);
+        return {
+          isAccurate: false,
+          discrepancies: [formatThemeCoverageIssue(themeCoverageIssue)],
+          themeCoverageIssue,
+        };
+      }
+      return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
     }
 
     const normalizedDiscrepancies = parsed.discrepancies
@@ -3426,18 +3441,36 @@ async function verifyOutput(
       criticalSeverities.has((item.severity || '').toLowerCase())
     );
 
+    const discrepancies: string[] = [];
     if (criticalIssues.length > VERIFICATION_DISCREPANCY_THRESHOLD) {
       const summaries = criticalIssues.map(
         (item) => `[${(item.severity || 'critical').toUpperCase()}] ${item.description}`
       );
       console.warn('Accuracy issues: ', summaries);
-      return { isAccurate: false, discrepancies: summaries };
+      discrepancies.push(...summaries);
     }
 
-    return { isAccurate: true, discrepancies: [] };
+    if (themeCoverageIssue) {
+      console.warn('Theme coverage issue detected:', themeCoverageIssue);
+      discrepancies.push(formatThemeCoverageIssue(themeCoverageIssue));
+    }
+
+    if (discrepancies.length > 0) {
+      return { isAccurate: false, discrepancies, themeCoverageIssue };
+    }
+
+    return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
   } catch (err) {
     console.warn('[api/generate] verification failed', err);
-    return { isAccurate: true, discrepancies: [] };
+    if (themeCoverageIssue) {
+      console.warn('Theme coverage issue detected:', themeCoverageIssue);
+      return {
+        isAccurate: false,
+        discrepancies: [formatThemeCoverageIssue(themeCoverageIssue)],
+        themeCoverageIssue,
+      };
+    }
+    return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
   }
 }
 
@@ -3446,32 +3479,76 @@ function applyVerificationIssuesToPrompt(basePrompt: string, issues?: string[]):
     return basePrompt;
   }
 
-  const formattedIssues = issues
-    .map((issue, index) => `${index + 1}. ${issue.replace(/\s+/g, ' ').trim()}`)
+  const normalizedIssues: string[] = [];
+  const themeIssuesByLabel = new Map<string, ThemeCoverageIssue>();
+
+  for (const raw of issues) {
+    if (typeof raw !== 'string') {
+      continue;
+    }
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const themeIssue = parseThemeCoverageIssue(trimmed);
+    if (themeIssue) {
+      if (!themeIssuesByLabel.has(themeIssue.themeLabel)) {
+        themeIssuesByLabel.set(themeIssue.themeLabel, themeIssue);
+        normalizedIssues.push(themeIssue.message);
+      }
+      continue;
+    }
+    normalizedIssues.push(trimmed.replace(/\s+/g, ' ').trim());
+  }
+
+  if (normalizedIssues.length === 0) {
+    return basePrompt;
+  }
+
+  const formattedIssues = normalizedIssues
+    .map((issue, index) => `${index + 1}. ${issue}`)
     .join('\n');
 
-  return `${basePrompt}\n\nThe previous draft was flagged for critical factual inaccuracies:\n${formattedIssues}\nRevise the article to resolve every issue without introducing new errors. Only output the corrected HTML article.`;
+  let revisedPrompt = `${basePrompt}\n\nThe previous draft was flagged for critical issues:\n${formattedIssues}\nRevise the article to resolve every issue without introducing new errors. Only output the corrected HTML article.`;
+
+  if (themeIssuesByLabel.size > 0) {
+    const reinforcement = Array.from(themeIssuesByLabel.values())
+      .map((issue) => {
+        const targetPercent = Math.round(issue.threshold * 100);
+        return `- Elevate the coverage for "${issue.themeLabel}" with concrete, cited details until roughly ${targetPercent}% of the sentences or word count focus on that theme. Avoid generic references; weave specific attractions, activities, or facts tied to it.`;
+      })
+      .join('\n');
+    revisedPrompt = `${revisedPrompt}\nEmphasize the thematic requirement(s):\n${reinforcement}`;
+  }
+
+  return revisedPrompt;
 }
 
 
 async function generateWithVerification(
   generator: (issues?: string[]) => Promise<string>,
   sources: VerificationSource[],
-  fallbackSources: string[] = []
+  fallbackSources: string[] = [],
+  verificationOptions: VerifyOutputOptions = {}
 ): Promise<string> {
   const combinedSources = sources.length
     ? sources
     : fallbackSources.map((url) => ({ url }));
+  const hasThemeCheck = Boolean(verificationOptions.themeLabel?.trim());
   const shouldVerify =
-    Boolean(process.env.OPENAI_API_KEY) &&
-    combinedSources.length > 0;
+    (Boolean(process.env.OPENAI_API_KEY) && combinedSources.length > 0) ||
+    hasThemeCheck;
 
   const initialContent = await generator();
   if (!shouldVerify) {
     return initialContent;
   }
 
-  const verification = await verifyOutput(initialContent, combinedSources);
+  const verification = await verifyOutput(
+    initialContent,
+    combinedSources,
+    verificationOptions
+  );
   if (verification.isAccurate) {
     return initialContent;
   }
@@ -4067,6 +4144,11 @@ Write the full article in valid HTML below:
       extraRequirements,
     });
 
+    const verificationOptions =
+      isTravelArticle && travelThemeLabel
+        ? { themeLabel: travelThemeLabel }
+        : {};
+
     const runArticleGeneration = (prompt: string) =>
       generateWithVerification(
         (issues) =>
@@ -4081,7 +4163,8 @@ Write the full article in valid HTML below:
             reportingSources
           ),
         reportingSources,
-        linkSources
+        linkSources,
+        verificationOptions
       );
 
     const content = await runArticleGeneration(articlePrompt);
