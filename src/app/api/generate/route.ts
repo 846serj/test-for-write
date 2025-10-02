@@ -966,9 +966,166 @@ const TRAVEL_KEYWORDS = [
   'destination',
   'trip',
   'vacation',
+  'getaway',
 ];
 
 const TRAVEL_QUERY_DEFAULTS = ['travel guide', 'things to do', 'itinerary'];
+
+const TRAVEL_HEADLINE_STOP_WORDS = new Set(
+  [
+    'the',
+    'and',
+    'for',
+    'with',
+    'from',
+    'that',
+    'this',
+    'your',
+    'their',
+    'into',
+    'through',
+    'about',
+    'after',
+    'before',
+    'beyond',
+    'around',
+    'over',
+    'under',
+    'while',
+    'via',
+    'how',
+    'why',
+    'what',
+    'when',
+    'where',
+    'will',
+    'can',
+    'should',
+    'best',
+    'top',
+    'new',
+    'latest',
+    'travel',
+    'trip',
+    'guide',
+    'itinerary',
+    'vacation',
+    'destination',
+    'things',
+    'stay',
+    'visiting',
+    'visit',
+    'tour',
+    'tours',
+    'tourism',
+  ].map((word) => word.toLowerCase())
+);
+
+function normalizeHeadlineWhitespace(headline: string): string {
+  return headline.replace(/\s+/g, ' ').trim();
+}
+
+function extractHeadlineSegments(headline: string): string[] {
+  const normalized = normalizeHeadlineWhitespace(headline);
+  if (!normalized) {
+    return [];
+  }
+
+  const segments = normalized
+    .split(/[–—\-:|]+/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment && segment.length >= 4);
+
+  return dedupeStrings(segments);
+}
+
+function deriveSingularTokenVariant(token: string): string | null {
+  if (!token || token.length <= SOURCE_TOKEN_MIN_LENGTH) {
+    return null;
+  }
+
+  if (token.endsWith('ies') && token.length > 3) {
+    return token.slice(0, -3) + 'y';
+  }
+
+  if (/(ses|xes|zes|ches|shes)$/i.test(token) && token.length > 4) {
+    return token.slice(0, -2);
+  }
+
+  if (token.endsWith('es') && token.length > 3) {
+    return token.slice(0, -1);
+  }
+
+  if (token.endsWith('s') && token.length > 3) {
+    return token.slice(0, -1);
+  }
+
+  return null;
+}
+
+function extractTravelHeadlineTokens(headline: string): string[] {
+  const normalized = normalizeHeadlineWhitespace(headline).toLowerCase();
+  if (!normalized) {
+    return [];
+  }
+
+  const rawTokens = normalized
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length >= SOURCE_TOKEN_MIN_LENGTH);
+
+  const seen = new Set<string>();
+  const prioritized: string[] = [];
+
+  for (const token of rawTokens) {
+    if (TRAVEL_HEADLINE_STOP_WORDS.has(token)) {
+      continue;
+    }
+    if (seen.has(token)) {
+      continue;
+    }
+    seen.add(token);
+    prioritized.push(token);
+
+    const singular = deriveSingularTokenVariant(token);
+    if (singular && !TRAVEL_HEADLINE_STOP_WORDS.has(singular) && !seen.has(singular)) {
+      seen.add(singular);
+      prioritized.push(singular);
+    }
+  }
+
+  if (!prioritized.length) {
+    for (const token of rawTokens) {
+      if (seen.has(token)) {
+        continue;
+      }
+      seen.add(token);
+      prioritized.push(token);
+      if (prioritized.length >= 4) {
+        break;
+      }
+    }
+  }
+
+  return prioritized.slice(0, 8);
+}
+
+function contentHasTravelSignal(content: string): boolean {
+  if (!content) {
+    return false;
+  }
+
+  const normalized = content.toLowerCase();
+  for (const keyword of TRAVEL_KEYWORDS) {
+    const normalizedKeyword = keyword.toLowerCase();
+    if (normalized.includes(normalizedKeyword)) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 function normalizeTravelStateName(preset: TravelPreset): string {
   if (!preset.stateName) {
@@ -1002,14 +1159,32 @@ function buildTravelSearchQuery(
   preset: TravelPreset,
   keywordPool: string[]
 ): string {
+  const normalizedHeadline = normalizeHeadlineWhitespace(headline);
   const stateName = normalizeTravelStateName(preset);
-  const segments = dedupeStrings([
-    headline.trim(),
-    stateName,
-    ...keywordPool.slice(0, 4),
-  ]);
+  const headlineSegments = extractHeadlineSegments(normalizedHeadline);
+  const headlineTokens = extractTravelHeadlineTokens(normalizedHeadline);
 
-  return segments.join(' ').trim();
+  const pieces = dedupeStrings([
+    normalizedHeadline ? `"${normalizedHeadline}"` : '',
+    ...headlineSegments.slice(0, 2).map((segment) => `"${segment}"`),
+    stateName,
+    headlineTokens.length ? headlineTokens.slice(0, 4).join(' ') : '',
+  ]).filter(Boolean);
+
+  const lowerPieces = pieces.map((piece) => piece.toLowerCase());
+  const hasTravelQualifier = lowerPieces.some((piece) =>
+    TRAVEL_KEYWORDS.some((keyword) => piece.includes(keyword.toLowerCase()))
+  );
+
+  if (!hasTravelQualifier) {
+    pieces.push('travel');
+  }
+
+  if (!pieces.length && keywordPool.length) {
+    pieces.push(keywordPool[0]);
+  }
+
+  return pieces.join(' ').trim();
 }
 
 function buildTravelInstructionBlock(preset: TravelPreset | null): string {
@@ -1054,9 +1229,22 @@ async function fetchEvergreenTravelSources(
     return [];
   }
 
-  const keywordMatchers = keywordPool.length
-    ? keywordPool.map((keyword) => keyword.toLowerCase())
-    : TRAVEL_KEYWORDS.map((keyword) => keyword.toLowerCase());
+  const stateName = normalizeTravelStateName(preset);
+  const stateMatcher = stateName.toLowerCase();
+  const stateTokens = stateMatcher
+    ? stateMatcher.split(/\s+/).map((token) => token.trim()).filter(Boolean)
+    : [];
+  const stateTokenSet = new Set(stateTokens);
+  const headlineTokens = extractTravelHeadlineTokens(normalizedHeadline);
+  const filteredTokens = headlineTokens.filter(
+    (token) => !stateTokenSet.has(token)
+  );
+  const tokensForMatching = filteredTokens.length ? filteredTokens : headlineTokens;
+  const baseHeadlineThreshold =
+    tokensForMatching.length >= 2 ? 2 : tokensForMatching.length >= 1 ? 1 : 0;
+  const requiredForTravelContext = tokensForMatching.length > 0 ? 1 : 0;
+  const requiresTravelContextForStateOnly =
+    filteredTokens.length === 0 && stateTokenSet.size > 0 && tokensForMatching.length > 0;
 
   const nowMs = Date.now();
   const sources: ReportingSource[] = [];
@@ -1077,7 +1265,30 @@ async function fetchEvergreenTravelSources(
       continue;
     }
 
-    if (!keywordMatchers.some((keyword) => content.includes(keyword))) {
+    const contentTokens = tokensForMatching.length
+      ? buildSourceTokenSet(content)
+      : null;
+    let headlineMatchCount = 0;
+    if (contentTokens && tokensForMatching.length) {
+      for (const token of tokensForMatching) {
+        if (contentTokens.has(token)) {
+          headlineMatchCount += 1;
+        }
+      }
+    }
+
+    const hasStateMatch = stateMatcher ? content.includes(stateMatcher) : false;
+    const hasTravelContext = contentHasTravelSignal(content);
+    const qualifiesByHeadline =
+      headlineMatchCount >= baseHeadlineThreshold &&
+      (!requiresTravelContextForStateOnly || hasTravelContext);
+    const qualifiesByState = hasStateMatch &&
+      (tokensForMatching.length === 0 || headlineMatchCount >= 1) &&
+      (!requiresTravelContextForStateOnly || hasTravelContext);
+    const qualifiesWithTravelContext =
+      hasTravelContext && headlineMatchCount >= requiredForTravelContext;
+
+    if (!qualifiesByHeadline && !qualifiesByState && !qualifiesWithTravelContext) {
       continue;
     }
 
