@@ -137,8 +137,8 @@ test('infers keywords when only a description is provided', async () => {
   const articlePayloads = {
     Focus: [
       {
-        title: 'Precision nursing assistants arrive',
-        description: 'Clinics trial bedside robotic attendants',
+        title: 'Focus Daily highlights precision nursing assistants',
+        description: 'Clinics trial bedside robotic attendants with Focus insights',
         url: 'https://example.com/focus-1',
         source: { name: 'Focus Daily' },
         publishedAt: '2024-03-02T00:00:00Z',
@@ -706,6 +706,67 @@ test('decodes HTML entities from NewsAPI, RSS, and SERP results', async () => {
   }
 });
 
+test('filters out keyword results that do not mention the keyword', async () => {
+  globalThis.__openaiCreate = async () => {
+    throw new Error('should not call openai');
+  };
+
+  const keyword = 'renewable energy';
+  const fetchCalls = [];
+  globalThis.__fetchImpl = async (input) => {
+    const url = new URL(input.toString());
+    const query = url.searchParams.get('q') || '';
+    const pageSize = Number(url.searchParams.get('pageSize'));
+    const page = Number(url.searchParams.get('page'));
+
+    fetchCalls.push({ query, pageSize, page });
+
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get(name) {
+          return name === 'content-type' ? 'application/json' : null;
+        },
+      },
+      async json() {
+        return {
+          status: 'ok',
+          totalResults: 1,
+          articles: [
+            {
+              title: 'Global markets rally as tech stocks surge',
+              description: 'Investors celebrate broad market gains led by software companies.',
+              url: 'https://example.com/markets',
+              source: { name: 'Finance Daily' },
+              publishedAt: '2024-07-01T08:00:00Z',
+            },
+          ],
+        };
+      },
+    };
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(
+    createRequest({ keywords: [keyword], limit: 3 })
+  );
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+
+  assert.deepStrictEqual(body.headlines, []);
+  assert.strictEqual(body.totalResults, 0);
+  assert.ok(
+    !body.keywordHeadlines || body.keywordHeadlines.length === 0,
+    'keyword groups should be empty when all candidates are filtered'
+  );
+
+  assert.deepStrictEqual(fetchCalls, [
+    { query: '"renewable energy"', pageSize: 3, page: 1 },
+  ]);
+});
+
 test('later keyword searches contribute unique headlines', async () => {
   globalThis.__openaiCreate = async () => {
     throw new Error('should not call openai');
@@ -833,8 +894,8 @@ test('aggregates deduplicated results for derived keyword queries', async () => 
       'AI|1',
       [
         {
-          title: 'Robotic surgeons',
-          description: 'Robotic surgeons assist in operations',
+          title: 'AI-powered robotic surgeons',
+          description: 'AI robotic surgeons assist in operations',
           url: 'https://example.com/1',
           source: { name: 'Source A' },
           publishedAt: '2024-01-01T00:00:00Z',
@@ -845,8 +906,8 @@ test('aggregates deduplicated results for derived keyword queries', async () => 
       'Robotics|1',
       [
         {
-          title: 'Duplicate entry',
-          description: 'Duplicate entry for deduplication test',
+          title: 'Robotics duplicate entry',
+          description: 'Robotics duplicate entry for deduplication test',
           url: 'https://example.com/1',
           source: { name: 'Source A' },
           publishedAt: '2024-01-01T00:00:00Z',
@@ -858,14 +919,14 @@ test('aggregates deduplicated results for derived keyword queries', async () => 
       [
         {
           title: 'AI in hospitals',
-          description: 'Hospitals adopt AI for patient care',
+          description: 'Hospitals adopt AI for healthcare patient care',
           url: 'https://example.com/2',
           source: { name: 'Source B' },
           publishedAt: '2024-01-02T00:00:00Z',
         },
         {
-          title: 'Care robots expand',
-          description: 'Care robots enter more clinics',
+          title: 'Care robots expand in healthcare',
+          description: 'Care robots enter more healthcare clinics',
           url: 'https://example.com/3',
           source: { name: 'Source C' },
           publishedAt: '2024-01-03T00:00:00Z',
@@ -959,7 +1020,7 @@ test('uses query and keyword fallbacks to reach the limit', async () => {
       [
         {
           title: 'Genome editing milestones',
-          description: 'Genome editing reaches new milestones',
+          description: 'Genome editing biology reaches new milestones',
           url: 'https://example.com/c',
           source: { name: 'Source C' },
           publishedAt: '2024-01-03T00:00:00Z',
@@ -970,8 +1031,8 @@ test('uses query and keyword fallbacks to reach the limit', async () => {
       'space|1',
       [
         {
-          title: 'Mars mission update',
-          description: 'Mars mission update released',
+          title: 'Space agency Mars mission update',
+          description: 'Space mission update released for Mars expedition',
           url: 'https://example.com/d',
           source: { name: 'Source D' },
           publishedAt: '2024-01-04T00:00:00Z',
@@ -1033,7 +1094,7 @@ test('uses query and keyword fallbacks to reach the limit', async () => {
       'Innovation leaps ahead',
       'Next-gen materials emerge',
       'Genome editing milestones',
-      'Mars mission update',
+      'Space agency Mars mission update',
     ].sort()
   );
 });
@@ -1052,75 +1113,75 @@ test('continues paging when earlier results include duplicates', async () => {
   };
 
   const responses = new Map([
-    [
-      'first spotlight|1',
       [
-        {
-          title: 'Alpha insight',
-          description: 'Alpha insight analysis',
-          url: 'https://example.com/a',
-          source: { name: 'Source A' },
-          publishedAt: '2024-02-01T00:00:00Z',
-        },
-        {
-          title: 'Beta developments',
-          description: 'Beta developments update',
-          url: 'https://example.com/b',
-          source: { name: 'Source B' },
-          publishedAt: '2024-02-02T00:00:00Z',
-        },
-      ],
+        'first spotlight|1',
+        [
+          {
+            title: 'Alpha insight from first spotlight',
+            description: 'Alpha insight analysis from the first spotlight report',
+            url: 'https://example.com/a',
+            source: { name: 'Source A' },
+            publishedAt: '2024-02-01T00:00:00Z',
+          },
+          {
+            title: 'Beta developments in first spotlight',
+            description: 'Beta developments update from the first spotlight series',
+            url: 'https://example.com/b',
+            source: { name: 'Source B' },
+            publishedAt: '2024-02-02T00:00:00Z',
+          },
+        ],
     ],
-    [
-      'first spotlight|2',
       [
-        {
-          title: 'Alpha insight',
-          description: 'Alpha insight analysis',
-          url: 'https://example.com/a',
-          source: { name: 'Source A' },
-          publishedAt: '2024-02-01T00:00:00Z',
-        },
-        {
-          title: 'Beta developments',
-          description: 'Beta developments update',
-          url: 'https://example.com/b',
-          source: { name: 'Source B' },
-          publishedAt: '2024-02-02T00:00:00Z',
-        },
+        'first spotlight|2',
+        [
+          {
+            title: 'Alpha insight from first spotlight',
+            description: 'Alpha insight analysis from the first spotlight report',
+            url: 'https://example.com/a',
+            source: { name: 'Source A' },
+            publishedAt: '2024-02-01T00:00:00Z',
+          },
+          {
+            title: 'Beta developments in first spotlight',
+            description: 'Beta developments update from the first spotlight series',
+            url: 'https://example.com/b',
+            source: { name: 'Source B' },
+            publishedAt: '2024-02-02T00:00:00Z',
+          },
+        ],
       ],
-    ],
-    [
-      '"second focus"|1',
       [
-        {
-          title: 'Alpha insight',
-          description: 'Alpha insight analysis',
-          url: 'https://example.com/a',
-          source: { name: 'Source A' },
-          publishedAt: '2024-02-01T00:00:00Z',
-        },
-        {
-          title: 'Gamma outlook',
-          description: 'Gamma outlook overview',
-          url: 'https://example.com/c',
-          source: { name: 'Source C' },
-          publishedAt: '2024-02-03T00:00:00Z',
-        },
+        '"second focus"|1',
+        [
+          {
+            title: 'Alpha insight references second focus',
+            description: 'Alpha insight analysis covering the second focus topic',
+            url: 'https://example.com/a',
+            source: { name: 'Source A' },
+            publishedAt: '2024-02-01T00:00:00Z',
+          },
+          {
+            title: 'Gamma outlook on second focus',
+            description: 'Gamma outlook overview exploring the second focus theme',
+            url: 'https://example.com/c',
+            source: { name: 'Source C' },
+            publishedAt: '2024-02-03T00:00:00Z',
+          },
+        ],
       ],
-    ],
-    [
-      '"second focus"|2',
       [
-        {
-          title: 'Delta forecast',
-          description: 'Delta forecast briefing',
-          url: 'https://example.com/d',
-          source: { name: 'Source D' },
-          publishedAt: '2024-02-04T00:00:00Z',
-        },
+        '"second focus"|2',
+        [
+          {
+            title: 'Delta forecast for the second focus',
+            description: 'Delta forecast briefing on the second focus topic',
+            url: 'https://example.com/d',
+            source: { name: 'Source D' },
+            publishedAt: '2024-02-04T00:00:00Z',
+          },
+        ],
       ],
-    ],
   ]);
 
   const fetchCalls = [];
@@ -1201,7 +1262,7 @@ test('builds keyword query without OpenAI assistance', async () => {
       investment: [
         {
           title: 'Solar funding surges',
-          description: 'Solar funding surges across multiple markets.',
+          description: 'Solar funding investment surges across multiple markets.',
           url: 'https://example.com/solar',
           source: { name: 'Solar Journal' },
           publishedAt: '2024-07-02T00:00:00Z',

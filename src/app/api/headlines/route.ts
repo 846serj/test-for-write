@@ -908,6 +908,25 @@ type NormalizedHeadline = {
   searchQuery?: string;
 };
 
+function headlineMatchesKeyword(
+  keyword: string,
+  headline: Pick<NormalizedHeadline, 'title' | 'description'>
+): boolean {
+  const trimmed = keyword.trim();
+  if (!trimmed) {
+    return true;
+  }
+
+  const loweredKeyword = trimmed.toLowerCase();
+  const loweredTitle = (headline.title || '').toLowerCase();
+  const loweredDescription = (headline.description || '').toLowerCase();
+
+  return (
+    loweredTitle.includes(loweredKeyword) ||
+    loweredDescription.includes(loweredKeyword)
+  );
+}
+
 function extractRssFeedPayload(parsed: unknown): {
   feedTitle: string;
   items: unknown[];
@@ -2273,6 +2292,18 @@ function createHeadlinesHandler(
           continue;
         }
 
+        const keywordFilterValue =
+          searchEntry.type === 'keyword' && searchEntry.keyword
+            ? searchEntry.keyword.trim()
+            : '';
+
+        if (
+          keywordFilterValue &&
+          !headlineMatchesKeyword(keywordFilterValue, normalized)
+        ) {
+          continue;
+        }
+
         if (addHeadlineIfUnique(aggregatedHeadlines, normalized, dedupeOptions)) {
           addedByQuery += 1;
           addedThisPage += 1;
@@ -2380,6 +2411,18 @@ function createHeadlinesHandler(
           normalized.searchQuery = search;
           if (searchEntry.type === 'keyword' && searchEntry.keyword) {
             normalized.keyword = searchEntry.keyword;
+          }
+
+          const keywordFilterValue =
+            searchEntry.type === 'keyword' && searchEntry.keyword
+              ? searchEntry.keyword.trim()
+              : '';
+
+          if (
+            keywordFilterValue &&
+            !headlineMatchesKeyword(keywordFilterValue, normalized)
+          ) {
+            continue;
           }
 
           if (addHeadlineIfUnique(aggregatedHeadlines, normalized, dedupeOptions)) {
