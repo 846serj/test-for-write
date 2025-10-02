@@ -2965,12 +2965,14 @@ async function runOpenAIVerificationWithRetry(prompt: string): Promise<string> {
     const timeout = setTimeout(() => controller.abort(), VERIFICATION_TIMEOUT_MS);
 
     try {
-      const response = await openai.chat.completions.create({
-        model: VERIFICATION_MODEL,
-        temperature: 0,
-        messages: [{ role: 'user', content: prompt }],
-        signal: controller.signal,
-      });
+      const response = await openai.chat.completions.create(
+        {
+          model: VERIFICATION_MODEL,
+          temperature: 0,
+          messages: [{ role: 'user', content: prompt }],
+        },
+        { signal: controller.signal }
+      );
 
       clearTimeout(timeout);
 
