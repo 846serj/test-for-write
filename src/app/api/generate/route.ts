@@ -3,18 +3,6 @@ import { NextResponse } from 'next/server';
 import { getOpenAI } from '../../../lib/openai';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
-import { fetchTravelThemeFacts } from '../../../lib/travelThemeFacts';
-import {
-  dedupeStrings,
-  getTravelPreset,
-  type TravelPreset,
-  buildDefaultTravelPreset,
-} from '../../../lib/travelPresets';
-import { fetchTravelPresetSources } from '../../../lib/travelSources';
-import {
-  TRAVEL_THEME_AUDIENCE_REPLACEMENTS,
-  TRAVEL_THEME_INDICATOR_PATTERN,
-} from '../../../lib/travelThemeAudience';
 import {
   formatThemeCoverageIssue,
   parseThemeCoverageIssue,
@@ -49,7 +37,6 @@ type ReportingContext = {
   groundingInstruction: string;
   linkSources: string[];
   referenceBlock: string;
-  travelPreset: TravelPreset | null;
 };
 
 type VerificationSource =
@@ -982,79 +969,6 @@ async function fetchSources(
   });
 }
 
-const TRAVEL_KEYWORDS = [
-  'travel',
-  'guide',
-  'itinerary',
-  'visit',
-  'attractions',
-  'things to do',
-  'where to stay',
-  'tour',
-  'tourism',
-  'destination',
-  'trip',
-  'vacation',
-  'getaway',
-];
-
-const TRAVEL_QUERY_DEFAULTS = ['travel guide', 'things to do', 'itinerary'];
-
-const TRAVEL_SOURCE_DOMAIN_BLOCKLIST = ['pinterest.com', 'pin.it'];
-const TRAVEL_SOURCE_DOMAIN_BLOCKSET = new Set(
-  TRAVEL_SOURCE_DOMAIN_BLOCKLIST.map((domain) => domain.toLowerCase())
-);
-
-const TRAVEL_HEADLINE_STOP_WORDS = new Set(
-  [
-    'the',
-    'and',
-    'for',
-    'with',
-    'from',
-    'that',
-    'this',
-    'your',
-    'their',
-    'into',
-    'through',
-    'about',
-    'after',
-    'before',
-    'beyond',
-    'around',
-    'over',
-    'under',
-    'while',
-    'via',
-    'how',
-    'why',
-    'what',
-    'when',
-    'where',
-    'will',
-    'can',
-    'should',
-    'best',
-    'top',
-    'new',
-    'latest',
-    'travel',
-    'trip',
-    'guide',
-    'itinerary',
-    'vacation',
-    'destination',
-    'things',
-    'stay',
-    'visiting',
-    'visit',
-    'tour',
-    'tours',
-    'tourism',
-  ].map((word) => word.toLowerCase())
-);
-
 function normalizeHeadlineWhitespace(headline: string): string {
   return headline.replace(/\s+/g, ' ').trim();
 }
@@ -1090,695 +1004,6 @@ function getRegistrableDomain(hostname: string): string | null {
   }
 
   return lastTwo;
-}
-
-function extractHeadlineSegments(headline: string): string[] {
-  const normalized = normalizeHeadlineWhitespace(headline);
-  if (!normalized) {
-    return [];
-  }
-
-  const segments = normalized
-    .split(/[–—\-:|]+/)
-    .map((segment) => segment.trim())
-    .filter((segment) => segment && segment.length >= 4);
-
-  return dedupeStrings(segments);
-}
-
-function deriveSingularTokenVariant(token: string): string | null {
-  if (!token || token.length <= SOURCE_TOKEN_MIN_LENGTH) {
-    return null;
-  }
-
-  if (token.endsWith('ies') && token.length > 3) {
-    return token.slice(0, -3) + 'y';
-  }
-
-  if (/(ses|xes|zes|ches|shes)$/i.test(token) && token.length > 4) {
-    return token.slice(0, -2);
-  }
-
-  if (token.endsWith('es') && token.length > 3) {
-    return token.slice(0, -1);
-  }
-
-  if (token.endsWith('s') && token.length > 3) {
-    return token.slice(0, -1);
-  }
-
-  return null;
-}
-
-function extractTravelHeadlineTokens(headline: string): string[] {
-  const normalized = normalizeHeadlineWhitespace(headline).toLowerCase();
-  if (!normalized) {
-    return [];
-  }
-
-  const rawTokens = normalized
-    .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/[^a-z0-9\s]+/g, ' ')
-    .split(/\s+/)
-    .filter((token) => token.length >= SOURCE_TOKEN_MIN_LENGTH);
-
-  const seen = new Set<string>();
-  const prioritized: string[] = [];
-
-  for (const token of rawTokens) {
-    if (TRAVEL_HEADLINE_STOP_WORDS.has(token)) {
-      continue;
-    }
-    if (seen.has(token)) {
-      continue;
-    }
-    seen.add(token);
-    prioritized.push(token);
-
-    const singular = deriveSingularTokenVariant(token);
-    if (singular && !TRAVEL_HEADLINE_STOP_WORDS.has(singular) && !seen.has(singular)) {
-      seen.add(singular);
-      prioritized.push(singular);
-    }
-  }
-
-  if (!prioritized.length) {
-    for (const token of rawTokens) {
-      if (seen.has(token)) {
-        continue;
-      }
-      seen.add(token);
-      prioritized.push(token);
-      if (prioritized.length >= 4) {
-        break;
-      }
-    }
-  }
-
-  return prioritized.slice(0, 8);
-}
-
-function contentHasTravelSignal(content: string): boolean {
-  if (!content) {
-    return false;
-  }
-
-  const normalized = content.toLowerCase();
-  for (const keyword of TRAVEL_KEYWORDS) {
-    const normalizedKeyword = keyword.toLowerCase();
-    if (normalized.includes(normalizedKeyword)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function normalizeTravelStateName(preset: TravelPreset): string {
-  if (!preset.stateName) {
-    return '';
-  }
-
-  const trimmed = preset.stateName.trim();
-  if (!trimmed || trimmed === 'the destination') {
-    return '';
-  }
-
-  return trimmed;
-}
-
-type TravelThemeInfo = {
-  label: string;
-  source: 'explicit' | 'headline';
-};
-
-function normalizeTravelThemeAudience(raw: string): string {
-  if (!raw) {
-    return '';
-  }
-
-  const cleaned = raw.replace(/["“”]/g, '').trim();
-  const withoutPossessive = cleaned.replace(/[’']s$/i, '');
-  const lower = withoutPossessive.toLowerCase();
-  if (TRAVEL_THEME_AUDIENCE_REPLACEMENTS[lower]) {
-    return TRAVEL_THEME_AUDIENCE_REPLACEMENTS[lower];
-  }
-  if (lower.endsWith('ies')) {
-    return lower;
-  }
-  if (lower.endsWith('s')) {
-    return lower;
-  }
-  if (lower.endsWith('y')) {
-    return `${lower.slice(0, -1)}ies`;
-  }
-  return `${lower}s`;
-}
-
-function formatTravelThemeLabel(
-  descriptor: string,
-  audienceRaw: string
-): string | null {
-  const normalizedDescriptor = descriptor
-    .replace(/["“”]/g, '')
-    .replace(/^(?:for\s+)?/i, '')
-    .replace(/^(?:the|a|an)\s+/i, '')
-    .trim()
-    .replace(/\s+/g, ' ');
-  const normalizedAudience = normalizeTravelThemeAudience(audienceRaw);
-  if (!normalizedDescriptor && !normalizedAudience) {
-    return null;
-  }
-  if (!normalizedDescriptor) {
-    return normalizedAudience;
-  }
-  if (!normalizedAudience) {
-    return normalizedDescriptor;
-  }
-  return `${normalizedDescriptor} ${normalizedAudience}`.trim();
-}
-
-function detectTravelTheme(
-  headline: string | undefined | null,
-  themeField?: string | null
-): TravelThemeInfo | null {
-  const explicitTheme = themeField?.trim();
-  if (explicitTheme) {
-    return { label: explicitTheme, source: 'explicit' };
-  }
-
-  const normalizedHeadline = headline?.trim();
-  if (!normalizedHeadline) {
-    return null;
-  }
-
-  const forRegex = new RegExp(
-    `\\bfor\\s+(?:the\\s+)?([^.,;:!?]*?)\\s+(${TRAVEL_THEME_INDICATOR_PATTERN})\\b`,
-    'i'
-  );
-  const forMatch = normalizedHeadline.match(forRegex);
-  if (forMatch) {
-    const label = formatTravelThemeLabel(forMatch[1], forMatch[2]);
-    if (label) {
-      return { label, source: 'headline' };
-    }
-  }
-
-  const apostropheRegex = new RegExp(
-    `\\b([^.,;:!?]*?)\\s+(${TRAVEL_THEME_INDICATOR_PATTERN})[’']s\\b`,
-    'i'
-  );
-  const apostropheMatch = normalizedHeadline.match(apostropheRegex);
-  if (apostropheMatch) {
-    const label = formatTravelThemeLabel(
-      apostropheMatch[1],
-      apostropheMatch[2]
-    );
-    if (label) {
-      return { label, source: 'headline' };
-    }
-  }
-
-  return null;
-}
-
-function buildTravelKeywordPool(preset: TravelPreset): string[] {
-  const stateName = normalizeTravelStateName(preset);
-  const stateCombos = stateName
-    ? [`${stateName} travel`, `${stateName} itinerary`, `${stateName} weekend`]
-    : [];
-
-  return dedupeStrings([
-    ...stateCombos,
-    ...TRAVEL_QUERY_DEFAULTS,
-    ...preset.keywords,
-    ...TRAVEL_KEYWORDS,
-  ]);
-}
-
-function buildTravelSearchQuery(
-  headline: string,
-  preset: TravelPreset,
-  keywordPool: string[]
-): string {
-  const normalizedHeadline = normalizeHeadlineWhitespace(headline);
-  const stateName = normalizeTravelStateName(preset);
-  const headlineSegments = extractHeadlineSegments(normalizedHeadline);
-  const headlineTokens = extractTravelHeadlineTokens(normalizedHeadline);
-
-  const pieces = dedupeStrings([
-    normalizedHeadline ? `"${normalizedHeadline}"` : '',
-    ...headlineSegments.slice(0, 2).map((segment) => `"${segment}"`),
-    stateName,
-    headlineTokens.length ? headlineTokens.slice(0, 4).join(' ') : '',
-  ]).filter(Boolean);
-
-  const lowerPieces = pieces.map((piece) => piece.toLowerCase());
-  const hasTravelQualifier = lowerPieces.some((piece) =>
-    TRAVEL_KEYWORDS.some((keyword) => piece.includes(keyword.toLowerCase()))
-  );
-
-  if (!hasTravelQualifier) {
-    pieces.push('travel');
-  }
-
-  if (!pieces.length && keywordPool.length) {
-    pieces.push(keywordPool[0]);
-  }
-
-  return pieces.join(' ').trim();
-}
-
-function buildTravelInstructionBlock(preset: TravelPreset | null): string {
-  if (!preset) {
-    return '';
-  }
-
-  const instructions = preset.instructions
-    .map((instruction) => instruction.trim())
-    .filter(Boolean);
-  if (!instructions.length) {
-    return '';
-  }
-
-  const label = normalizeTravelStateName(preset) || 'the destination';
-  const entries = instructions.map((instruction) => `- ${instruction}`);
-  return `Destination planning guidance for ${label}:\n${entries.join('\n')}`;
-}
-
-async function fetchEvergreenTravelSources(
-  headline: string,
-  options: { travelState?: string | null; travelPreset?: TravelPreset | null } = {}
-): Promise<ReportingSource[]> {
-  const normalizedHeadline = typeof headline === 'string' ? headline.trim() : '';
-  if (!normalizedHeadline) {
-    return [];
-  }
-
-  const preset =
-    options.travelPreset ??
-    (await getTravelPreset(options.travelState ?? null));
-  const keywordPool = buildTravelKeywordPool(preset);
-  const query = buildTravelSearchQuery(normalizedHeadline, preset, keywordPool);
-  const results = await serpapiSearch({
-    query,
-    engine: 'google',
-    extraParams: { hl: 'en' },
-    limit: 10,
-  });
-
-  if (!results.length) {
-    return [];
-  }
-
-  const stateName = normalizeTravelStateName(preset);
-  const stateMatcher = stateName.toLowerCase();
-  const stateTokens = stateMatcher
-    ? stateMatcher.split(/\s+/).map((token) => token.trim()).filter(Boolean)
-    : [];
-  const stateTokenSet = new Set(stateTokens);
-  const headlineTokens = extractTravelHeadlineTokens(normalizedHeadline);
-  const filteredTokens = headlineTokens.filter(
-    (token) => !stateTokenSet.has(token)
-  );
-  const tokensForMatching = filteredTokens.length ? filteredTokens : headlineTokens;
-  const baseHeadlineThreshold =
-    tokensForMatching.length >= 2 ? 2 : tokensForMatching.length >= 1 ? 1 : 0;
-  const requiredForTravelContext = tokensForMatching.length > 0 ? 1 : 0;
-  const requiresTravelContextForStateOnly =
-    filteredTokens.length === 0 && stateTokenSet.size > 0 && tokensForMatching.length > 0;
-
-  const nowMs = Date.now();
-  const sources: ReportingSource[] = [];
-  const seenVariants = new Set<string>();
-
-  for (const result of results) {
-    const url = normalizeHrefValue(result.link || '');
-    if (!url) {
-      continue;
-    }
-
-    const sourceLabel =
-      typeof result.source === 'string' ? result.source.toLowerCase() : '';
-    if (sourceLabel.includes('pinterest')) {
-      continue;
-    }
-
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(url);
-    } catch {
-      continue;
-    }
-
-    const hostname = parsedUrl.hostname.toLowerCase();
-    const registrableDomain = getRegistrableDomain(hostname);
-    if (
-      TRAVEL_SOURCE_DOMAIN_BLOCKSET.has(hostname) ||
-      (registrableDomain && TRAVEL_SOURCE_DOMAIN_BLOCKSET.has(registrableDomain))
-    ) {
-      continue;
-    }
-
-    const content = `${result.title || ''} ${
-      result.summary || result.snippet || ''
-    }`
-      .toLowerCase()
-      .trim();
-    if (!content) {
-      continue;
-    }
-
-    const shouldBuildTokenSet =
-      tokensForMatching.length > 0 || stateTokenSet.size > 0;
-    const contentTokens = shouldBuildTokenSet
-      ? buildSourceTokenSet(content)
-      : null;
-    let headlineMatchCount = 0;
-    if (contentTokens && tokensForMatching.length) {
-      for (const token of tokensForMatching) {
-        if (contentTokens.has(token)) {
-          headlineMatchCount += 1;
-        }
-      }
-    }
-
-    const hasStateTokenOverlap = Boolean(
-      contentTokens &&
-        stateTokens.some((token) => contentTokens.has(token))
-    );
-    const hasStateMatch = stateMatcher
-      ? content.includes(stateMatcher) || hasStateTokenOverlap
-      : hasStateTokenOverlap;
-    const hasTravelContext = contentHasTravelSignal(content);
-    const isHomepagePath =
-      parsedUrl.pathname === '/' || parsedUrl.pathname === '';
-    const qualifiesByHeadline =
-      tokensForMatching.length > 0 &&
-      headlineMatchCount >= baseHeadlineThreshold &&
-      (!requiresTravelContextForStateOnly || hasTravelContext);
-    const qualifiesByState =
-      hasStateMatch &&
-      hasTravelContext &&
-      (tokensForMatching.length === 0 || headlineMatchCount >= 1);
-    const qualifiesWithTravelContext =
-      tokensForMatching.length > 0 &&
-      hasTravelContext &&
-      headlineMatchCount >= Math.max(requiredForTravelContext, 1);
-
-    let qualifies =
-      qualifiesByHeadline || qualifiesByState || qualifiesWithTravelContext;
-
-    if (qualifies) {
-      if (isHomepagePath) {
-        qualifies = false;
-      } else if (tokensForMatching.length === 0) {
-        if (!hasStateMatch || !hasTravelContext) {
-          qualifies = false;
-        }
-      }
-    }
-
-    if (!qualifies) {
-      continue;
-    }
-
-    let isDuplicate = false;
-    for (const variant of buildUrlVariants(url)) {
-      if (seenVariants.has(variant)) {
-        isDuplicate = true;
-        break;
-      }
-    }
-    if (isDuplicate) {
-      continue;
-    }
-
-    const publishedAtRaw =
-      result.published_at || result.date_published || result.date || '';
-    const publishedTimestamp = parsePublishedTimestamp(publishedAtRaw, nowMs);
-
-    const publishedAt =
-      publishedTimestamp !== null
-        ? normalizePublishedAt(publishedTimestamp)
-        : '';
-
-    sources.push({
-      title: result.title || 'Untitled',
-      url,
-      summary: normalizeSummary(
-        result.summary || result.snippet || 'Evergreen travel planning resource'
-      ),
-      publishedAt,
-    });
-
-    for (const variant of buildUrlVariants(url)) {
-      seenVariants.add(variant);
-    }
-  }
-
-  return sources;
-}
-
-async function fetchTravelReportingSources(
-  headline: string,
-  options: {
-    travelState?: string | null;
-    travelPreset?: TravelPreset | null;
-    travelThemeLabel?: string | null;
-    destinationName?: string | null;
-  } = {}
-): Promise<ReportingSource[]> {
-  const preset =
-    options.travelPreset ??
-    (await getTravelPreset(options.travelState ?? null));
-  const keywordPool = buildTravelKeywordPool(preset);
-  const normalizedHeadline = typeof headline === 'string' ? headline.trim() : '';
-  const stateName = normalizeTravelStateName(preset);
-  const presetDestinationName =
-    typeof preset?.stateName === 'string' ? preset.stateName.trim() : '';
-  const destinationName = (() => {
-    if (typeof options.destinationName === 'string') {
-      const trimmed = options.destinationName.trim();
-      if (trimmed) {
-        return trimmed;
-      }
-    }
-    if (stateName) {
-      return stateName;
-    }
-    if (presetDestinationName && presetDestinationName !== 'the destination') {
-      return presetDestinationName;
-    }
-    return normalizedHeadline;
-  })();
-
-  const querySeeds = dedupeStrings(
-    [
-      normalizedHeadline,
-      stateName,
-      stateName ? `${stateName} travel guide` : '',
-      stateName ? `${stateName} itinerary` : '',
-    ].filter(Boolean)
-  );
-
-  if (!querySeeds.length) {
-    const fallback = keywordPool.length ? keywordPool[0] : 'travel guide';
-    querySeeds.push(fallback);
-  }
-
-  const aggregated: ReportingSource[] = [];
-  const seenVariants = new Set<string>();
-  const feedSourceUrls = new Set<string>();
-
-  const presetSources = await fetchTravelPresetSources({
-    travelPreset: preset,
-    state: options.travelState ?? null,
-  });
-
-  for (const source of presetSources) {
-    const normalizedUrl = normalizeHrefValue(source.url);
-    if (!normalizedUrl) {
-      continue;
-    }
-
-    const variants = buildUrlVariants(normalizedUrl);
-    if (variants.some((variant) => seenVariants.has(variant))) {
-      continue;
-    }
-
-    const publishedAt =
-      typeof source.publishedAt === 'string' && source.publishedAt.trim()
-        ? source.publishedAt.trim()
-        : '';
-    const categoryList = Array.isArray(source.categories)
-      ? dedupeStrings(
-          source.categories
-            .map((category) => (typeof category === 'string' ? category : ''))
-            .filter(Boolean)
-        )
-      : [];
-
-    aggregated.push({
-      title: source.title || 'Untitled',
-      summary: normalizeSummary(source.summary || source.title || ''),
-      url: normalizedUrl,
-      publishedAt,
-      categories: categoryList.length ? categoryList : undefined,
-      sourceName:
-        typeof source.sourceName === 'string' && source.sourceName.trim()
-          ? source.sourceName.trim()
-          : undefined,
-      sourceType: source.sourceType,
-    });
-
-    feedSourceUrls.add(normalizedUrl);
-
-    for (const variant of variants) {
-      seenVariants.add(variant);
-    }
-  }
-
-  for (const seed of querySeeds) {
-    const evergreenSources = await fetchEvergreenTravelSources(seed, {
-      travelPreset: preset,
-    });
-
-    for (const source of evergreenSources) {
-      const normalizedUrl = normalizeHrefValue(source.url);
-      if (!normalizedUrl) {
-        continue;
-      }
-
-      const variants = buildUrlVariants(normalizedUrl);
-      if (variants.some((variant) => seenVariants.has(variant))) {
-        continue;
-      }
-
-      aggregated.push({
-        ...source,
-        url: normalizedUrl,
-      });
-
-      for (const variant of variants) {
-        seenVariants.add(variant);
-      }
-    }
-  }
-
-  const themeFacts = await fetchTravelThemeFacts({
-    themeLabel: options.travelThemeLabel ?? null,
-    destinationName,
-    travelPreset: preset,
-  });
-  const themeFactUrls = new Set<string>();
-  for (const fact of themeFacts) {
-    const normalizedUrl = normalizeHrefValue(fact.url);
-    if (!normalizedUrl) {
-      continue;
-    }
-
-    const variants = buildUrlVariants(normalizedUrl);
-    if (variants.some((variant) => seenVariants.has(variant))) {
-      continue;
-    }
-
-    aggregated.push({
-      title: fact.title || 'Untitled',
-      summary: normalizeSummary(fact.summary || ''),
-      url: normalizedUrl,
-      publishedAt:
-        typeof fact.publishedAt === 'string' && fact.publishedAt.trim()
-          ? fact.publishedAt.trim()
-          : '',
-    });
-    themeFactUrls.add(normalizedUrl);
-
-    for (const variant of variants) {
-      seenVariants.add(variant);
-    }
-  }
-
-  const maxTravelSources = 8;
-  const prioritizedFeed: ReportingSource[] = [];
-  const prioritizedFacts: ReportingSource[] = [];
-  const remainder: ReportingSource[] = [];
-
-  for (const item of aggregated) {
-    if (feedSourceUrls.has(item.url)) {
-      prioritizedFeed.push(item);
-      continue;
-    }
-
-    if (themeFactUrls.has(item.url)) {
-      prioritizedFacts.push(item);
-      continue;
-    }
-
-    remainder.push(item);
-  }
-
-  const ordered = prioritizedFeed.concat(prioritizedFacts, remainder);
-  return ordered.slice(0, maxTravelSources);
-}
-
-function mergeEvergreenTravelSources(
-  reportingSources: ReportingSource[],
-  evergreenSources: ReportingSource[],
-  maxEvergreenAdditions: number | null = null
-): ReportingSource[] {
-  if (!evergreenSources.length) {
-    return reportingSources;
-  }
-
-  const normalizedCap =
-    typeof maxEvergreenAdditions === 'number' &&
-    Number.isFinite(maxEvergreenAdditions)
-      ? Math.max(0, Math.floor(maxEvergreenAdditions))
-      : null;
-
-  if (normalizedCap === 0) {
-    return reportingSources;
-  }
-
-  const seenVariants = new Set<string>();
-  for (const source of reportingSources) {
-    for (const variant of buildUrlVariants(source.url)) {
-      seenVariants.add(variant);
-    }
-  }
-
-  const additions: ReportingSource[] = [];
-  for (const evergreen of evergreenSources) {
-    const normalizedUrl = normalizeHrefValue(evergreen.url);
-    if (!normalizedUrl) {
-      continue;
-    }
-
-    const variants = buildUrlVariants(normalizedUrl);
-    if (variants.some((variant) => seenVariants.has(variant))) {
-      continue;
-    }
-
-    additions.push({
-      ...evergreen,
-      url: normalizedUrl,
-    });
-
-    for (const variant of variants) {
-      seenVariants.add(variant);
-    }
-
-    if (normalizedCap !== null && additions.length >= normalizedCap) {
-      break;
-    }
-  }
-
-  if (!additions.length) {
-    return reportingSources;
-  }
-
-  return [...reportingSources, ...additions];
 }
 
 function formatPublishedTimestamp(value: string): string {
@@ -1819,34 +1044,6 @@ function buildRecentReportingBlock(sources: ReportingSource[]): string {
     .join('\n');
 
   return `Key facts from recent reporting (weave them into the narrative; do not write standalone paragraphs about the outlets, and treat the URLs as attribution only):\n${entries}`;
-}
-
-function buildTravelReportingBlock(
-  headline: string,
-  sources: ReportingSource[]
-): string {
-  if (!sources.length) {
-    return '';
-  }
-
-  const normalizedHeadline = headline?.trim() ? headline.trim() : 'this travel story';
-  const entries = sources
-    .map((item) => {
-      const timestamp = formatPublishedTimestamp(item.publishedAt);
-      const summary = normalizeSummary(item.summary);
-      const keyDetails = formatKeyDetails(item.summary);
-      const title = item.title || 'Untitled';
-      const detailLine =
-        keyDetails.length > 0
-          ? `\n  Must include and cite each item below as a distinct, cited sentence:\n${keyDetails
-              .map((detail) => `    - ${detail}`)
-              .join('\n')}`
-          : '';
-      return `- "${title}" (${timestamp})\n  Summary: ${summary}${detailLine}\n  URL: ${item.url}`;
-    })
-    .join('\n');
-
-  return `Supporting coverage for "${normalizedHeadline}" (treat each URL as attribution while you weave these insights naturally into the travel narrative):\n${entries}`;
 }
 
 function normalizePublisher(result: SerpApiResult): string | null {
@@ -3652,8 +2849,6 @@ export async function POST(request: Request) {
       modelVersion = 'gpt-4o-mini',
       useSerpApi = true,
       includeLinks = true,
-      travelState,
-      theme,
     }: {
       articleType: string;
       title: string;
@@ -3668,8 +2863,6 @@ export async function POST(request: Request) {
       modelVersion?: string;
       useSerpApi?: boolean;
       includeLinks?: boolean;
-      travelState?: string;
-      theme?: string | null;
     } = await request.json();
 
     if (!title?.trim()) {
@@ -3839,82 +3032,39 @@ export async function POST(request: Request) {
       });
     }
 
-    const travelThemeInfo = detectTravelTheme(title, theme);
-
     const reportingContextPromise: Promise<ReportingContext> = (async () => {
-      const travelPreset =
-        articleType === 'Travel article'
-          ? await getTravelPreset(travelState)
-          : null;
-
       if (!serpEnabled) {
-        const reportingBlock = buildTravelInstructionBlock(travelPreset);
         return {
           reportingSources: [],
-          reportingBlock,
+          reportingBlock: '',
           groundingInstruction: '',
           linkSources: [],
           referenceBlock: '',
-          travelPreset,
         };
       }
 
-      let reportingSources: ReportingSource[] = [];
-      if (articleType === 'Travel article') {
-        const presetStateNameForFacts =
-          travelPreset && normalizeTravelStateName(travelPreset);
-        const fallbackDestinationName =
-          travelPreset?.stateName && travelPreset.stateName !== 'the destination'
-            ? travelPreset.stateName
-            : '';
-        const destinationNameForFacts =
-          presetStateNameForFacts ||
-          fallbackDestinationName ||
-          (title?.trim() || null);
-
-        reportingSources = await fetchTravelReportingSources(title, {
-          travelState,
-          travelPreset,
-          travelThemeLabel: travelThemeInfo?.label ?? null,
-          destinationName: destinationNameForFacts,
-        });
-      } else {
-        const needsRelevanceSourcing =
-          articleType === 'Listicle/Gallery' || articleType === 'Blog post';
-        reportingSources = await fetchSources(
-          title,
-          needsRelevanceSourcing
-            ? {
-                maxAgeMs: null,
-                serpParams: { sort_by: 'relevance' },
-              }
-            : undefined
-        );
-      }
-
-      const normalizedTravelHeadline = title?.trim()
-        ? title.trim()
-        : 'the destination';
-      let reportingBlock = buildTravelReportingBlock(
-        normalizedTravelHeadline,
-        reportingSources
+      const needsRelevanceSourcing =
+        articleType === 'Listicle/Gallery' || articleType === 'Blog post';
+      const reportingSources = await fetchSources(
+        title,
+        needsRelevanceSourcing
+          ? {
+              maxAgeMs: null,
+              serpParams: { sort_by: 'relevance' },
+            }
+          : undefined
       );
-      const travelInstructionBlock = buildTravelInstructionBlock(travelPreset);
-      if (travelInstructionBlock) {
-        reportingBlock = reportingBlock
-          ? `${reportingBlock}\n\n${travelInstructionBlock}`
-          : travelInstructionBlock;
-      }
 
+      const reportingBlock = buildRecentReportingBlock(reportingSources);
       const groundingInstruction = reportingSources.length
-        ? `- Use these reporting summaries to enrich your travel blog about "${normalizedTravelHeadline}", weaving their specifics naturally into the story and citing the matching URL for each sourced detail.\n`
+        ? '- Use these reporting summaries to enrich your article, weaving their specifics naturally into the story and citing the matching URL for each sourced detail.\n'
         : '';
       const linkSources = reportingSources
         .map((item) => item.url)
         .filter(Boolean);
       const referenceBlock =
         linkSources.length > 0
-          ? `• While drafting the blog "${normalizedTravelHeadline}", plan to cite these supporting sources:\n${linkSources
+          ? `• While drafting the article, plan to cite these supporting sources:\n${linkSources
               .map((u) => `- ${u}`)
               .join('\n')}`
           : '';
@@ -3925,7 +3075,6 @@ export async function POST(request: Request) {
         groundingInstruction,
         linkSources,
         referenceBlock,
-        travelPreset,
       };
     })();
 
@@ -4072,7 +3221,6 @@ Write the full article in valid HTML below:
       groundingInstruction,
       linkSources,
       referenceBlock,
-      travelPreset,
     } = await reportingContextPromise;
 
     let sectionInstruction: string;
@@ -4142,60 +3290,10 @@ Write the full article in valid HTML below:
       : '';
 
     const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
-    const baseExtraRequirements = [
+    const extraRequirements = [
       'Avoid starting paragraphs with dates and omit dates unless they add essential context; when a date is necessary, place it after the subject rather than leading with it.',
       'Center each section on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.',
     ];
-    const extraRequirements = [...baseExtraRequirements];
-    const presetStateName =
-      typeof travelPreset !== 'undefined' && travelPreset
-        ? normalizeTravelStateName(travelPreset)
-        : '';
-    const travelStateInput =
-      typeof travelState === 'string' ? travelState.trim() : '';
-    const defaultPresetLabel = (() => {
-      if (!travelStateInput) {
-        return 'the destination';
-      }
-      if (typeof buildDefaultTravelPreset === 'function') {
-        return buildDefaultTravelPreset(travelStateInput).stateName;
-      }
-      return travelStateInput;
-    })();
-    const fallbackDestinationLabel =
-      (typeof travelPreset !== 'undefined' && travelPreset?.stateName)
-        ? travelPreset.stateName
-        : defaultPresetLabel || 'the destination';
-    const destinationLabel = presetStateName || fallbackDestinationLabel;
-    const travelThemeLabel = travelThemeInfo?.label?.trim();
-    const isTravelArticle = articleType === 'Travel article';
-    if (isTravelArticle) {
-      extraRequirements.push(
-        `Highlight must-see attractions, scenic stops, and signature experiences across ${destinationLabel}, grounding every recommendation in the reporting.`,
-        `Blend in practical lodging and dining tips for ${destinationLabel}, citing the sources when mentioning hotels, inns, or restaurants.`,
-        `Offer itinerary-building guidance with seasonal or timing insights so readers know how to plan days around ${destinationLabel}.`,
-        'Alternate sentence lengths and structures to keep the narrative lively, and cap reuse of distinctive adjectives or signature key phrases (e.g., only use "breathtaking" once per ~500 words).'
-      );
-      if (travelThemeLabel) {
-        extraRequirements.push(
-          `Dedicate roughly 20–30% of the outline headings and article sections to facts, sightings, legends, or activities tailored for ${travelThemeLabel}, and provide inline citations so every section ties back to that theme.`
-        );
-      }
-      const explicitDestinationName =
-        presetStateName ||
-        (destinationLabel && destinationLabel !== 'the destination'
-          ? destinationLabel
-          : '');
-      if (explicitDestinationName) {
-        extraRequirements.push(
-          `Weave ${explicitDestinationName} or its neighborhoods naturally throughout the piece so every section stays grounded in the destination.`
-        );
-      } else {
-        extraRequirements.push(
-          'Keep each section anchored to the destination by reiterating the location within the narrative when helpful.'
-        );
-      }
-    }
 
     const articlePrompt = buildArticlePrompt({
       title,
@@ -4209,11 +3307,6 @@ Write the full article in valid HTML below:
       linkInstruction,
       extraRequirements,
     });
-
-    const verificationOptions =
-      isTravelArticle && travelThemeLabel
-        ? { themeLabel: travelThemeLabel }
-        : {};
 
     const runArticleGeneration = (prompt: string) =>
       generateWithVerification(
@@ -4229,8 +3322,7 @@ Write the full article in valid HTML below:
             reportingSources
           ),
         reportingSources,
-        linkSources,
-        verificationOptions
+        linkSources
       );
 
     const content = await runArticleGeneration(articlePrompt);
