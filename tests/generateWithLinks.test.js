@@ -15,6 +15,10 @@ const lengthExpansionMatch = tsCode.match(
 );
 const factualTempMatch = tsCode.match(/const FACTUAL_TEMPERATURE\s*=\s*[^;]+;/);
 const modelLimitsMatch = tsCode.match(/const MODEL_CONTEXT_LIMITS[\s\S]*?};/);
+const safetyMarginMatch = tsCode.match(/const COMPLETION_SAFETY_MARGIN_TOKENS\s*=\s*\d+;/);
+if (!safetyMarginMatch) {
+  throw new Error('Failed to locate completion safety margin constant');
+}
 const normalizeTitleMatch = tsCode.match(/function normalizeTitleValue[\s\S]*?\n\}/);
 const normalizeHrefMatch = tsCode.match(/function normalizeHrefValue[\s\S]*?\n\}/);
 const buildVariantsMatch = tsCode.match(
@@ -36,6 +40,7 @@ ${strictRetryMatch[0]}
 ${lengthExpansionMatch[0]}
 ${factualTempMatch[0]}
 ${modelLimitsMatch[0]}
+${safetyMarginMatch[0]}
 ${normalizeTitleMatch[0]}
 ${normalizeHrefMatch[0]}
 ${buildVariantsMatch[0]}
@@ -260,12 +265,33 @@ test('generateWithLinks retries when response is truncated', async () => {
   assert.strictEqual(content, 'complete');
   assert.strictEqual(calls.length, 2);
   assert(calls[0].max_tokens >= 800);
-  assert.strictEqual(calls[1].max_tokens, 16384);
+  assert.strictEqual(calls[1].max_tokens, 16126);
   assert.strictEqual(responses.length, 0);
   for (const call of calls) {
     assert.strictEqual(call.messages.length, 1);
     assert.strictEqual(call.messages[0].role, 'user');
   }
+});
+
+test('generateWithLinks caps max_tokens so prompt stays within context window', async () => {
+  calls.length = 0;
+  responses.length = 0;
+  responses.push({ choices: [{ message: { content: 'done' }, finish_reason: 'stop' }] });
+
+  const modelLimitsSource = modelLimitsMatch[0]
+    .replace(/const MODEL_CONTEXT_LIMITS[^=]*=\s*/, '')
+    .replace(/;\s*$/, '');
+  const modelLimits = Function('return ' + modelLimitsSource)();
+  const limit = modelLimits['gpt-4o'];
+
+  const longPrompt = 'x'.repeat((limit - 50) * 4);
+  const content = await generateWithLinks(longPrompt, 'gpt-4o', [], undefined, 0, 100);
+  assert.strictEqual(content, 'done');
+  assert.strictEqual(responses.length, 0);
+  assert.strictEqual(calls.length, 1);
+  const maxTokens = calls[0].max_tokens;
+  const promptTokens = Math.ceil(calls[0].messages.at(-1).content.length / 4);
+  assert(promptTokens + maxTokens <= limit);
 });
 
 test('generateWithLinks issues a follow-up when content is below minWords', async () => {
