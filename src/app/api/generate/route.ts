@@ -1579,6 +1579,34 @@ function buildRecentReportingBlock(sources: ReportingSource[]): string {
   return `Key facts from recent reporting (weave them into the narrative; do not write standalone paragraphs about the outlets, and treat the URLs as attribution only):\n${entries}`;
 }
 
+function buildTravelReportingBlock(
+  headline: string,
+  sources: ReportingSource[]
+): string {
+  if (!sources.length) {
+    return '';
+  }
+
+  const normalizedHeadline = headline?.trim() ? headline.trim() : 'this travel story';
+  const entries = sources
+    .map((item) => {
+      const timestamp = formatPublishedTimestamp(item.publishedAt);
+      const summary = normalizeSummary(item.summary);
+      const keyDetails = formatKeyDetails(item.summary);
+      const title = item.title || 'Untitled';
+      const detailLine =
+        keyDetails.length > 0
+          ? `\n  Must include and cite each item below as a distinct, cited sentence:\n${keyDetails
+              .map((detail) => `    - ${detail}`)
+              .join('\n')}`
+          : '';
+      return `- "${title}" (${timestamp})\n  Summary: ${summary}${detailLine}\n  URL: ${item.url}`;
+    })
+    .join('\n');
+
+  return `Supporting coverage for "${normalizedHeadline}" (treat each URL as attribution while you weave these insights naturally into the travel narrative):\n${entries}`;
+}
+
 function normalizePublisher(result: SerpApiResult): string | null {
   const rawSource = typeof result.source === 'string' ? result.source : '';
   const normalizedSource = rawSource.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -3506,7 +3534,13 @@ export async function POST(request: Request) {
         );
       }
 
-      let reportingBlock = buildRecentReportingBlock(reportingSources);
+      const normalizedTravelHeadline = title?.trim()
+        ? title.trim()
+        : 'the destination';
+      let reportingBlock = buildTravelReportingBlock(
+        normalizedTravelHeadline,
+        reportingSources
+      );
       const travelInstructionBlock = buildTravelInstructionBlock(travelPreset);
       if (travelInstructionBlock) {
         reportingBlock = reportingBlock
@@ -3515,14 +3549,14 @@ export async function POST(request: Request) {
       }
 
       const groundingInstruction = reportingSources.length
-        ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\n'
+        ? `- Use these reporting summaries to enrich your travel blog about "${normalizedTravelHeadline}", weaving their specifics naturally into the story and citing the matching URL for each sourced detail.\n`
         : '';
       const linkSources = reportingSources
         .map((item) => item.url)
         .filter(Boolean);
       const referenceBlock =
         linkSources.length > 0
-          ? `• Use these references:\n${linkSources
+          ? `• While drafting the blog "${normalizedTravelHeadline}", plan to cite these supporting sources:\n${linkSources
               .map((u) => `- ${u}`)
               .join('\n')}`
           : '';
