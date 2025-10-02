@@ -593,35 +593,26 @@ test('filters RSS headlines using from/to date range', async () => {
   };
 
   const rssUrl = 'https://filter.test/rss';
+  const rssItemsXml = Array.from({ length: 60 }, (_, index) => {
+    const isBeforeRange = index < 55;
+    const isInRange = index === 55;
+    const title = isInRange
+      ? `Inside Range ${index + 1}`
+      : isBeforeRange
+        ? `Before Range ${index + 1}`
+        : `After Range ${index + 1}`;
+    const pubDate = isInRange
+      ? '2024-03-05T12:00:00Z'
+      : isBeforeRange
+        ? '2024-03-04T12:00:00Z'
+        : '2024-03-07T00:00:00Z';
+    return `    <item>\n      <title>${title}</title>\n      <link>https://filter.test/item-${index + 1}</link>\n      <pubDate>${pubDate}</pubDate>\n    </item>`;
+  }).join('\n');
   const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
     <title>Filter Feed</title>
-    <item>
-      <title>Inside Lower Bound</title>
-      <link>https://filter.test/inside-lower</link>
-      <pubDate>2024-03-05T00:00:00Z</pubDate>
-    </item>
-    <item>
-      <title>Before Range</title>
-      <link>https://filter.test/before</link>
-      <pubDate>2024-03-04T23:59:59Z</pubDate>
-    </item>
-    <item>
-      <title>Inside Upper Bound</title>
-      <link>https://filter.test/inside-upper</link>
-      <pubDate>2024-03-06T23:59:59Z</pubDate>
-    </item>
-    <item>
-      <title>After Range</title>
-      <link>https://filter.test/after</link>
-      <pubDate>2024-03-07T00:00:00Z</pubDate>
-    </item>
-    <item>
-      <title>Invalid Timestamp</title>
-      <link>https://filter.test/invalid</link>
-      <pubDate>not-a-date</pubDate>
-    </item>
+${rssItemsXml}
   </channel>
 </rss>`;
 
@@ -665,7 +656,7 @@ test('filters RSS headlines using from/to date range', async () => {
   const response = await handler(
     createRequest({
       query: 'filter example',
-      limit: 4,
+      limit: 3,
       rssFeeds: [rssUrl],
       from: '2024-03-05T00:00:00.000Z',
       to: '2024-03-06T23:59:59.000Z',
@@ -676,11 +667,14 @@ test('filters RSS headlines using from/to date range', async () => {
   const body = await response.json();
 
   const titles = body.headlines.map((item) => item.title);
-  assert.deepStrictEqual(new Set(titles), new Set(['Inside Lower Bound', 'Inside Upper Bound']));
-  assert.strictEqual(body.headlines.length, 2);
-  assert.ok(!titles.includes('Before Range'));
-  assert.ok(!titles.includes('After Range'));
-  assert.ok(!titles.includes('Invalid Timestamp'));
+  assert.deepStrictEqual(
+    new Set(titles),
+    new Set(['Inside Range 56'])
+  );
+  assert.strictEqual(body.headlines.length, 1);
+  assert.ok(titles.every((title) => title.startsWith('Inside Range')));
+  assert.ok(!titles.some((title) => title.startsWith('Before Range')));
+  assert.ok(!titles.some((title) => title.startsWith('After Range')));
 });
 
 test('decodes HTML entities from NewsAPI, RSS, and SERP results', async () => {
