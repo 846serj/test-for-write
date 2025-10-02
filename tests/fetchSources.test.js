@@ -740,7 +740,7 @@ test('fetchEvergreenTravelSources skips homepage results lacking headline tokens
   });
 });
 
-test('fetchEvergreenTravelSources keeps homepage results when headline tokens match', async () => {
+test('fetchEvergreenTravelSources skips homepage results even when headline tokens match', async () => {
   await withMockedNow(async () => {
     serpCalls.length = 0;
     clearTravelPresetStubs();
@@ -773,7 +773,6 @@ test('fetchEvergreenTravelSources keeps homepage results when headline tokens ma
     );
 
     assert.deepStrictEqual(sources.map(({ url }) => url), [
-      'https://island.com/',
       'https://island.com/lanai-snorkeling',
     ]);
   });
