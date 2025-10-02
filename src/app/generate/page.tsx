@@ -57,6 +57,9 @@ const DEFAULT_HEADLINE_SEEN_KEY = '__default__';
 const MAX_TRACKED_SEEN_PER_KEY = 400;
 const MAX_EXCLUDE_URLS = 200;
 
+const TRENDING_CLUSTER_SUPPORT_THRESHOLD = 0.6;
+const TRENDING_CLUSTER_SIZE_THRESHOLD = 5;
+
 type SeenHeadlineMetadata = {
   firstSeenAt: number;
   lastSeenAt: number;
@@ -1033,6 +1036,56 @@ export default function GeneratePage() {
         const searchQueryValue =
           typeof item?.searchQuery === 'string' ? item.searchQuery : undefined;
 
+        const rankingMetadata = (() => {
+          const rawRanking = item?.ranking;
+          if (!rawRanking || typeof rawRanking !== 'object') {
+            return undefined;
+          }
+
+          const score =
+            typeof rawRanking.score === 'number' ? rawRanking.score : undefined;
+          const rawComponents =
+            rawRanking.components && typeof rawRanking.components === 'object'
+              ? rawRanking.components
+              : undefined;
+          const rawDetails =
+            rawRanking.details && typeof rawRanking.details === 'object'
+              ? rawRanking.details
+              : undefined;
+
+          const components = rawComponents
+            ? {
+                clusterSupport:
+                  typeof rawComponents.clusterSupport === 'number'
+                    ? rawComponents.clusterSupport
+                    : undefined,
+              }
+            : undefined;
+
+          const details = rawDetails
+            ? {
+                clusterSize:
+                  typeof rawDetails.clusterSize === 'number'
+                    ? rawDetails.clusterSize
+                    : undefined,
+                clusterUniqueSources:
+                  typeof rawDetails.clusterUniqueSources === 'number'
+                    ? rawDetails.clusterUniqueSources
+                    : undefined,
+              }
+            : undefined;
+
+          if (!score && !components && !details) {
+            return undefined;
+          }
+
+          return {
+            ...(score !== undefined ? { score } : {}),
+            ...(components ? { components } : {}),
+            ...(details ? { details } : {}),
+          };
+        })();
+
         return {
           title: item?.title ?? '',
           source,
@@ -1044,6 +1097,7 @@ export default function GeneratePage() {
           keyword: keywordValue,
           queryUsed: queryUsedValue,
           searchQuery: searchQueryValue,
+          ranking: rankingMetadata,
         };
       };
 
@@ -1670,6 +1724,54 @@ export default function GeneratePage() {
                             const formattedDate = formatPublishedDate(
                               headline.publishedAt
                             );
+                            const relatedCount =
+                              headline.relatedArticles?.length ?? 0;
+                            const totalOutlets = relatedCount + 1;
+                            const clusterSupportScore =
+                              typeof headline.ranking?.components?.clusterSupport ===
+                              'number'
+                                ? headline.ranking.components.clusterSupport
+                                : null;
+                            const rankingClusterSize =
+                              typeof headline.ranking?.details?.clusterSize === 'number'
+                                ? headline.ranking.details.clusterSize
+                                : null;
+                            const uniqueSources =
+                              typeof headline.ranking?.details?.clusterUniqueSources ===
+                              'number'
+                                ? headline.ranking.details.clusterUniqueSources
+                                : null;
+                            const effectiveClusterSize =
+                              rankingClusterSize ?? totalOutlets;
+                            const meetsClusterThreshold =
+                              effectiveClusterSize !== null &&
+                              effectiveClusterSize >= TRENDING_CLUSTER_SIZE_THRESHOLD;
+                            const meetsSupportThreshold =
+                              clusterSupportScore !== null &&
+                              clusterSupportScore >= TRENDING_CLUSTER_SUPPORT_THRESHOLD;
+                            const isTrending =
+                              meetsClusterThreshold || meetsSupportThreshold;
+                            const outletsLabel =
+                              totalOutlets > 1
+                                ? `${totalOutlets} outlets covering`
+                                : totalOutlets === 1
+                                ? '1 outlet covering'
+                                : null;
+                            const uniqueSourcesLabel =
+                              uniqueSources && uniqueSources > 0
+                                ? `${uniqueSources} unique sources`
+                                : null;
+                            const supportLabel =
+                              clusterSupportScore !== null
+                                ? `${Math.round(clusterSupportScore * 100)}% cluster support`
+                                : null;
+                            const trendingDetails = [
+                              outletsLabel,
+                              uniqueSourcesLabel,
+                              supportLabel,
+                            ]
+                              .filter(Boolean)
+                              .join(' • ');
 
                             return (
                               <tr
@@ -1692,6 +1794,22 @@ export default function GeneratePage() {
                                   <div className="font-semibold">
                                     {headline.title || 'Untitled headline'}
                                   </div>
+                                  {isTrending && (
+                                    <div
+                                      className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+                                      role="status"
+                                      aria-live="polite"
+                                    >
+                                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">
+                                        Trending
+                                      </span>
+                                      {trendingDetails && (
+                                        <span className="text-amber-700 dark:text-amber-200/90">
+                                          {trendingDetails}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
                                   {headline.matchedQuery && (
                                     <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
                                       Matched query:{' '}
