@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getOpenAI } from '../../../lib/openai';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
+import { fetchTravelThemeFacts } from '../../../lib/travelThemeFacts';
 import {
   dedupeStrings,
   getTravelPreset,
@@ -1559,7 +1560,12 @@ async function fetchEvergreenTravelSources(
 
 async function fetchTravelReportingSources(
   headline: string,
-  options: { travelState?: string | null; travelPreset?: TravelPreset | null } = {}
+  options: {
+    travelState?: string | null;
+    travelPreset?: TravelPreset | null;
+    travelThemeLabel?: string | null;
+    destinationName?: string | null;
+  } = {}
 ): Promise<ReportingSource[]> {
   const preset =
     options.travelPreset ??
@@ -1567,6 +1573,23 @@ async function fetchTravelReportingSources(
   const keywordPool = buildTravelKeywordPool(preset);
   const normalizedHeadline = typeof headline === 'string' ? headline.trim() : '';
   const stateName = normalizeTravelStateName(preset);
+  const presetDestinationName =
+    typeof preset?.stateName === 'string' ? preset.stateName.trim() : '';
+  const destinationName = (() => {
+    if (typeof options.destinationName === 'string') {
+      const trimmed = options.destinationName.trim();
+      if (trimmed) {
+        return trimmed;
+      }
+    }
+    if (stateName) {
+      return stateName;
+    }
+    if (presetDestinationName && presetDestinationName !== 'the destination') {
+      return presetDestinationName;
+    }
+    return normalizedHeadline;
+  })();
 
   const querySeeds = dedupeStrings(
     [
@@ -1612,9 +1635,45 @@ async function fetchTravelReportingSources(
     }
   }
 
+  const themeFacts = await fetchTravelThemeFacts({
+    themeLabel: options.travelThemeLabel ?? null,
+    destinationName,
+    travelPreset: preset,
+  });
+  const themeFactUrls = new Set<string>();
+  for (const fact of themeFacts) {
+    const normalizedUrl = normalizeHrefValue(fact.url);
+    if (!normalizedUrl) {
+      continue;
+    }
+
+    const variants = buildUrlVariants(normalizedUrl);
+    if (variants.some((variant) => seenVariants.has(variant))) {
+      continue;
+    }
+
+    aggregated.push({
+      title: fact.title || 'Untitled',
+      summary: normalizeSummary(fact.summary || ''),
+      url: normalizedUrl,
+      publishedAt:
+        typeof fact.publishedAt === 'string' && fact.publishedAt.trim()
+          ? fact.publishedAt.trim()
+          : '',
+    });
+    themeFactUrls.add(normalizedUrl);
+
+    for (const variant of variants) {
+      seenVariants.add(variant);
+    }
+  }
+
   const maxTravelSources = 8;
   if (aggregated.length > maxTravelSources) {
-    return aggregated.slice(0, maxTravelSources);
+    const prioritized = aggregated.filter((item) => themeFactUrls.has(item.url));
+    const remaining = aggregated.filter((item) => !themeFactUrls.has(item.url));
+    const reordered = prioritized.concat(remaining);
+    return reordered.slice(0, maxTravelSources);
   }
 
   return aggregated;
@@ -3638,6 +3697,8 @@ export async function POST(request: Request) {
       });
     }
 
+    const travelThemeInfo = detectTravelTheme(title, theme);
+
     const reportingContextPromise: Promise<ReportingContext> = (async () => {
       const travelPreset =
         articleType === 'Travel article'
@@ -3658,9 +3719,22 @@ export async function POST(request: Request) {
 
       let reportingSources: ReportingSource[] = [];
       if (articleType === 'Travel article') {
+        const presetStateNameForFacts =
+          travelPreset && normalizeTravelStateName(travelPreset);
+        const fallbackDestinationName =
+          travelPreset?.stateName && travelPreset.stateName !== 'the destination'
+            ? travelPreset.stateName
+            : '';
+        const destinationNameForFacts =
+          presetStateNameForFacts ||
+          fallbackDestinationName ||
+          (title?.trim() || null);
+
         reportingSources = await fetchTravelReportingSources(title, {
           travelState,
           travelPreset,
+          travelThemeLabel: travelThemeInfo?.label ?? null,
+          destinationName: destinationNameForFacts,
         });
       } else {
         const needsRelevanceSourcing =
@@ -3951,7 +4025,6 @@ Write the full article in valid HTML below:
         ? travelPreset.stateName
         : defaultPresetLabel || 'the destination';
     const destinationLabel = presetStateName || fallbackDestinationLabel;
-    const travelThemeInfo = detectTravelTheme(title, theme);
     const travelThemeLabel = travelThemeInfo?.label?.trim();
     const isTravelArticle = articleType === 'Travel article';
     if (isTravelArticle) {

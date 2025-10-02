@@ -61,6 +61,24 @@ function dedupeStrings(values) {
   }
   return result;
 }
+let travelThemeFactsStub = async () => [];
+function setTravelThemeFactsStub(stub) {
+  if (typeof stub === 'function') {
+    travelThemeFactsStub = stub;
+    return;
+  }
+  if (Array.isArray(stub)) {
+    travelThemeFactsStub = async () => stub;
+    return;
+  }
+  travelThemeFactsStub = async () => [];
+}
+function clearTravelThemeFactsStub() {
+  travelThemeFactsStub = async () => [];
+}
+async function fetchTravelThemeFacts(params) {
+  return await travelThemeFactsStub(params);
+}
 ${extract(/function normalizeTitleValue[\s\S]*?\n\}/, 'normalizeTitleValue')}
 ${extract(/function parseRelativeTimestamp[\s\S]*?\n\}/, 'parseRelativeTimestamp')}
 ${extract(/function parsePublishedTimestamp[\s\S]*?\n\}/, 'parsePublishedTimestamp')}
@@ -76,11 +94,12 @@ ${extract(/function normalizePublisher[\s\S]*?\n\}/, 'normalizePublisher')}
   ${extract(/async function fetchEvergreenTravelSources[\s\S]*?\n\}/, 'fetchEvergreenTravelSources')}
   ${extract(/async function fetchTravelReportingSources[\s\S]*?\n\}/, 'fetchTravelReportingSources')}
   ${extract(/function mergeEvergreenTravelSources[\s\S]*?\n\}/, 'mergeEvergreenTravelSources')}
-${extract(/async function fetchNewsArticles[\s\S]*?\n\}/, 'fetchNewsArticles')}
+ ${extract(/async function fetchNewsArticles[\s\S]*?\n\}/, 'fetchNewsArticles')}
+${extract(/const TIMELINE_REGEX[\s\S]*?function extractStructuredFacts[\s\S]*?\n\}/, 'structured fact helpers')}
 ${extract(/function formatKeyDetails[\s\S]*?\n\}/, 'formatKeyDetails')}
 ${extract(/function normalizeSummary[\s\S]*?\n\}/, 'normalizeSummary')}
+${extract(/function buildTravelReportingBlock[\s\S]*?\n\}/, 'buildTravelReportingBlock')}
 ${extract(/function formatPublishedTimestamp[\s\S]*?\n\}/, 'formatPublishedTimestamp')}
-${extract(/function extractStructuredFacts[\s\S]*?\n\}/, 'extractStructuredFacts')}
 ${extract(/function buildRecentReportingBlock[\s\S]*?\n\}/, 'buildRecentReportingBlock')}
 export {
   fetchSources,
@@ -90,9 +109,12 @@ export {
   fetchEvergreenTravelSources,
   fetchTravelReportingSources,
   mergeEvergreenTravelSources,
+  buildTravelReportingBlock,
   buildRecentReportingBlock,
   setTravelPresetStub,
   clearTravelPresetStubs,
+  setTravelThemeFactsStub,
+  clearTravelThemeFactsStub,
 };
 `;
 
@@ -106,9 +128,12 @@ const {
   fetchEvergreenTravelSources,
   fetchTravelReportingSources,
   mergeEvergreenTravelSources,
+  buildTravelReportingBlock,
   buildRecentReportingBlock,
   setTravelPresetStub,
   clearTravelPresetStubs,
+  setTravelThemeFactsStub,
+  clearTravelThemeFactsStub,
 } = await import(moduleUrl);
 
 const FIXED_NOW_ISO = '2024-03-10T12:00:00Z';
@@ -650,6 +675,7 @@ test('fetchTravelReportingSources uses only travel evergreen queries and dedupes
   await withMockedNow(async () => {
     serpCalls.length = 0;
     clearTravelPresetStubs();
+    clearTravelThemeFactsStub();
     setTravelPresetStub('ca', {
       state: 'ca',
       stateName: 'California',
@@ -696,6 +722,78 @@ test('fetchTravelReportingSources uses only travel evergreen queries and dedupes
         /travel|itinerary|guide/i.test(item.summary || '')
       )
     );
+    clearTravelThemeFactsStub();
+  });
+});
+
+test('fetchTravelReportingSources merges travel theme facts into reporting block', async () => {
+  await withMockedNow(async () => {
+    serpCalls.length = 0;
+    clearTravelPresetStubs();
+    clearTravelThemeFactsStub();
+    setTravelPresetStub('wa', {
+      state: 'wa',
+      stateName: 'Washington',
+      keywords: ['Washington outdoor travel'],
+      rssFeeds: [],
+      instructions: ['Spotlight outdoor adventures through Washington.'],
+      siteKey: null,
+    });
+    setSerpResults([
+      {
+        link: 'https://evergreen.com/washington-road-trip',
+        title: 'Washington road trip itinerary',
+        snippet: 'A scenic loop through Cascades viewpoints and roadside diners.',
+        date: isoDaysAgo(150),
+      },
+    ]);
+
+    setTravelThemeFactsStub(async () => [
+      {
+        title: 'Bigfoot Field Researchers Organization sighting map',
+        summary:
+          'Washington leads documented BFRO encounters with 708 sighting reports logged to date.',
+        url: 'https://www.bfro.net/GDB/state_listing.asp?state=WA',
+      },
+      {
+        title: 'North American Bigfoot Center collections',
+        summary:
+          'Cliff Barackman’s museum in Boring, Oregon, displays casts and field recordings from decades of Pacific Northwest expeditions.',
+        url: 'https://northamericanbigfootcenter.com/',
+      },
+    ]);
+
+    try {
+      const sources = await fetchTravelReportingSources(
+        'Washington Cascades road trip for Bigfoot lovers',
+        {
+          travelState: 'wa',
+          travelThemeLabel: 'Bigfoot lovers',
+          destinationName: 'Washington',
+        }
+      );
+
+      assert.deepStrictEqual(
+        sources.map((item) => item.url),
+        [
+          'https://evergreen.com/washington-road-trip',
+          'https://www.bfro.net/GDB/state_listing.asp?state=WA',
+          'https://northamericanbigfootcenter.com/',
+        ]
+      );
+
+      const reportingBlock = buildTravelReportingBlock(
+        'Washington Cascades road trip for Bigfoot lovers',
+        sources
+      );
+      assert.match(
+        reportingBlock,
+        /Bigfoot Field Researchers Organization sighting map/
+      );
+      assert.match(reportingBlock, /northamericanbigfootcenter\.com/);
+    } finally {
+      clearTravelThemeFactsStub();
+    }
   });
 });
 
