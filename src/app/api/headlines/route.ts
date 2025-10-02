@@ -1066,6 +1066,7 @@ type HeadlineRankingComponents = {
   recency: number;
   sourceDiversity: number;
   topicCoverage: number;
+  clusterSupport: number;
 };
 
 type HeadlineRankingMetadata = {
@@ -1075,6 +1076,8 @@ type HeadlineRankingMetadata = {
     ageHours: number | null;
     sourceOccurrences: number;
     uniqueTokenRatio: number;
+    clusterSize: number;
+    clusterUniqueSources: number;
   };
   reasons: string[];
 };
@@ -1102,9 +1105,12 @@ const TOKEN_MIN_LENGTH_STRICT = 2;
 const TOKEN_OVERLAP_THRESHOLD_DEFAULT = 0.7;
 const TOKEN_OVERLAP_THRESHOLD_STRICT = 0.55;
 const STRICT_TITLE_SIMILARITY_THRESHOLD = 0.88;
-const RANKING_RECENCY_WEIGHT = 0.5;
-const RANKING_SOURCE_WEIGHT = 0.25;
-const RANKING_TOPIC_WEIGHT = 0.25;
+const RANKING_RECENCY_WEIGHT = 0.45;
+const RANKING_SOURCE_WEIGHT = 0.2;
+const RANKING_TOPIC_WEIGHT = 0.2;
+const RANKING_CLUSTER_WEIGHT = 0.15;
+const CLUSTER_SIZE_FULL_SCORE = 8;
+const CLUSTER_SOURCES_FULL_SCORE = 5;
 
 function normalizeUrlForComparison(url: string): string {
   if (!url) {
@@ -1487,6 +1493,48 @@ function computeTopicCoverageScore(
   return { score: ratio, ratio };
 }
 
+function computeClusterSupportScore(
+  candidate: HeadlineCandidate
+): {
+  score: number;
+  clusterSize: number;
+  clusterUniqueSources: number;
+} {
+  const clusterSize = Math.max(1, candidate.related.length + 1);
+  const sources = new Set<string>();
+
+  const baseSource = candidate.data.source.trim().toLowerCase();
+  sources.add(baseSource || 'unknown');
+
+  candidate.related.forEach((article) => {
+    const normalized = article.source.trim().toLowerCase();
+    sources.add(normalized || 'unknown');
+  });
+
+  const clusterUniqueSources = sources.size;
+
+  const normalizedSize =
+    CLUSTER_SIZE_FULL_SCORE <= 1
+      ? clusterSize > 1
+        ? 1
+        : 0
+      : Math.min(1, (clusterSize - 1) / (CLUSTER_SIZE_FULL_SCORE - 1));
+
+  const normalizedSources =
+    CLUSTER_SOURCES_FULL_SCORE <= 1
+      ? clusterUniqueSources > 1
+        ? 1
+        : 0
+      : Math.min(
+          1,
+          (clusterUniqueSources - 1) / (CLUSTER_SOURCES_FULL_SCORE - 1)
+        );
+
+  const score = Math.min(1, (normalizedSize + normalizedSources) / 2);
+
+  return { score, clusterSize, clusterUniqueSources };
+}
+
 function buildRankingReasons(metadata: HeadlineRankingMetadata): string[] {
   const reasons: string[] = [];
 
@@ -1510,6 +1558,14 @@ function buildRankingReasons(metadata: HeadlineRankingMetadata): string[] {
     reasons.push('Adds distinct topic details');
   } else if (metadata.components.topicCoverage <= 0.2) {
     reasons.push('Overlaps heavily with other articles');
+  }
+
+  if (metadata.components.clusterSupport >= 0.6) {
+    reasons.push('Covered by many outlets');
+  } else if (metadata.components.clusterSupport >= 0.3) {
+    reasons.push('Multiple supporting reports');
+  } else if (metadata.details.clusterSize <= 1) {
+    reasons.push('Limited supporting coverage');
   }
 
   return reasons;
@@ -1541,11 +1597,13 @@ function rankHeadlineCandidates(
     const recency = computeRecencyScore(candidate.data.publishedAt);
     const source = computeSourceDiversityScore(sourceOccurrences);
     const topic = computeTopicCoverageScore(candidate.tokenSet, tokenFrequency);
+    const cluster = computeClusterSupportScore(candidate);
 
     const score =
       recency.score * RANKING_RECENCY_WEIGHT +
       source.score * RANKING_SOURCE_WEIGHT +
-      topic.score * RANKING_TOPIC_WEIGHT;
+      topic.score * RANKING_TOPIC_WEIGHT +
+      cluster.score * RANKING_CLUSTER_WEIGHT;
 
     const metadata: HeadlineRankingMetadata = {
       score,
@@ -1553,11 +1611,14 @@ function rankHeadlineCandidates(
         recency: recency.score,
         sourceDiversity: source.score,
         topicCoverage: topic.score,
+        clusterSupport: cluster.score,
       },
       details: {
         ageHours: recency.ageHours,
         sourceOccurrences,
         uniqueTokenRatio: topic.ratio,
+        clusterSize: cluster.clusterSize,
+        clusterUniqueSources: cluster.clusterUniqueSources,
       },
       reasons: [],
     };
@@ -2412,6 +2473,11 @@ function createHeadlinesHandler(
         recency: RANKING_RECENCY_WEIGHT,
         sourceDiversity: RANKING_SOURCE_WEIGHT,
         topicCoverage: RANKING_TOPIC_WEIGHT,
+        clusterSupport: RANKING_CLUSTER_WEIGHT,
+      },
+      explanations: {
+        clusterSupport:
+          'Boosts headlines that are supported by multiple related articles and unique sources.',
       },
     };
   }
