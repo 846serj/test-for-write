@@ -677,6 +677,105 @@ ${rssItemsXml}
   assert.ok(!titles.some((title) => title.startsWith('After Range')));
 });
 
+test('includes RSS articles on the to date when provided as date-only', async () => {
+  globalThis.__openaiCreate = async () => {
+    throw new Error('should not call openai');
+  };
+
+  const rssUrl = 'https://boundary.example/rss';
+  const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Boundary Feed</title>
+    <item>
+      <title>From Range Bulletin</title>
+      <link>https://boundary.example/from</link>
+      <pubDate>2024-03-05T08:00:00Z</pubDate>
+    </item>
+    <item>
+      <title>Boundary Day Dispatch</title>
+      <link>https://boundary.example/to</link>
+      <pubDate>2024-03-06T23:30:00Z</pubDate>
+    </item>
+    <item>
+      <title>After Range Report</title>
+      <link>https://boundary.example/after</link>
+      <pubDate>2024-03-07T00:00:00Z</pubDate>
+    </item>
+  </channel>
+</rss>`;
+
+  const newsRequests = [];
+  const emptyNewsPayload = { status: 'ok', articles: [] };
+
+  globalThis.__fetchImpl = async (input) => {
+    const url = input.toString();
+
+    if (url === rssUrl) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return rssXml;
+        },
+      };
+    }
+
+    if (url.startsWith('https://newsapi.org')) {
+      const requestUrl = new URL(url);
+      newsRequests.push({
+        from: requestUrl.searchParams.get('from'),
+        to: requestUrl.searchParams.get('to'),
+      });
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get(name) {
+            return name === 'content-type' ? 'application/json' : null;
+          },
+        },
+        async json() {
+          return emptyNewsPayload;
+        },
+        async text() {
+          return JSON.stringify(emptyNewsPayload);
+        },
+      };
+    }
+
+    throw new Error(`Unexpected fetch request: ${url}`);
+  };
+
+  const handler = createHeadlinesHandler({ logger: { error() {} } });
+  const response = await handler(
+    createRequest({
+      query: 'boundary coverage',
+      rssFeeds: [rssUrl],
+      limit: 5,
+      from: '2024-03-05',
+      to: '2024-03-06',
+    })
+  );
+
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+
+  const titles = body.headlines.map((item) => item.title);
+  assert.deepStrictEqual(
+    new Set(titles),
+    new Set(['From Range Bulletin', 'Boundary Day Dispatch'])
+  );
+  assert.ok(!titles.includes('After Range Report'));
+
+  assert.ok(
+    newsRequests.some((request) => request.to === '2024-03-06T23:59:59.999Z')
+  );
+  assert.ok(
+    newsRequests.some((request) => request.from === '2024-03-05T00:00:00.000Z')
+  );
+});
+
 test('decodes HTML entities from NewsAPI, RSS, and SERP results', async () => {
   const originalSerpKey = process.env.SERPAPI_KEY;
   process.env.SERPAPI_KEY = 'serp-test-key';

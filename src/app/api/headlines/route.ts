@@ -13,6 +13,7 @@ const MAX_RSS_ITEMS_PER_FEED = 50;
 const RSS_FEED_REQUEST_TIMEOUT_MS = 5000;
 const RSS_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 const MAX_EXCLUDE_URLS = 200;
+const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 const LANGUAGE_CODES = [
   'ar',
@@ -232,7 +233,12 @@ function normalizeDate(raw: unknown, field: 'from' | 'to'): string | null {
     if (Number.isNaN(parsed.getTime())) {
       throw new Error(`${field} must be a valid ISO8601 date`);
     }
-    isoValue = parsed.toISOString();
+    if (field === 'to') {
+      const endOfDay = new Date(parsed.getTime() + ONE_DAY_IN_MS - 1);
+      isoValue = endOfDay.toISOString();
+    } else {
+      isoValue = parsed.toISOString();
+    }
   } else if (ISO_DATE_TIME_REGEX.test(trimmed)) {
     const parsed = new Date(trimmed);
     if (Number.isNaN(parsed.getTime())) {
