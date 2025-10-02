@@ -27,11 +27,13 @@ textarea where you can edit this footer. Click **Save Footer** to store the
 markup in Supabase. The `/api/wordpress/publish` route automatically appends the
 saved footer before creating the draft post.
 
-## Grok configuration
+## Verification configuration
 
-The Grok integration uses the `grok-3-mini` model by default in
-production. Set the `GROK_MODEL` environment variable to override the model
-without touching the codebase. See `.env.example` for the expected format.
+Article verification uses OpenAI chat completions to double-check generated
+drafts whenever `OPENAI_API_KEY` is set and at least one source is available.
+You can override the defaults by setting `OPENAI_VERIFICATION_MODEL` (defaults
+to `gpt-4o-mini`) and `OPENAI_VERIFICATION_TIMEOUT_MS` (defaults to `9000`). See
+`.env.example` for the expected format.
 
 ## More Specific Articles
 
