@@ -1179,6 +1179,146 @@ function normalizeTravelStateName(preset: TravelPreset): string {
   return trimmed;
 }
 
+type TravelThemeInfo = {
+  label: string;
+  source: 'explicit' | 'headline';
+};
+
+const TRAVEL_THEME_AUDIENCE_REPLACEMENTS: Record<string, string> = {
+  lover: 'lovers',
+  lovers: 'lovers',
+  "lover's": 'lovers',
+  enthusiast: 'enthusiasts',
+  enthusiasts: 'enthusiasts',
+  "enthusiast's": 'enthusiasts',
+  fan: 'fans',
+  fans: 'fans',
+  "fan's": 'fans',
+  fanatic: 'fanatics',
+  fanatics: 'fanatics',
+  "fanatic's": 'fanatics',
+  buff: 'buffs',
+  buffs: 'buffs',
+  "buff's": 'buffs',
+  seeker: 'seekers',
+  seekers: 'seekers',
+  "seeker's": 'seekers',
+  hunter: 'hunters',
+  hunters: 'hunters',
+  "hunter's": 'hunters',
+  aficionado: 'aficionados',
+  aficionados: 'aficionados',
+  "aficionado's": 'aficionados',
+  devotee: 'devotees',
+  devotees: 'devotees',
+  "devotee's": 'devotees',
+  geek: 'geeks',
+  geeks: 'geeks',
+  "geek's": 'geeks',
+  nerd: 'nerds',
+  nerds: 'nerds',
+  "nerd's": 'nerds',
+  junkie: 'junkies',
+  junkies: 'junkies',
+  "junkie's": 'junkies',
+  addict: 'addicts',
+  addicts: 'addicts',
+  "addict's": 'addicts',
+};
+
+const TRAVEL_THEME_INDICATOR_PATTERN =
+  "(?:lover(?:s)?|lover['’]s|enthusiast(?:s)?|enthusiast['’]s|fan(?:s)?|fan['’]s|fanatic(?:s)?|fanatic['’]s|buff(?:s)?|buff['’]s|seeker(?:s)?|seeker['’]s|hunter(?:s)?|hunter['’]s|aficionado(?:s)?|aficionado['’]s|devotee(?:s)?|devotee['’]s|geek(?:s)?|geek['’]s|nerd(?:s)?|nerd['’]s|junkie(?:s)?|junkie['’]s|addict(?:s)?|addict['’]s)";
+
+function normalizeTravelThemeAudience(raw: string): string {
+  if (!raw) {
+    return '';
+  }
+
+  const cleaned = raw.replace(/["“”]/g, '').trim();
+  const withoutPossessive = cleaned.replace(/[’']s$/i, '');
+  const lower = withoutPossessive.toLowerCase();
+  if (TRAVEL_THEME_AUDIENCE_REPLACEMENTS[lower]) {
+    return TRAVEL_THEME_AUDIENCE_REPLACEMENTS[lower];
+  }
+  if (lower.endsWith('ies')) {
+    return lower;
+  }
+  if (lower.endsWith('s')) {
+    return lower;
+  }
+  if (lower.endsWith('y')) {
+    return `${lower.slice(0, -1)}ies`;
+  }
+  return `${lower}s`;
+}
+
+function formatTravelThemeLabel(
+  descriptor: string,
+  audienceRaw: string
+): string | null {
+  const normalizedDescriptor = descriptor
+    .replace(/["“”]/g, '')
+    .replace(/^(?:for\s+)?/i, '')
+    .replace(/^(?:the|a|an)\s+/i, '')
+    .trim()
+    .replace(/\s+/g, ' ');
+  const normalizedAudience = normalizeTravelThemeAudience(audienceRaw);
+  if (!normalizedDescriptor && !normalizedAudience) {
+    return null;
+  }
+  if (!normalizedDescriptor) {
+    return normalizedAudience;
+  }
+  if (!normalizedAudience) {
+    return normalizedDescriptor;
+  }
+  return `${normalizedDescriptor} ${normalizedAudience}`.trim();
+}
+
+function detectTravelTheme(
+  headline: string | undefined | null,
+  themeField?: string | null
+): TravelThemeInfo | null {
+  const explicitTheme = themeField?.trim();
+  if (explicitTheme) {
+    return { label: explicitTheme, source: 'explicit' };
+  }
+
+  const normalizedHeadline = headline?.trim();
+  if (!normalizedHeadline) {
+    return null;
+  }
+
+  const forRegex = new RegExp(
+    `\\bfor\\s+(?:the\\s+)?([^.,;:!?]*?)\\s+(${TRAVEL_THEME_INDICATOR_PATTERN})\\b`,
+    'i'
+  );
+  const forMatch = normalizedHeadline.match(forRegex);
+  if (forMatch) {
+    const label = formatTravelThemeLabel(forMatch[1], forMatch[2]);
+    if (label) {
+      return { label, source: 'headline' };
+    }
+  }
+
+  const apostropheRegex = new RegExp(
+    `\\b([^.,;:!?]*?)\\s+(${TRAVEL_THEME_INDICATOR_PATTERN})[’']s\\b`,
+    'i'
+  );
+  const apostropheMatch = normalizedHeadline.match(apostropheRegex);
+  if (apostropheMatch) {
+    const label = formatTravelThemeLabel(
+      apostropheMatch[1],
+      apostropheMatch[2]
+    );
+    if (label) {
+      return { label, source: 'headline' };
+    }
+  }
+
+  return null;
+}
+
 function buildTravelKeywordPool(preset: TravelPreset): string[] {
   const stateName = normalizeTravelStateName(preset);
   const stateCombos = stateName
@@ -3312,6 +3452,7 @@ export async function POST(request: Request) {
       useSerpApi = true,
       includeLinks = true,
       travelState,
+      theme,
     }: {
       articleType: string;
       title: string;
@@ -3327,6 +3468,7 @@ export async function POST(request: Request) {
       useSerpApi?: boolean;
       includeLinks?: boolean;
       travelState?: string;
+      theme?: string | null;
     } = await request.json();
 
     if (!title?.trim()) {
@@ -3809,6 +3951,8 @@ Write the full article in valid HTML below:
         ? travelPreset.stateName
         : defaultPresetLabel || 'the destination';
     const destinationLabel = presetStateName || fallbackDestinationLabel;
+    const travelThemeInfo = detectTravelTheme(title, theme);
+    const travelThemeLabel = travelThemeInfo?.label?.trim();
     const isTravelArticle = articleType === 'Travel article';
     if (isTravelArticle) {
       extraRequirements.push(
@@ -3816,6 +3960,11 @@ Write the full article in valid HTML below:
         `Blend in practical lodging and dining tips for ${destinationLabel}, citing the sources when mentioning hotels, inns, or restaurants.`,
         `Offer itinerary-building guidance with seasonal or timing insights so readers know how to plan days around ${destinationLabel}.`
       );
+      if (travelThemeLabel) {
+        extraRequirements.push(
+          `Dedicate roughly 20–30% of the outline headings and article sections to facts, sightings, legends, or activities tailored for ${travelThemeLabel}, and provide inline citations so every section ties back to that theme.`
+        );
+      }
       const explicitDestinationName =
         presetStateName ||
         (destinationLabel && destinationLabel !== 'the destination'
