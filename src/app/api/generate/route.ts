@@ -1324,7 +1324,9 @@ async function fetchEvergreenTravelSources(
       continue;
     }
 
-    const contentTokens = tokensForMatching.length
+    const shouldBuildTokenSet =
+      tokensForMatching.length > 0 || stateTokenSet.size > 0;
+    const contentTokens = shouldBuildTokenSet
       ? buildSourceTokenSet(content)
       : null;
     let headlineMatchCount = 0;
@@ -1336,18 +1338,39 @@ async function fetchEvergreenTravelSources(
       }
     }
 
-    const hasStateMatch = stateMatcher ? content.includes(stateMatcher) : false;
+    const hasStateTokenOverlap = Boolean(
+      contentTokens &&
+        stateTokens.some((token) => contentTokens.has(token))
+    );
+    const hasStateMatch = stateMatcher
+      ? content.includes(stateMatcher) || hasStateTokenOverlap
+      : hasStateTokenOverlap;
     const hasTravelContext = contentHasTravelSignal(content);
+    const isHomepagePath =
+      parsedUrl.pathname === '/' || parsedUrl.pathname === '';
     const qualifiesByHeadline =
+      tokensForMatching.length > 0 &&
       headlineMatchCount >= baseHeadlineThreshold &&
       (!requiresTravelContextForStateOnly || hasTravelContext);
-    const qualifiesByState = hasStateMatch &&
-      (tokensForMatching.length === 0 || headlineMatchCount >= 1) &&
-      (!requiresTravelContextForStateOnly || hasTravelContext);
+    const qualifiesByState =
+      hasStateMatch &&
+      hasTravelContext &&
+      (tokensForMatching.length === 0 || headlineMatchCount >= 1);
     const qualifiesWithTravelContext =
-      hasTravelContext && headlineMatchCount >= requiredForTravelContext;
+      tokensForMatching.length > 0 &&
+      hasTravelContext &&
+      headlineMatchCount >= Math.max(requiredForTravelContext, 1);
 
-    if (!qualifiesByHeadline && !qualifiesByState && !qualifiesWithTravelContext) {
+    let qualifies =
+      qualifiesByHeadline || qualifiesByState || qualifiesWithTravelContext;
+
+    if (qualifies && tokensForMatching.length === 0) {
+      if (!hasStateMatch || !hasTravelContext || isHomepagePath) {
+        qualifies = false;
+      }
+    }
+
+    if (!qualifies) {
       continue;
     }
 
