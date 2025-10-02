@@ -60,25 +60,14 @@ const {
   __TESTING__,
 } = await import(helperModuleUrl);
 
-const apiPath = new URL('../src/app/api/travel-presets/route.ts', import.meta.url);
-const apiSource = fs.readFileSync(apiPath, 'utf8');
+const handlerPath = new URL('../src/app/api/travel-presets/handlers.ts', import.meta.url);
+const handlerSource = fs.readFileSync(handlerPath, 'utf8');
 
-const apiSnippet = `
+const handlerSnippet = `
 let presetResult = null;
 let lastRequestedState = null;
 function setPresetResult(result) { presetResult = result; }
 function getLastRequestedState() { return lastRequestedState; }
-const NextResponse = {
-  json(payload, init = {}) {
-    const status = init.status ?? 200;
-    return {
-      status,
-      async json() {
-        return payload;
-      },
-    };
-  },
-};
 async function getTravelPreset(state) {
   lastRequestedState = state;
   if (presetResult) {
@@ -93,11 +82,52 @@ async function getTravelPreset(state) {
     siteKey: null,
   };
 }
-${apiSource.replace(
-  /import { getTravelPreset } from '\.\.\/\.\.\/lib\/travelPresets';\n/,
+${handlerSource.replace(
+  /import { getTravelPreset } from '\.\.\/\.\.\/\.\.\/lib\/travelPresets';\n/,
   ''
 )}
-export { handleTravelPresetRequest, GET, setPresetResult, getLastRequestedState };
+export {
+  handleTravelPresetRequest,
+  setPresetResult,
+  getLastRequestedState,
+};
+`;
+
+const handlerModuleUrl =
+  'data:text/javascript;base64,' +
+  Buffer.from(
+    ts.transpileModule(handlerSnippet, {
+      compilerOptions: { module: ts.ModuleKind.ESNext },
+    }).outputText,
+    'utf8'
+  ).toString('base64');
+
+const {
+  handleTravelPresetRequest,
+  setPresetResult,
+  getLastRequestedState,
+} = await import(handlerModuleUrl);
+
+const apiPath = new URL('../src/app/api/travel-presets/route.ts', import.meta.url);
+const apiSource = fs.readFileSync(apiPath, 'utf8');
+
+const apiSnippet = `
+import { handleTravelPresetRequest } from ${JSON.stringify(handlerModuleUrl)};
+const NextResponse = {
+  json(payload, init = {}) {
+    const status = init.status ?? 200;
+    return {
+      status,
+      async json() {
+        return payload;
+      },
+    };
+  },
+};
+${apiSource
+  .replace(/import { NextResponse } from 'next\/server';\n/, '')
+  .replace(/import { handleTravelPresetRequest } from '\.\/handlers';\n/, '')}
+export { GET };
 `;
 
 const apiModuleUrl =
@@ -109,12 +139,7 @@ const apiModuleUrl =
     'utf8'
   ).toString('base64');
 
-const {
-  handleTravelPresetRequest,
-  GET: travelPresetGet,
-  setPresetResult,
-  getLastRequestedState,
-} = await import(apiModuleUrl);
+const { GET: travelPresetGet } = await import(apiModuleUrl);
 
 test('getTravelPreset returns seeded defaults for Oregon presets', async () => {
   const preset = await getTravelPreset('or');

@@ -1,11 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { getTravelPreset } from '../../../lib/travelPresets';
-
-export async function handleTravelPresetRequest(state: string | null) {
-  const preset = await getTravelPreset(state);
-  return { preset };
-}
+import { handleTravelPresetRequest } from './handlers';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
