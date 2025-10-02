@@ -1184,9 +1184,19 @@ async function fetchTravelReportingSources(
 function mergeEvergreenTravelSources(
   reportingSources: ReportingSource[],
   evergreenSources: ReportingSource[],
-  maxEvergreenAdditions = 3
+  maxEvergreenAdditions: number | null = null
 ): ReportingSource[] {
-  if (!evergreenSources.length || maxEvergreenAdditions <= 0) {
+  if (!evergreenSources.length) {
+    return reportingSources;
+  }
+
+  const normalizedCap =
+    typeof maxEvergreenAdditions === 'number' &&
+    Number.isFinite(maxEvergreenAdditions)
+      ? Math.max(0, Math.floor(maxEvergreenAdditions))
+      : null;
+
+  if (normalizedCap === 0) {
     return reportingSources;
   }
 
@@ -1218,7 +1228,7 @@ function mergeEvergreenTravelSources(
       seenVariants.add(variant);
     }
 
-    if (additions.length >= maxEvergreenAdditions) {
+    if (normalizedCap !== null && additions.length >= normalizedCap) {
       break;
     }
   }

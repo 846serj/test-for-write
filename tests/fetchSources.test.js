@@ -604,7 +604,7 @@ test('fetchTravelReportingSources uses only travel evergreen queries and dedupes
   });
 });
 
-test('mergeEvergreenTravelSources dedupes, caps extras, and feeds reporting block', () => {
+test('mergeEvergreenTravelSources dedupes and merges all unique evergreen sources', () => {
   const reportingSources = [
     {
       title: 'Recent Kyoto news',
@@ -661,13 +661,14 @@ test('mergeEvergreenTravelSources dedupes, caps extras, and feeds reporting bloc
 
   const merged = mergeEvergreenTravelSources(reportingSources, evergreenSources);
 
-  assert.strictEqual(merged.length, reportingSources.length + 3);
+  assert.strictEqual(merged.length, reportingSources.length + 4);
   assert.deepStrictEqual(
     merged.slice(reportingSources.length).map((item) => item.url),
     [
       'https://travel.com/plan',
       'https://travel.com/temples',
       'https://travel.com/dining',
+      'https://travel.com/hikes',
     ]
   );
 
@@ -676,7 +677,47 @@ test('mergeEvergreenTravelSources dedupes, caps extras, and feeds reporting bloc
     reportingSources.map((item) => item.url)
   );
   assert.ok(!merged.some((item) => item.url === 'https://travel.com/plan/'));
-  assert.ok(!merged.some((item) => item.url === 'https://travel.com/hikes'));
+  assert.ok(merged.some((item) => item.url === 'https://travel.com/hikes'));
+});
+
+test('mergeEvergreenTravelSources respects an optional cap when provided', () => {
+  const reportingSources = [
+    {
+      title: 'Recent Kyoto news',
+      url: 'https://news.com/kyoto-update',
+      summary: 'Recent developments in Kyoto tourism board announcements',
+      publishedAt: isoDaysAgo(5),
+    },
+  ];
+
+  const evergreenSources = [
+    {
+      title: 'Kyoto trip planner',
+      url: 'https://travel.com/plan',
+      summary: 'Trip planner with things to do and where to stay',
+      publishedAt: '',
+    },
+    {
+      title: 'Top Kyoto temples',
+      url: 'https://travel.com/temples',
+      summary: 'Guide to visiting the top temples in Kyoto',
+      publishedAt: '',
+    },
+    {
+      title: 'Kyoto dining guide',
+      url: 'https://travel.com/dining',
+      summary: 'Restaurants to visit in Kyoto',
+      publishedAt: '',
+    },
+  ];
+
+  const merged = mergeEvergreenTravelSources(reportingSources, evergreenSources, 2);
+
+  assert.strictEqual(merged.length, reportingSources.length + 2);
+  assert.deepStrictEqual(
+    merged.slice(reportingSources.length).map((item) => item.url),
+    ['https://travel.com/plan', 'https://travel.com/temples']
+  );
 });
 
 test('fetchSources keeps older sources when recency is disabled', async () => {
