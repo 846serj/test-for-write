@@ -19,6 +19,24 @@ const buildTravelBlockMatch = tsCode.match(
 const buildArticlePromptMatch = tsCode.match(
   /function buildArticlePrompt[\s\S]*?`\.trim\(\);\n\}/
 );
+const normalizeTravelStateNameMatch = tsCode.match(
+  /function normalizeTravelStateName[\s\S]*?\n\}/
+);
+const detectTravelThemeMatch = tsCode.match(
+  /function detectTravelTheme[\s\S]*?\n\}/
+);
+const travelThemeAudienceMatch = tsCode.match(
+  /const TRAVEL_THEME_AUDIENCE_REPLACEMENTS[\s\S]*?\n\};/
+);
+const travelThemeIndicatorMatch = tsCode.match(
+  /const TRAVEL_THEME_INDICATOR_PATTERN[\s\S]*?;/
+);
+const normalizeTravelThemeAudienceMatch = tsCode.match(
+  /function normalizeTravelThemeAudience[\s\S]*?\n\}/
+);
+const formatTravelThemeLabelMatch = tsCode.match(
+  /function formatTravelThemeLabel[\s\S]*?\n\}/
+);
 
 if (
   !detailInstructionMatch ||
@@ -27,7 +45,13 @@ if (
   !normalizeSummaryMatch ||
   !buildBlockMatch ||
   !buildTravelBlockMatch ||
-  !buildArticlePromptMatch
+  !buildArticlePromptMatch ||
+  !normalizeTravelStateNameMatch ||
+  !detectTravelThemeMatch ||
+  !travelThemeAudienceMatch ||
+  !travelThemeIndicatorMatch ||
+  !normalizeTravelThemeAudienceMatch ||
+  !formatTravelThemeLabelMatch
 ) {
   throw new Error('Failed to extract helper definitions from route.ts');
 }
@@ -131,6 +155,15 @@ ${formatPublishedMatch[0]}
 ${normalizeSummaryMatch[0]}
 ${buildBlockMatch[0]}
 ${buildTravelBlockMatch[0]}
+`;
+
+const travelThemeHelpers = `
+${normalizeTravelStateNameMatch[0]}
+${travelThemeAudienceMatch[0]}
+${travelThemeIndicatorMatch[0]}
+${normalizeTravelThemeAudienceMatch[0]}
+${formatTravelThemeLabelMatch[0]}
+${detectTravelThemeMatch[0]}
 `;
 
 test('buildRecentReportingBlock formats entries with timestamps and fallbacks', async () => {
@@ -271,10 +304,11 @@ test('blog prompt injects reporting block and grounding instruction', async () =
 test('travel article prompt injects travel-specific requirements', async () => {
   const promptSnippet = extractDefaultPromptSnippet();
   const snippet = `
-${reportingHelpers}
+${reportingHelpers}${travelThemeHelpers}
 ${buildArticlePromptMatch[0]}
 const articleType = 'Travel article';
 const travelState = 'Colorado';
+const theme = '';
 const reportingSources = [
   {
     title: 'Kyoto in Spring',
@@ -283,14 +317,14 @@ const reportingSources = [
     publishedAt: '2024-03-15T09:00:00Z',
   },
 ];
-const reportingBlock = buildTravelReportingBlock('Exploring Kyoto', reportingSources);
+const reportingBlock = buildTravelReportingBlock('Exploring Kyoto for Bigfoot lovers', reportingSources);
 const groundingInstruction = reportingSources.length
-  ? '- Use these reporting summaries to enrich your travel blog about "Exploring Kyoto", weaving their specifics naturally into the story and citing the matching URL for each sourced detail.\\n'
+  ? '- Use these reporting summaries to enrich your travel blog about "Exploring Kyoto for Bigfoot lovers", weaving their specifics naturally into the story and citing the matching URL for each sourced detail.\\n'
   : '';
 const linkInstruction = '';
 const toneInstruction = '';
 const povInstruction = '';
-const title = 'Exploring Kyoto';
+const title = 'Exploring Kyoto for Bigfoot lovers';
 const outline = 'INTRO:\\n- Opening\\n\\n<h2>Section</h2>';
 const lengthInstruction = '- Custom length guidance.\\n';
 const customInstructionBlock = '';
@@ -325,13 +359,26 @@ export { articlePrompt, extraRequirements, reportingBlock };
     ),
     'Travel prompts should instruct sections to mention the chosen state explicitly.'
   );
+  const themeRequirement = extraRequirements.find((item) =>
+    item.includes('20–30%') && item.includes('Bigfoot lovers')
+  );
+  assert(themeRequirement, 'Themed travel prompts should enforce a 20–30% focus on the niche audience.');
+  assert(
+    themeRequirement.includes('inline citations') &&
+      themeRequirement.includes('ties back to that theme'),
+    'Theme requirement should demand inline citations and reinforce tying every section back to the theme.'
+  );
   assert(articlePrompt.includes('Colorado'));
   assert(
-    reportingBlock.includes('Supporting coverage for "Exploring Kyoto"'),
+    reportingBlock.includes(
+      'Supporting coverage for "Exploring Kyoto for Bigfoot lovers"'
+    ),
     'Travel reporting block should frame sources as supporting the headline.'
   );
   assert(
-    articlePrompt.includes('travel blog about "Exploring Kyoto"'),
+    articlePrompt.includes(
+      'travel blog about "Exploring Kyoto for Bigfoot lovers"'
+    ),
     'Travel prompt should emphasize crafting a travel blog tied to the headline.'
   );
   assert.strictEqual(
