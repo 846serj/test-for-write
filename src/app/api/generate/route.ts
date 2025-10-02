@@ -3,6 +3,11 @@ import { NextResponse } from 'next/server';
 import { getOpenAI } from '../../../lib/openai';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
+import {
+  dedupeStrings,
+  getTravelPreset,
+  type TravelPreset,
+} from '../../../lib/travelPresets';
 
 export const runtime = 'edge';
 export const revalidate = 0;
@@ -27,6 +32,7 @@ type ReportingContext = {
   groundingInstruction: string;
   linkSources: string[];
   referenceBlock: string;
+  travelPreset: TravelPreset | null;
 };
 
 type VerificationSource =
@@ -961,10 +967,81 @@ const TRAVEL_KEYWORDS = [
   'vacation',
 ];
 
+const TRAVEL_QUERY_DEFAULTS = ['travel guide', 'things to do', 'itinerary'];
+
+function normalizeTravelStateName(preset: TravelPreset): string {
+  if (!preset.stateName) {
+    return '';
+  }
+
+  const trimmed = preset.stateName.trim();
+  if (!trimmed || trimmed === 'the destination') {
+    return '';
+  }
+
+  return trimmed;
+}
+
+function buildTravelKeywordPool(preset: TravelPreset): string[] {
+  const stateName = normalizeTravelStateName(preset);
+  const stateCombos = stateName
+    ? [`${stateName} travel`, `${stateName} itinerary`, `${stateName} weekend`]
+    : [];
+
+  return dedupeStrings([
+    ...stateCombos,
+    ...TRAVEL_QUERY_DEFAULTS,
+    ...preset.keywords,
+    ...TRAVEL_KEYWORDS,
+  ]);
+}
+
+function buildTravelSearchQuery(
+  headline: string,
+  preset: TravelPreset,
+  keywordPool: string[]
+): string {
+  const stateName = normalizeTravelStateName(preset);
+  const segments = dedupeStrings([
+    headline.trim(),
+    stateName,
+    ...keywordPool.slice(0, 4),
+  ]);
+
+  return segments.join(' ').trim();
+}
+
+function buildTravelInstructionBlock(preset: TravelPreset | null): string {
+  if (!preset) {
+    return '';
+  }
+
+  const instructions = preset.instructions
+    .map((instruction) => instruction.trim())
+    .filter(Boolean);
+  if (!instructions.length) {
+    return '';
+  }
+
+  const label = normalizeTravelStateName(preset) || 'the destination';
+  const entries = instructions.map((instruction) => `- ${instruction}`);
+  return `Destination planning guidance for ${label}:\n${entries.join('\n')}`;
+}
+
 async function fetchEvergreenTravelSources(
-  headline: string
+  headline: string,
+  options: { travelState?: string | null; travelPreset?: TravelPreset | null } = {}
 ): Promise<ReportingSource[]> {
-  const query = `${headline} travel guide`;
+  const normalizedHeadline = typeof headline === 'string' ? headline.trim() : '';
+  if (!normalizedHeadline) {
+    return [];
+  }
+
+  const preset =
+    options.travelPreset ??
+    (await getTravelPreset(options.travelState ?? null));
+  const keywordPool = buildTravelKeywordPool(preset);
+  const query = buildTravelSearchQuery(normalizedHeadline, preset, keywordPool);
   const results = await serpapiSearch({
     query,
     engine: 'google',
@@ -975,6 +1052,10 @@ async function fetchEvergreenTravelSources(
   if (!results.length) {
     return [];
   }
+
+  const keywordMatchers = keywordPool.length
+    ? keywordPool.map((keyword) => keyword.toLowerCase())
+    : TRAVEL_KEYWORDS.map((keyword) => keyword.toLowerCase());
 
   const nowMs = Date.now();
   const sources: ReportingSource[] = [];
@@ -991,9 +1072,11 @@ async function fetchEvergreenTravelSources(
     }`
       .toLowerCase()
       .trim();
-    if (
-      !content || !TRAVEL_KEYWORDS.some((keyword) => content.includes(keyword))
-    ) {
+    if (!content) {
+      continue;
+    }
+
+    if (!keywordMatchers.some((keyword) => content.includes(keyword))) {
       continue;
     }
 
@@ -1020,7 +1103,9 @@ async function fetchEvergreenTravelSources(
     sources.push({
       title: result.title || 'Untitled',
       url,
-      summary: normalizeSummary(result.summary || result.snippet || ''),
+      summary: normalizeSummary(
+        result.summary || result.snippet || 'Evergreen travel planning resource'
+      ),
       publishedAt,
     });
 
@@ -3136,13 +3221,20 @@ export async function POST(request: Request) {
     }
 
     const reportingContextPromise: Promise<ReportingContext> = (async () => {
+      const travelPreset =
+        articleType === 'Travel article'
+          ? await getTravelPreset(travelState)
+          : null;
+
       if (!serpEnabled) {
+        const reportingBlock = buildTravelInstructionBlock(travelPreset);
         return {
           reportingSources: [],
-          reportingBlock: '',
+          reportingBlock,
           groundingInstruction: '',
           linkSources: [],
           referenceBlock: '',
+          travelPreset,
         };
       }
 
@@ -3161,14 +3253,24 @@ export async function POST(request: Request) {
       );
       let reportingSources = baseReportingSources;
       if (articleType === 'Travel article') {
-        const evergreenSources = await fetchEvergreenTravelSources(title);
+        const evergreenSources = await fetchEvergreenTravelSources(title, {
+          travelState,
+          travelPreset,
+        });
         reportingSources = mergeEvergreenTravelSources(
           baseReportingSources,
           evergreenSources
         );
       }
 
-      const reportingBlock = buildRecentReportingBlock(reportingSources);
+      let reportingBlock = buildRecentReportingBlock(reportingSources);
+      const travelInstructionBlock = buildTravelInstructionBlock(travelPreset);
+      if (travelInstructionBlock) {
+        reportingBlock = reportingBlock
+          ? `${reportingBlock}\n\n${travelInstructionBlock}`
+          : travelInstructionBlock;
+      }
+
       const groundingInstruction = reportingSources.length
         ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\n'
         : '';
@@ -3188,6 +3290,7 @@ export async function POST(request: Request) {
         groundingInstruction,
         linkSources,
         referenceBlock,
+        travelPreset,
       };
     })();
 

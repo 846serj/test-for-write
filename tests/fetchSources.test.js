@@ -20,6 +20,47 @@ const serpCalls = [];
 let serpResults = [];
 function setSerpResults(results) { serpResults = results; }
 async function serpapiSearch(params) { serpCalls.push(params); return serpResults; }
+const travelPresetStubMap = new Map();
+function setTravelPresetStub(state, preset) {
+  const key = typeof state === 'string' && state.trim() ? state.trim().toLowerCase() : '';
+  travelPresetStubMap.set(key, preset);
+}
+function clearTravelPresetStubs() {
+  travelPresetStubMap.clear();
+}
+async function getTravelPreset(state) {
+  const key = typeof state === 'string' && state.trim() ? state.trim().toLowerCase() : '';
+  if (travelPresetStubMap.has(key)) {
+    return travelPresetStubMap.get(key);
+  }
+  const label = key ? key.toUpperCase() : 'the destination';
+  return {
+    state: key,
+    stateName: label,
+    keywords: [],
+    rssFeeds: [],
+    instructions: [
+      \`Spotlight must-see attractions, parks, and outdoor experiences throughout \${label}.\`,
+      \`Blend lodging and dining recommendations tailored to different traveler budgets in \${label}.\`,
+      \`Share itinerary-friendly tips—seasonal timing, route suggestions, and pacing guidance—for exploring \${label}.\`,
+    ],
+    siteKey: null,
+  };
+}
+function dedupeStrings(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values || []) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(trimmed);
+  }
+  return result;
+}
 ${extract(/function normalizeTitleValue[\s\S]*?\n\}/, 'normalizeTitleValue')}
 ${extract(/function parseRelativeTimestamp[\s\S]*?\n\}/, 'parseRelativeTimestamp')}
 ${extract(/function parsePublishedTimestamp[\s\S]*?\n\}/, 'parsePublishedTimestamp')}
@@ -31,7 +72,7 @@ ${extract(/async function fetchSources[\s\S]*?\n\}/, 'fetchSources')}
 ${extract(/function normalizeHrefValue[\s\S]*?\n\}/, 'normalizeHrefValue')}
 ${extract(/function buildUrlVariants[\s\S]*?\n\}/, 'buildUrlVariants')}
 ${extract(/function normalizePublisher[\s\S]*?\n\}/, 'normalizePublisher')}
-${extract(/const TRAVEL_KEYWORDS[\s\S]*?\n\];/, 'travel keywords')}
+${extract(/const TRAVEL_KEYWORDS[\s\S]*?function buildTravelInstructionBlock[\s\S]*?\n\}/, 'travel keyword helpers')}
 ${extract(/async function fetchEvergreenTravelSources[\s\S]*?\n\}/, 'fetchEvergreenTravelSources')}
 ${extract(/function mergeEvergreenTravelSources[\s\S]*?\n\}/, 'mergeEvergreenTravelSources')}
 ${extract(/async function fetchNewsArticles[\s\S]*?\n\}/, 'fetchNewsArticles')}
@@ -48,6 +89,8 @@ export {
   fetchEvergreenTravelSources,
   mergeEvergreenTravelSources,
   buildRecentReportingBlock,
+  setTravelPresetStub,
+  clearTravelPresetStubs,
 };
 `;
 
@@ -61,6 +104,8 @@ const {
   fetchEvergreenTravelSources,
   mergeEvergreenTravelSources,
   buildRecentReportingBlock,
+  setTravelPresetStub,
+  clearTravelPresetStubs,
 } = await import(moduleUrl);
 
 const FIXED_NOW_ISO = '2024-03-10T12:00:00Z';
@@ -390,6 +435,18 @@ test('fetchSources dedupes titles that only differ by trailing publisher separat
 test('fetchEvergreenTravelSources queries general search for travel-focused guidance', async () => {
   await withMockedNow(async () => {
     serpCalls.length = 0;
+    clearTravelPresetStubs();
+    setTravelPresetStub('or', {
+      state: 'or',
+      stateName: 'Oregon',
+      keywords: [
+        'Oregon travel itinerary',
+        'Oregon coast weekend itinerary',
+      ],
+      rssFeeds: ['https://traveloregon.com/feed'],
+      instructions: ['Highlight scenic Oregon road trips.'],
+      siteKey: 'oregonAdventure',
+    });
     setSerpResults([
       {
         link: 'https://travel.com/kyoto',
@@ -417,13 +474,16 @@ test('fetchEvergreenTravelSources queries general search for travel-focused guid
       },
     ]);
 
-    const sources = await fetchEvergreenTravelSources('Kyoto cherry blossoms');
+    const sources = await fetchEvergreenTravelSources(
+      'Kyoto cherry blossoms',
+      { travelState: 'or' }
+    );
 
     assert.strictEqual(serpCalls.length, 1);
     assert.strictEqual(serpCalls[0].engine, 'google');
     assert.strictEqual(
       serpCalls[0].query,
-      'Kyoto cherry blossoms travel guide'
+      'Kyoto cherry blossoms Oregon Oregon travel Oregon itinerary Oregon weekend travel guide'
     );
     assert.deepStrictEqual(serpCalls[0].extraParams, { hl: 'en' });
     assert.deepStrictEqual(
@@ -443,6 +503,48 @@ test('fetchEvergreenTravelSources queries general search for travel-focused guid
         'Top attractions to visit with a family-friendly itinerary',
       ]
     );
+  });
+});
+
+test('fetchEvergreenTravelSources merges preset keywords without duplicating search terms', async () => {
+  await withMockedNow(async () => {
+    serpCalls.length = 0;
+    clearTravelPresetStubs();
+    setTravelPresetStub('ca', {
+      state: 'ca',
+      stateName: 'California',
+      keywords: ['California travel', 'Weekend getaway', 'Travel Guide'],
+      rssFeeds: [],
+      instructions: ['Cover iconic California park itineraries.'],
+      siteKey: 'californiaAdventure',
+    });
+    setSerpResults([
+      {
+        link: 'https://travel.com/yosemite-weekend',
+        title: 'Yosemite weekend getaway ideas',
+        snippet: 'Weekend getaway plans for California adventurers',
+        date: isoDaysAgo(120),
+      },
+      {
+        link: 'https://news.com/policy',
+        title: 'California tax policy update',
+        snippet: 'Policy news unrelated to legislation changes',
+        date: isoDaysAgo(5),
+      },
+    ]);
+
+    const sources = await fetchEvergreenTravelSources('Yosemite adventures', {
+      travelState: 'ca',
+    });
+
+    assert.strictEqual(serpCalls.length, 1);
+    assert.strictEqual(
+      serpCalls[0].query,
+      'Yosemite adventures California California travel California itinerary California weekend travel guide'
+    );
+    assert.deepStrictEqual(sources.map((item) => item.url), [
+      'https://travel.com/yosemite-weekend',
+    ]);
   });
 });
 
