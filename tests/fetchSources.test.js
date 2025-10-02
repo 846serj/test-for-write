@@ -486,7 +486,7 @@ test('fetchEvergreenTravelSources queries general search for travel-focused guid
     assert.strictEqual(serpCalls[0].engine, 'google');
     assert.strictEqual(
       serpCalls[0].query,
-      'Kyoto cherry blossoms Oregon Oregon travel Oregon itinerary Oregon weekend travel guide'
+      '"Kyoto cherry blossoms" Oregon kyoto cherry blossoms blossom travel'
     );
     assert.deepStrictEqual(serpCalls[0].extraParams, { hl: 'en' });
     assert.deepStrictEqual(
@@ -543,11 +543,72 @@ test('fetchEvergreenTravelSources merges preset keywords without duplicating sea
     assert.strictEqual(serpCalls.length, 1);
     assert.strictEqual(
       serpCalls[0].query,
-      'Yosemite adventures California California travel California itinerary California weekend travel guide'
+      '"Yosemite adventures" California yosemite adventures adventure travel'
     );
     assert.deepStrictEqual(sources.map((item) => item.url), [
       'https://travel.com/yosemite-weekend',
     ]);
+  });
+});
+
+test('fetchEvergreenTravelSources prefers headline-relevant travel pages across domains', async () => {
+  await withMockedNow(async () => {
+    serpCalls.length = 0;
+    clearTravelPresetStubs();
+    setTravelPresetStub('hi', {
+      state: 'hi',
+      stateName: 'Hawaii',
+      keywords: ['Hawaii travel deals', 'Island adventures'],
+      rssFeeds: [],
+      instructions: ['Feature coastal adventures around the islands.'],
+      siteKey: 'hawaiiExplorer',
+    });
+
+    setSerpResults([
+      {
+        link: 'https://island.com/snorkel-guide',
+        title: 'Lanai snorkeling guide',
+        summary:
+          'Snorkeling spots and reef tips around Lanai for curious explorers',
+        date: isoDaysAgo(85),
+      },
+      {
+        link: 'https://magazine.com/lanai-beaches',
+        title: 'Hidden beaches on Lanai to explore',
+        snippet:
+          'Secluded beaches on Lanai perfect for sunset picnics and tide pools',
+        date: isoDaysAgo(140),
+      },
+      {
+        link: 'https://weather.com/lanai',
+        title: 'Lanai weather this week',
+        snippet: 'Weekly forecast and precipitation outlook for residents',
+        date: isoDaysAgo(2),
+      },
+      {
+        link: 'https://deals.com/hawaii',
+        title: 'Hawaii travel deals for Maui resorts',
+        snippet: 'Roundup of resort packages across Maui for summer travel',
+        date: isoDaysAgo(30),
+      },
+    ]);
+
+    const sources = await fetchEvergreenTravelSources(
+      'Lanai snorkeling spots and hidden beaches',
+      { travelState: 'hi' }
+    );
+
+    assert.strictEqual(serpCalls.length, 1);
+    assert.ok(
+      serpCalls[0].query.startsWith('"Lanai snorkeling spots and hidden beaches"')
+    );
+    assert.deepStrictEqual(
+      sources.map((item) => item.url),
+      ['https://island.com/snorkel-guide', 'https://magazine.com/lanai-beaches']
+    );
+
+    const hostnames = sources.map((item) => new URL(item.url).hostname);
+    assert.strictEqual(new Set(hostnames).size, sources.length);
   });
 });
 
@@ -594,7 +655,7 @@ test('fetchTravelReportingSources uses only travel evergreen queries and dedupes
     assert.ok(serpCalls.every((call) => call.extraParams?.hl === 'en'));
     assert.deepStrictEqual(
       sources.map((item) => item.url),
-      ['https://travel.com/coast', 'https://travel.com/hikes']
+      ['https://travel.com/coast']
     );
     assert.ok(
       sources.every((item) =>
