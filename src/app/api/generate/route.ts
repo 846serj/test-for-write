@@ -10,6 +10,7 @@ import {
   type TravelPreset,
   buildDefaultTravelPreset,
 } from '../../../lib/travelPresets';
+import { fetchTravelPresetSources } from '../../../lib/travelSources';
 import {
   TRAVEL_THEME_AUDIENCE_REPLACEMENTS,
   TRAVEL_THEME_INDICATOR_PATTERN,
@@ -37,6 +38,9 @@ interface ReportingSource {
   url: string;
   summary: string;
   publishedAt: string;
+  categories?: string[];
+  sourceName?: string;
+  sourceType?: string;
 }
 
 type ReportingContext = {
@@ -1585,6 +1589,55 @@ async function fetchTravelReportingSources(
 
   const aggregated: ReportingSource[] = [];
   const seenVariants = new Set<string>();
+  const feedSourceUrls = new Set<string>();
+
+  const presetSources = await fetchTravelPresetSources({
+    travelPreset: preset,
+    state: options.travelState ?? null,
+  });
+
+  for (const source of presetSources) {
+    const normalizedUrl = normalizeHrefValue(source.url);
+    if (!normalizedUrl) {
+      continue;
+    }
+
+    const variants = buildUrlVariants(normalizedUrl);
+    if (variants.some((variant) => seenVariants.has(variant))) {
+      continue;
+    }
+
+    const publishedAt =
+      typeof source.publishedAt === 'string' && source.publishedAt.trim()
+        ? source.publishedAt.trim()
+        : '';
+    const categoryList = Array.isArray(source.categories)
+      ? dedupeStrings(
+          source.categories
+            .map((category) => (typeof category === 'string' ? category : ''))
+            .filter(Boolean)
+        )
+      : [];
+
+    aggregated.push({
+      title: source.title || 'Untitled',
+      summary: normalizeSummary(source.summary || source.title || ''),
+      url: normalizedUrl,
+      publishedAt,
+      categories: categoryList.length ? categoryList : undefined,
+      sourceName:
+        typeof source.sourceName === 'string' && source.sourceName.trim()
+          ? source.sourceName.trim()
+          : undefined,
+      sourceType: source.sourceType,
+    });
+
+    feedSourceUrls.add(normalizedUrl);
+
+    for (const variant of variants) {
+      seenVariants.add(variant);
+    }
+  }
 
   for (const seed of querySeeds) {
     const evergreenSources = await fetchEvergreenTravelSources(seed, {
@@ -1647,14 +1700,26 @@ async function fetchTravelReportingSources(
   }
 
   const maxTravelSources = 8;
-  if (aggregated.length > maxTravelSources) {
-    const prioritized = aggregated.filter((item) => themeFactUrls.has(item.url));
-    const remaining = aggregated.filter((item) => !themeFactUrls.has(item.url));
-    const reordered = prioritized.concat(remaining);
-    return reordered.slice(0, maxTravelSources);
+  const prioritizedFeed: ReportingSource[] = [];
+  const prioritizedFacts: ReportingSource[] = [];
+  const remainder: ReportingSource[] = [];
+
+  for (const item of aggregated) {
+    if (feedSourceUrls.has(item.url)) {
+      prioritizedFeed.push(item);
+      continue;
+    }
+
+    if (themeFactUrls.has(item.url)) {
+      prioritizedFacts.push(item);
+      continue;
+    }
+
+    remainder.push(item);
   }
 
-  return aggregated;
+  const ordered = prioritizedFeed.concat(prioritizedFacts, remainder);
+  return ordered.slice(0, maxTravelSources);
 }
 
 function mergeEvergreenTravelSources(

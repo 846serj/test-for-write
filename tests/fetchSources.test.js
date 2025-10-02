@@ -79,6 +79,25 @@ function clearTravelThemeFactsStub() {
 async function fetchTravelThemeFacts(params) {
   return await travelThemeFactsStub(params);
 }
+const travelPresetSourceCalls = [];
+let travelPresetSourceStub = async () => [];
+function setTravelSourceFetchStub(stub) {
+  if (typeof stub === 'function') {
+    travelPresetSourceStub = stub;
+  } else if (Array.isArray(stub)) {
+    travelPresetSourceStub = async () => stub;
+  } else {
+    travelPresetSourceStub = async () => [];
+  }
+}
+function clearTravelSourceFetchStub() {
+  travelPresetSourceStub = async () => [];
+  travelPresetSourceCalls.length = 0;
+}
+async function fetchTravelPresetSources(params) {
+  travelPresetSourceCalls.push(params);
+  return await travelPresetSourceStub(params);
+}
 ${extract(/function normalizeTitleValue[\s\S]*?\n\}/, 'normalizeTitleValue')}
 ${extract(/function parseRelativeTimestamp[\s\S]*?\n\}/, 'parseRelativeTimestamp')}
 ${extract(/function parsePublishedTimestamp[\s\S]*?\n\}/, 'parsePublishedTimestamp')}
@@ -115,6 +134,9 @@ export {
   clearTravelPresetStubs,
   setTravelThemeFactsStub,
   clearTravelThemeFactsStub,
+  travelPresetSourceCalls,
+  setTravelSourceFetchStub,
+  clearTravelSourceFetchStub,
 };
 `;
 
@@ -134,6 +156,9 @@ const {
   clearTravelPresetStubs,
   setTravelThemeFactsStub,
   clearTravelThemeFactsStub,
+  travelPresetSourceCalls,
+  setTravelSourceFetchStub,
+  clearTravelSourceFetchStub,
 } = await import(moduleUrl);
 
 const FIXED_NOW_ISO = '2024-03-10T12:00:00Z';
@@ -776,9 +801,9 @@ test('fetchTravelReportingSources merges travel theme facts into reporting block
       assert.deepStrictEqual(
         sources.map((item) => item.url),
         [
-          'https://evergreen.com/washington-road-trip',
           'https://www.bfro.net/GDB/state_listing.asp?state=WA',
           'https://northamericanbigfootcenter.com/',
+          'https://evergreen.com/washington-road-trip',
         ]
       );
 
@@ -793,6 +818,100 @@ test('fetchTravelReportingSources merges travel theme facts into reporting block
       assert.match(reportingBlock, /northamericanbigfootcenter\.com/);
     } finally {
       clearTravelThemeFactsStub();
+    }
+  });
+});
+
+test('fetchTravelReportingSources prioritizes travel preset feeds and destination APIs', async () => {
+  await withMockedNow(async () => {
+    serpCalls.length = 0;
+    clearTravelPresetStubs();
+    clearTravelThemeFactsStub();
+    clearTravelSourceFetchStub();
+
+    setTravelPresetStub('or', {
+      state: 'or',
+      stateName: 'Oregon',
+      keywords: ['Oregon outdoor travel'],
+      rssFeeds: ['https://traveloregon.com/feed/events'],
+      instructions: ['Highlight Oregon lodging and seasonal events.'],
+      siteKey: null,
+    });
+
+    const feedEntries = [
+      {
+        title: 'Historic Crater Lake Lodge reopening',
+        url: 'https://traveloregon.com/lodging/crater-lake-lodge',
+        summary: 'Historic lodge with lake views opens for the summer travel season.',
+        publishedAt: isoDaysAgo(2),
+        categories: ['Lodging'],
+        sourceName: 'Travel Oregon Lodging',
+        sourceType: 'api',
+      },
+      {
+        title: 'Willamette Valley wine harvest weekends',
+        url: 'https://traveloregon.com/events/wine-harvest-weekends',
+        summary: 'Wineries host tasting rooms, food trucks, and vineyard tours.',
+        publishedAt: isoDaysAgo(5),
+        categories: ['Events', 'events', 'Wine'],
+        sourceName: 'Travel Oregon Events',
+        sourceType: 'rss',
+      },
+    ];
+
+    setTravelSourceFetchStub(async (params) => {
+      assert.ok(params.travelPreset);
+      return feedEntries;
+    });
+
+    setSerpResults([
+      {
+        link: 'https://traveloregon.com/events/wine-harvest-weekends',
+        title: 'Oregon wine harvest weekends',
+        snippet: 'Travel guide for wine harvest weekends and tasting itineraries.',
+        date: isoDaysAgo(3),
+      },
+      {
+        link: 'https://localnews.com/oregon-road-trip',
+        title: 'Oregon road trip planner',
+        snippet: 'Suggested road trip with boutique hotels and seasonal stops.',
+        date: isoDaysAgo(1),
+      },
+    ]);
+
+    setTravelThemeFactsStub([
+      {
+        title: 'Oregon Scenic Byways program',
+        summary: 'Oregon showcases 29 official Scenic Byways connecting coast, valleys, and high desert.',
+        url: 'https://traveloregon.com/things-to-do/scenic-byways',
+      },
+    ]);
+
+    try {
+      const sources = await fetchTravelReportingSources('Plan an Oregon adventure', {
+        travelState: 'or',
+      });
+
+      assert.strictEqual(travelPresetSourceCalls.length, 1);
+      assert.strictEqual(travelPresetSourceCalls[0]?.travelPreset?.state, 'or');
+
+      assert.deepStrictEqual(
+        sources.map((item) => item.url),
+        [
+          'https://traveloregon.com/lodging/crater-lake-lodge',
+          'https://traveloregon.com/events/wine-harvest-weekends',
+          'https://traveloregon.com/things-to-do/scenic-byways',
+          'https://localnews.com/oregon-road-trip',
+        ]
+      );
+
+      assert.deepStrictEqual(sources[0].categories, ['Lodging']);
+      assert.deepStrictEqual(sources[1].categories, ['Events', 'Wine']);
+      assert.ok(sources.every((item) => typeof item.summary === 'string' && item.summary.length > 0));
+      assert.ok(sources.every((item) => typeof item.publishedAt === 'string'));
+    } finally {
+      clearTravelThemeFactsStub();
+      clearTravelSourceFetchStub();
     }
   });
 });
