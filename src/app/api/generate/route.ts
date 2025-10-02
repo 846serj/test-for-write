@@ -4108,7 +4108,8 @@ Write the full article in valid HTML below:
       extraRequirements.push(
         `Highlight must-see attractions, scenic stops, and signature experiences across ${destinationLabel}, grounding every recommendation in the reporting.`,
         `Blend in practical lodging and dining tips for ${destinationLabel}, citing the sources when mentioning hotels, inns, or restaurants.`,
-        `Offer itinerary-building guidance with seasonal or timing insights so readers know how to plan days around ${destinationLabel}.`
+        `Offer itinerary-building guidance with seasonal or timing insights so readers know how to plan days around ${destinationLabel}.`,
+        'Alternate sentence lengths and structures to keep the narrative lively, and cap reuse of distinctive adjectives or signature key phrases (e.g., only use "breathtaking" once per ~500 words).'
       );
       if (travelThemeLabel) {
         extraRequirements.push(

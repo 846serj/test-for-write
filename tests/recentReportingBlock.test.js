@@ -355,6 +355,13 @@ export { articlePrompt, extraRequirements, reportingBlock };
   );
   assert(
     extraRequirements.some((item) =>
+      item.includes('Alternate sentence lengths and structures') &&
+      item.includes('distinctive adjectives')
+    ),
+    'Travel prompts should encourage varied sentence patterns and limit repeated descriptive language.'
+  );
+  assert(
+    extraRequirements.some((item) =>
       item.includes('Weave Colorado or its neighborhoods naturally')
     ),
     'Travel prompts should instruct sections to mention the chosen state explicitly.'
