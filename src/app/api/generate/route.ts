@@ -7,6 +7,7 @@ import {
   dedupeStrings,
   getTravelPreset,
   type TravelPreset,
+  buildDefaultTravelPreset,
 } from '../../../lib/travelPresets';
 
 export const runtime = 'edge';
@@ -3168,7 +3169,9 @@ export async function POST(request: Request) {
         lengthInstruction = `- Use exactly ${customSections} sections, and the article must contain at least ${minWords.toLocaleString()} words (~${approx.toLocaleString()} words total; keep it under ${maxWords.toLocaleString()} words).\n`;
       } else if (lengthOption && WORD_RANGES[lengthOption]) {
         const [minS, maxS] = sectionRanges[lengthOption] || [3, 6];
-        lengthInstruction = `- Include ${minS}–${maxS} sections, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
+        const minW = minWords.toLocaleString();
+        const maxW = maxWords.toLocaleString();
+        lengthInstruction = `- Include ${minS}–${maxS} sections and write between ${minW} and ${maxW} words.\n`;
       } else {
         lengthInstruction = `- Include at least three <h2> headings, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
       }
@@ -3346,7 +3349,7 @@ ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond
         ? `- Use numbering formatted like ${listNumberingFormat}.\n`
         : '';
       const wordCountInstruction = listItemWordCount
-        ? `- Each list item must run at least ${minWordsPerItem} words so the article clears ${minWords.toLocaleString()} words overall; aim for around ${listItemWordCount} words per item.\n`
+        ? `- Keep each list item around ${listItemWordCount} words while ensuring at least ${minWordsPerItem} words per item so the article clears ${minWords.toLocaleString()} words overall.\n`
         : `- Make sure each list item adds enough detail to reach the ${minWords.toLocaleString()}-word minimum (roughly ${minWordsPerItem} words per item on average).\n`;
       const customInstruction = customInstructions?.trim();
       const customInstructionBlock = customInstruction
@@ -3437,6 +3440,7 @@ Write the full article in valid HTML below:
       groundingInstruction,
       linkSources,
       referenceBlock,
+      travelPreset,
     } = await reportingContextPromise;
 
     let sectionInstruction: string;
@@ -3479,8 +3483,10 @@ Write the full article in valid HTML below:
       lengthInstruction = `- Use exactly ${customSections} sections, and the article must contain at least ${minWords.toLocaleString()} words (~${approx.toLocaleString()} words total; keep it under ${maxWords.toLocaleString()} words).\n`;
     } else if (WORD_RANGES[lengthOption || 'medium']) {
       const [minS, maxS] = sectionRanges[lengthOption || 'medium'];
+      const minW = minWords.toLocaleString();
+      const maxW = maxWords.toLocaleString();
       lengthInstruction =
-        `- Include ${minS}–${maxS} sections, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
+        `- Include ${minS}–${maxS} sections and write between ${minW} and ${maxW} words.\n`;
     } else {
       lengthInstruction =
         `- Include at least three <h2> headings, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
@@ -3509,9 +3515,26 @@ Write the full article in valid HTML below:
       'Center each section on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.',
     ];
     const extraRequirements = [...baseExtraRequirements];
-    const normalizedTravelState =
+    const presetStateName =
+      typeof travelPreset !== 'undefined' && travelPreset
+        ? normalizeTravelStateName(travelPreset)
+        : '';
+    const travelStateInput =
       typeof travelState === 'string' ? travelState.trim() : '';
-    const destinationLabel = normalizedTravelState || 'the destination';
+    const defaultPresetLabel = (() => {
+      if (!travelStateInput) {
+        return 'the destination';
+      }
+      if (typeof buildDefaultTravelPreset === 'function') {
+        return buildDefaultTravelPreset(travelStateInput).stateName;
+      }
+      return travelStateInput;
+    })();
+    const fallbackDestinationLabel =
+      (typeof travelPreset !== 'undefined' && travelPreset?.stateName)
+        ? travelPreset.stateName
+        : defaultPresetLabel || 'the destination';
+    const destinationLabel = presetStateName || fallbackDestinationLabel;
     const isTravelArticle = articleType === 'Travel article';
     if (isTravelArticle) {
       extraRequirements.push(
@@ -3519,9 +3542,14 @@ Write the full article in valid HTML below:
         `Blend in practical lodging and dining tips for ${destinationLabel}, citing the sources when mentioning hotels, inns, or restaurants.`,
         `Offer itinerary-building guidance with seasonal or timing insights so readers know how to plan days around ${destinationLabel}.`
       );
-      if (normalizedTravelState) {
+      const explicitDestinationName =
+        presetStateName ||
+        (destinationLabel && destinationLabel !== 'the destination'
+          ? destinationLabel
+          : '');
+      if (explicitDestinationName) {
         extraRequirements.push(
-          `Name ${normalizedTravelState} directly in each section to keep the article anchored to the destination.`
+          `Name ${explicitDestinationName} directly in each section to keep the article anchored to the destination.`
         );
       } else {
         extraRequirements.push(
@@ -3564,7 +3592,7 @@ Write the full article in valid HTML below:
 
     if (isTravelArticle) {
       const travelStyle = verifyTravelStyle(content, {
-        travelState: normalizedTravelState,
+        travelState: presetStateName || fallbackDestinationLabel || '',
       });
       if (!travelStyle.isValid && travelStyle.issues.length) {
         console.warn(
