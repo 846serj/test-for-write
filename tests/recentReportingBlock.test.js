@@ -13,6 +13,9 @@ const detailExtractionMatch = tsCode.match(
 const formatPublishedMatch = tsCode.match(/function formatPublishedTimestamp[\s\S]*?\n\}/);
 const normalizeSummaryMatch = tsCode.match(/function normalizeSummary[\s\S]*?\n\}/);
 const buildBlockMatch = tsCode.match(/function buildRecentReportingBlock[\s\S]*?\n\}/);
+const buildTravelBlockMatch = tsCode.match(
+  /function buildTravelReportingBlock[\s\S]*?\n\}/
+);
 const buildArticlePromptMatch = tsCode.match(
   /function buildArticlePrompt[\s\S]*?`\.trim\(\);\n\}/
 );
@@ -23,6 +26,7 @@ if (
   !formatPublishedMatch ||
   !normalizeSummaryMatch ||
   !buildBlockMatch ||
+  !buildTravelBlockMatch ||
   !buildArticlePromptMatch
 ) {
   throw new Error('Failed to extract helper definitions from route.ts');
@@ -126,6 +130,7 @@ ${detailExtractionMatch[0]}
 ${formatPublishedMatch[0]}
 ${normalizeSummaryMatch[0]}
 ${buildBlockMatch[0]}
+${buildTravelBlockMatch[0]}
 `;
 
 test('buildRecentReportingBlock formats entries with timestamps and fallbacks', async () => {
@@ -278,9 +283,9 @@ const reportingSources = [
     publishedAt: '2024-03-15T09:00:00Z',
   },
 ];
-const reportingBlock = buildRecentReportingBlock(reportingSources);
+const reportingBlock = buildTravelReportingBlock('Exploring Kyoto', reportingSources);
 const groundingInstruction = reportingSources.length
-  ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\\n'
+  ? '- Use these reporting summaries to enrich your travel blog about "Exploring Kyoto", weaving their specifics naturally into the story and citing the matching URL for each sourced detail.\\n'
   : '';
 const linkInstruction = '';
 const toneInstruction = '';
@@ -290,9 +295,9 @@ const outline = 'INTRO:\\n- Opening\\n\\n<h2>Section</h2>';
 const lengthInstruction = '- Custom length guidance.\\n';
 const customInstructionBlock = '';
 ${promptSnippet}
-export { articlePrompt, extraRequirements };
+export { articlePrompt, extraRequirements, reportingBlock };
 `;
-  const { articlePrompt, extraRequirements } = await transpile(snippet);
+  const { articlePrompt, extraRequirements, reportingBlock } = await transpile(snippet);
   assert.strictEqual(Array.isArray(extraRequirements), true);
   assert(
     extraRequirements.some(
@@ -316,26 +321,39 @@ export { articlePrompt, extraRequirements };
   );
   assert(
     extraRequirements.some((item) =>
-      item.includes('Name Colorado directly in each section')
+      item.includes('Weave Colorado or its neighborhoods naturally')
     ),
     'Travel prompts should instruct sections to mention the chosen state explicitly.'
   );
   assert(articlePrompt.includes('Colorado'));
+  assert(
+    reportingBlock.includes('Supporting coverage for "Exploring Kyoto"'),
+    'Travel reporting block should frame sources as supporting the headline.'
+  );
+  assert(
+    articlePrompt.includes('travel blog about "Exploring Kyoto"'),
+    'Travel prompt should emphasize crafting a travel blog tied to the headline.'
+  );
+  assert.strictEqual(
+    articlePrompt.includes('Key facts from recent reporting'),
+    false,
+    'Travel prompt should not mention "Key facts from recent reporting".'
+  );
 });
 
 test('travel article branch verifies style feedback before returning', () => {
   const generationBlock = extractTravelGenerationBlock();
   assert(
-    generationBlock.includes('verifyTravelStyle('),
-    'Travel branch should run style verification on generated HTML.'
+    generationBlock.includes('generateWithVerification('),
+    'Travel branch should run verification on generated HTML.'
   );
   assert(
-    generationBlock.includes('applyTravelStyleFeedbackToPrompt('),
-    'Travel branch should feed style issues back into regeneration.'
+    generationBlock.includes('applyVerificationIssuesToPrompt('),
+    'Travel branch should feed verification issues back into regeneration.'
   );
   assert(
-    generationBlock.includes('Regenerating travel article to address style gaps'),
-    'Travel branch should log when it retries for style issues.'
+    generationBlock.includes('generateWithLinks('),
+    'Travel branch should rely on link-aware generation when rerunning content.'
   );
 });
 
