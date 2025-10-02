@@ -72,9 +72,10 @@ ${extract(/async function fetchSources[\s\S]*?\n\}/, 'fetchSources')}
 ${extract(/function normalizeHrefValue[\s\S]*?\n\}/, 'normalizeHrefValue')}
 ${extract(/function buildUrlVariants[\s\S]*?\n\}/, 'buildUrlVariants')}
 ${extract(/function normalizePublisher[\s\S]*?\n\}/, 'normalizePublisher')}
-${extract(/const TRAVEL_KEYWORDS[\s\S]*?function buildTravelInstructionBlock[\s\S]*?\n\}/, 'travel keyword helpers')}
-${extract(/async function fetchEvergreenTravelSources[\s\S]*?\n\}/, 'fetchEvergreenTravelSources')}
-${extract(/function mergeEvergreenTravelSources[\s\S]*?\n\}/, 'mergeEvergreenTravelSources')}
+  ${extract(/const TRAVEL_KEYWORDS[\s\S]*?function buildTravelInstructionBlock[\s\S]*?\n\}/, 'travel keyword helpers')}
+  ${extract(/async function fetchEvergreenTravelSources[\s\S]*?\n\}/, 'fetchEvergreenTravelSources')}
+  ${extract(/async function fetchTravelReportingSources[\s\S]*?\n\}/, 'fetchTravelReportingSources')}
+  ${extract(/function mergeEvergreenTravelSources[\s\S]*?\n\}/, 'mergeEvergreenTravelSources')}
 ${extract(/async function fetchNewsArticles[\s\S]*?\n\}/, 'fetchNewsArticles')}
 ${extract(/function formatKeyDetails[\s\S]*?\n\}/, 'formatKeyDetails')}
 ${extract(/function normalizeSummary[\s\S]*?\n\}/, 'normalizeSummary')}
@@ -87,6 +88,7 @@ export {
   setSerpResults,
   fetchNewsArticles,
   fetchEvergreenTravelSources,
+  fetchTravelReportingSources,
   mergeEvergreenTravelSources,
   buildRecentReportingBlock,
   setTravelPresetStub,
@@ -102,6 +104,7 @@ const {
   setSerpResults,
   fetchNewsArticles,
   fetchEvergreenTravelSources,
+  fetchTravelReportingSources,
   mergeEvergreenTravelSources,
   buildRecentReportingBlock,
   setTravelPresetStub,
@@ -545,6 +548,59 @@ test('fetchEvergreenTravelSources merges preset keywords without duplicating sea
     assert.deepStrictEqual(sources.map((item) => item.url), [
       'https://travel.com/yosemite-weekend',
     ]);
+  });
+});
+
+test('fetchTravelReportingSources uses only travel evergreen queries and dedupes results', async () => {
+  await withMockedNow(async () => {
+    serpCalls.length = 0;
+    clearTravelPresetStubs();
+    setTravelPresetStub('ca', {
+      state: 'ca',
+      stateName: 'California',
+      keywords: ['California coast road trip', 'California outdoor travel'],
+      rssFeeds: [],
+      instructions: ['Include scenic drives and outdoor adventures.'],
+      siteKey: null,
+    });
+    setSerpResults([
+      {
+        link: 'https://travel.com/coast',
+        title: 'California coast travel guide',
+        snippet: 'Beach travel itinerary with scenic drives and travel tips',
+        date: isoDaysAgo(180),
+      },
+      {
+        link: 'https://travel.com/hikes',
+        title: 'Top hikes near San Diego',
+        summary: 'Outdoor travel planning guide with itinerary suggestions',
+        date: isoDaysAgo(120),
+      },
+      {
+        link: 'https://news.com/policy',
+        title: 'California policy update',
+        snippet: 'Tax changes for residents',
+        date: isoDaysAgo(10),
+      },
+    ]);
+
+    const sources = await fetchTravelReportingSources(
+      'Exploring California Beaches',
+      { travelState: 'ca' }
+    );
+
+    assert.ok(serpCalls.length >= 1);
+    assert.ok(serpCalls.every((call) => call.engine === 'google'));
+    assert.ok(serpCalls.every((call) => call.extraParams?.hl === 'en'));
+    assert.deepStrictEqual(
+      sources.map((item) => item.url),
+      ['https://travel.com/coast', 'https://travel.com/hikes']
+    );
+    assert.ok(
+      sources.every((item) =>
+        /travel|itinerary|guide/i.test(item.summary || '')
+      )
+    );
   });
 });
 

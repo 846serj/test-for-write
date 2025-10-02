@@ -1118,6 +1118,69 @@ async function fetchEvergreenTravelSources(
   return sources;
 }
 
+async function fetchTravelReportingSources(
+  headline: string,
+  options: { travelState?: string | null; travelPreset?: TravelPreset | null } = {}
+): Promise<ReportingSource[]> {
+  const preset =
+    options.travelPreset ??
+    (await getTravelPreset(options.travelState ?? null));
+  const keywordPool = buildTravelKeywordPool(preset);
+  const normalizedHeadline = typeof headline === 'string' ? headline.trim() : '';
+  const stateName = normalizeTravelStateName(preset);
+
+  const querySeeds = dedupeStrings(
+    [
+      normalizedHeadline,
+      stateName,
+      stateName ? `${stateName} travel guide` : '',
+      stateName ? `${stateName} itinerary` : '',
+    ].filter(Boolean)
+  );
+
+  if (!querySeeds.length) {
+    const fallback = keywordPool.length ? keywordPool[0] : 'travel guide';
+    querySeeds.push(fallback);
+  }
+
+  const aggregated: ReportingSource[] = [];
+  const seenVariants = new Set<string>();
+
+  for (const seed of querySeeds) {
+    const evergreenSources = await fetchEvergreenTravelSources(seed, {
+      travelPreset: preset,
+    });
+
+    for (const source of evergreenSources) {
+      const normalizedUrl = normalizeHrefValue(source.url);
+      if (!normalizedUrl) {
+        continue;
+      }
+
+      const variants = buildUrlVariants(normalizedUrl);
+      if (variants.some((variant) => seenVariants.has(variant))) {
+        continue;
+      }
+
+      aggregated.push({
+        ...source,
+        url: normalizedUrl,
+      });
+
+      for (const variant of variants) {
+        seenVariants.add(variant);
+      }
+    }
+  }
+
+  const maxTravelSources = 8;
+  if (aggregated.length > maxTravelSources) {
+    return aggregated.slice(0, maxTravelSources);
+  }
+
+  return aggregated;
+}
+
 function mergeEvergreenTravelSources(
   reportingSources: ReportingSource[],
   evergreenSources: ReportingSource[],
@@ -3069,28 +3132,23 @@ export async function POST(request: Request) {
         };
       }
 
-      const needsRelevanceSourcing =
-        articleType === 'Listicle/Gallery' ||
-        articleType === 'Blog post' ||
-        articleType === 'Travel article';
-      const baseReportingSources = await fetchSources(
-        title,
-        needsRelevanceSourcing
-          ? {
-              maxAgeMs: null,
-              serpParams: { sort_by: 'relevance' },
-            }
-          : undefined
-      );
-      let reportingSources = baseReportingSources;
+      let reportingSources: ReportingSource[] = [];
       if (articleType === 'Travel article') {
-        const evergreenSources = await fetchEvergreenTravelSources(title, {
+        reportingSources = await fetchTravelReportingSources(title, {
           travelState,
           travelPreset,
         });
-        reportingSources = mergeEvergreenTravelSources(
-          baseReportingSources,
-          evergreenSources
+      } else {
+        const needsRelevanceSourcing =
+          articleType === 'Listicle/Gallery' || articleType === 'Blog post';
+        reportingSources = await fetchSources(
+          title,
+          needsRelevanceSourcing
+            ? {
+                maxAgeMs: null,
+                serpParams: { sort_by: 'relevance' },
+              }
+            : undefined
         );
       }
 
