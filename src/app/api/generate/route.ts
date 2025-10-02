@@ -1366,9 +1366,13 @@ async function fetchEvergreenTravelSources(
     let qualifies =
       qualifiesByHeadline || qualifiesByState || qualifiesWithTravelContext;
 
-    if (qualifies && tokensForMatching.length === 0) {
-      if (!hasStateMatch || !hasTravelContext || isHomepagePath) {
+    if (qualifies) {
+      if (isHomepagePath) {
         qualifies = false;
+      } else if (tokensForMatching.length === 0) {
+        if (!hasStateMatch || !hasTravelContext) {
+          qualifies = false;
+        }
       }
     }
 
