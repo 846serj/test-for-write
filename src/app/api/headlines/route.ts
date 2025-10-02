@@ -2041,6 +2041,16 @@ function createHeadlinesHandler(
   };
 
   const aggregatedHeadlines: HeadlineCandidate[] = [];
+  const fromDateLimit = from ? new Date(from) : null;
+  const toDateLimit = to ? new Date(to) : null;
+  const fromTimestamp =
+    fromDateLimit && !Number.isNaN(fromDateLimit.getTime())
+      ? fromDateLimit.getTime()
+      : null;
+  const toTimestamp =
+    toDateLimit && !Number.isNaN(toDateLimit.getTime())
+      ? toDateLimit.getTime()
+      : null;
   const queriesAttempted: string[] = [];
   const queryWarnings: string[] = [];
   let successfulQueries = 0;
@@ -2142,6 +2152,25 @@ function createHeadlinesHandler(
         for (const headline of headlines) {
           if (rssAdded >= rssTotalQuota || feedQuotaRemaining <= 0) {
             break;
+          }
+
+          const publishedAtDate = headline.publishedAt
+            ? new Date(headline.publishedAt)
+            : null;
+          const publishedTimestamp =
+            publishedAtDate && !Number.isNaN(publishedAtDate.getTime())
+              ? publishedAtDate.getTime()
+              : null;
+
+          if (publishedTimestamp === null) {
+            continue;
+          }
+
+          if (
+            (fromTimestamp !== null && publishedTimestamp < fromTimestamp) ||
+            (toTimestamp !== null && publishedTimestamp > toTimestamp)
+          ) {
+            continue;
           }
 
           if (addHeadlineIfUnique(aggregatedHeadlines, headline, dedupeOptions)) {
