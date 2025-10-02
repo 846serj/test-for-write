@@ -367,15 +367,14 @@ const VERIFICATION_DISCREPANCY_THRESHOLD = 0;
 const VERIFICATION_MAX_SOURCE_FIELD_LENGTH = 600;
 const VERIFICATION_MAX_SOURCES = 8;
 
-const DEFAULT_GROK_VERIFICATION_TIMEOUT_MS = 9_000;
-const GROK_VERIFICATION_TIMEOUT_MS = (() => {
-  const raw = process.env.GROK_VERIFICATION_TIMEOUT_MS;
+const DEFAULT_VERIFICATION_TIMEOUT_MS = 9_000;
+const VERIFICATION_TIMEOUT_MS = (() => {
+  const raw = process.env.OPENAI_VERIFICATION_TIMEOUT_MS;
   const parsed = raw ? Number(raw) : Number.NaN;
-  return Number.isFinite(parsed) ? parsed : DEFAULT_GROK_VERIFICATION_TIMEOUT_MS;
+  return Number.isFinite(parsed) ? parsed : DEFAULT_VERIFICATION_TIMEOUT_MS;
 })();
 
-const GROK_VERIFICATION_MODEL =
-  process.env.GROK_VERIFICATION_MODEL ?? 'grok-3-mini';
+const VERIFICATION_MODEL = process.env.OPENAI_VERIFICATION_MODEL ?? 'gpt-4o-mini';
 
 // Low temperature to encourage factual consistency for reporting prompts
 const FACTUAL_TEMPERATURE = 0.2;
@@ -667,7 +666,7 @@ function formatKeyDetails(summary: string | undefined | null): string[] {
   return segments;
 }
 
-async function generateOutlineWithGrokFallback(
+async function generateOutlineWithFallback(
   prompt: string,
   fallbackModel: string,
   temperature = 0.7
@@ -2937,10 +2936,18 @@ function normalizeVerificationSources(
   return normalized;
 }
 
-function isRetriableGrokError(err: unknown): boolean {
+function isRetriableOpenAIError(err: unknown): boolean {
+  if (err && typeof err === 'object') {
+    const status = (err as { status?: number }).status;
+    if (typeof status === 'number') {
+      return status >= 500 && status < 600;
+    }
+  }
+
   if (!(err instanceof Error)) {
     return false;
   }
+
   const match = err.message.match(/status\s+(\d{3})/i);
   if (!match) {
     return false;
@@ -2949,29 +2956,43 @@ function isRetriableGrokError(err: unknown): boolean {
   return Number.isFinite(status) && status >= 500 && status < 600;
 }
 
-async function runGrokVerificationWithRetry(prompt: string): Promise<string> {
-  const { grokChatCompletion } = await import('../../../lib/grok');
+async function runOpenAIVerificationWithRetry(prompt: string): Promise<string> {
+  const openai = getOpenAI();
   let lastError: unknown;
+
   for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), VERIFICATION_TIMEOUT_MS);
+
     try {
-      return await grokChatCompletion({
-        prompt,
+      const response = await openai.chat.completions.create({
+        model: VERIFICATION_MODEL,
         temperature: 0,
-        timeoutMs: GROK_VERIFICATION_TIMEOUT_MS,
-        model: GROK_VERIFICATION_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        signal: controller.signal,
       });
+
+      clearTimeout(timeout);
+
+      const content = response.choices[0]?.message?.content?.trim();
+      if (!content) {
+        throw new Error('Verification response contained no content');
+      }
+      return content;
     } catch (err) {
+      clearTimeout(timeout);
       lastError = err;
-      if (attempt < 2 && isRetriableGrokError(err)) {
+      if (attempt < 2 && isRetriableOpenAIError(err)) {
         console.warn('[api/generate] verification attempt failed, retrying', err);
         continue;
       }
       throw err;
     }
   }
+
   throw lastError instanceof Error
     ? lastError
-    : new Error('Grok verification failed unexpectedly');
+    : new Error('OpenAI verification failed unexpectedly');
 }
 
 async function verifyOutput(
@@ -2984,7 +3005,7 @@ async function verifyOutput(
   }
 
   const normalizedSources = normalizeVerificationSources(sources);
-  if (!process.env.GROK_API_KEY || normalizedSources.length === 0) {
+  if (!process.env.OPENAI_API_KEY || normalizedSources.length === 0) {
     return { isAccurate: true, discrepancies: [] };
   }
 
@@ -3023,7 +3044,7 @@ async function verifyOutput(
   ].join('\n');
 
   try {
-    const response = await runGrokVerificationWithRetry(prompt);
+    const response = await runOpenAIVerificationWithRetry(prompt);
     let parsed: any;
     try {
       parsed = JSON.parse(response);
@@ -3103,7 +3124,7 @@ async function generateWithVerification(
     ? sources
     : fallbackSources.map((url) => ({ url }));
   const shouldVerify =
-    Boolean(process.env.GROK_API_KEY) &&
+    Boolean(process.env.OPENAI_API_KEY) &&
     combinedSources.length > 0;
 
   const initialContent = await generator();
@@ -3259,7 +3280,7 @@ export async function POST(request: Request) {
         ],
       });
 
-      const outline = await generateOutlineWithGrokFallback(
+      const outline = await generateOutlineWithFallback(
         baseOutline,
         modelVersion,
         0.6
@@ -3433,7 +3454,7 @@ ${reportingContext}Requirements:
 ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond the provided sources.
 `.trim();
 
-      const outline = await generateOutlineWithGrokFallback(
+      const outline = await generateOutlineWithFallback(
         outlinePrompt,
         modelVersion,
         0.6
@@ -3571,7 +3592,7 @@ Write the full article in valid HTML below:
       referenceBlock,
     });
 
-    const outline = await generateOutlineWithGrokFallback(
+    const outline = await generateOutlineWithFallback(
       baseOutline,
       modelVersion
     );
