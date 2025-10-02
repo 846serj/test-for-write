@@ -144,6 +144,13 @@ export function buildDefaultTravelPreset(
   options: GetTravelPresetOptions = {}
 ): TravelPreset {
   const sites = options.headlineSites ?? HEADLINE_SITES;
+  const siteLookup = sites as Record<
+    string,
+    {
+      keywords?: readonly string[];
+      rssFeeds?: readonly string[];
+    }
+  >;
   const normalizedState =
     typeof stateInput === 'string' ? stateInput.trim().toLowerCase() : '';
   const stateName = normalizedState
@@ -151,7 +158,7 @@ export function buildDefaultTravelPreset(
     : 'the destination';
   const override = STATE_PRESET_OVERRIDES[normalizedState];
   const siteKey = override?.siteKey ?? null;
-  const site = siteKey ? sites[siteKey] : undefined;
+  const site = siteKey ? siteLookup[siteKey] : undefined;
   const defaultKeywords = Array.isArray(site?.keywords)
     ? dedupeStrings(site!.keywords)
     : [];
