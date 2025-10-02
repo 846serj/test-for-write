@@ -29,61 +29,6 @@ const SORT_BY_OPTIONS = [
 const DEFAULT_HEADLINE_LIMIT = 100;
 const HEADLINE_LANGUAGE = 'en';
 
-const TRAVEL_STATE_OPTIONS = [
-  { value: 'AL', label: 'Alabama' },
-  { value: 'AK', label: 'Alaska' },
-  { value: 'AZ', label: 'Arizona' },
-  { value: 'AR', label: 'Arkansas' },
-  { value: 'CA', label: 'California' },
-  { value: 'CO', label: 'Colorado' },
-  { value: 'CT', label: 'Connecticut' },
-  { value: 'DE', label: 'Delaware' },
-  { value: 'FL', label: 'Florida' },
-  { value: 'GA', label: 'Georgia' },
-  { value: 'HI', label: 'Hawaii' },
-  { value: 'ID', label: 'Idaho' },
-  { value: 'IL', label: 'Illinois' },
-  { value: 'IN', label: 'Indiana' },
-  { value: 'IA', label: 'Iowa' },
-  { value: 'KS', label: 'Kansas' },
-  { value: 'KY', label: 'Kentucky' },
-  { value: 'LA', label: 'Louisiana' },
-  { value: 'ME', label: 'Maine' },
-  { value: 'MD', label: 'Maryland' },
-  { value: 'MA', label: 'Massachusetts' },
-  { value: 'MI', label: 'Michigan' },
-  { value: 'MN', label: 'Minnesota' },
-  { value: 'MS', label: 'Mississippi' },
-  { value: 'MO', label: 'Missouri' },
-  { value: 'MT', label: 'Montana' },
-  { value: 'NE', label: 'Nebraska' },
-  { value: 'NV', label: 'Nevada' },
-  { value: 'NH', label: 'New Hampshire' },
-  { value: 'NJ', label: 'New Jersey' },
-  { value: 'NM', label: 'New Mexico' },
-  { value: 'NY', label: 'New York' },
-  { value: 'NC', label: 'North Carolina' },
-  { value: 'ND', label: 'North Dakota' },
-  { value: 'OH', label: 'Ohio' },
-  { value: 'OK', label: 'Oklahoma' },
-  { value: 'OR', label: 'Oregon' },
-  { value: 'PA', label: 'Pennsylvania' },
-  { value: 'RI', label: 'Rhode Island' },
-  { value: 'SC', label: 'South Carolina' },
-  { value: 'SD', label: 'South Dakota' },
-  { value: 'TN', label: 'Tennessee' },
-  { value: 'TX', label: 'Texas' },
-  { value: 'UT', label: 'Utah' },
-  { value: 'VT', label: 'Vermont' },
-  { value: 'VA', label: 'Virginia' },
-  { value: 'WA', label: 'Washington' },
-  { value: 'WV', label: 'West Virginia' },
-  { value: 'WI', label: 'Wisconsin' },
-  { value: 'WY', label: 'Wyoming' },
-] as const;
-
-type TravelStateCode = (typeof TRAVEL_STATE_OPTIONS)[number]['value'];
-
 const NO_RECENT_NEWS_MESSAGE =
   'No recent news on this topic. Adjust your topic, keywords, or timeframe to broaden the search for relevant reporting.';
 
@@ -393,12 +338,10 @@ export default function GeneratePage() {
   const [title, setTitle] = useState('');
   const [articleType, setArticleType] = useState<
     | 'Blog post'
-    | 'Travel article'
     | 'Listicle/Gallery'
     | 'Recipe article'
     | 'News article'
   >('Blog post');
-  const [travelState, setTravelState] = useState<TravelStateCode>('OR');
 
   // for blog posts
   const [lengthOption, setLengthOption] = useState<
@@ -666,11 +609,7 @@ export default function GeneratePage() {
       alert('Enter a title first');
       return;
     }
-    if (
-      (articleType === 'Blog post' || articleType === 'Travel article') &&
-      lengthOption === 'custom' &&
-      customSections < 1
-    ) {
+    if (articleType === 'Blog post' && lengthOption === 'custom' && customSections < 1) {
       alert('Enter a valid number of sections');
       return;
     }
@@ -707,10 +646,6 @@ export default function GeneratePage() {
         payload.lengthOption = lengthOption;
         payload.customSections =
           lengthOption === 'custom' ? customSections : undefined;
-      }
-
-      if (articleType === 'Travel article') {
-        payload.travelState = travelState;
       }
 
       // Save payload for future regeneration
@@ -1216,35 +1151,11 @@ export default function GeneratePage() {
               onChange={(e) => setArticleType(e.target.value as any)}
             >
               <option value="Blog post">Blog post</option>
-              <option value="Travel article">Travel article</option>
               <option value="Listicle/Gallery">Listicle/Gallery</option>
               <option value="Recipe article">Recipe article</option>
               <option value="News article">News article</option>
             </select>
           </div>
-
-          {articleType === 'Travel article' && (
-            <div>
-              <label
-                className={labelStyle}
-                htmlFor="generate-travel-destination"
-              >
-                Travel destination
-              </label>
-              <select
-                className={inputStyle}
-                value={travelState}
-                id="generate-travel-destination"
-                onChange={(e) => setTravelState(e.target.value as TravelStateCode)}
-              >
-                {TRAVEL_STATE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           {/* CUSTOM INSTRUCTIONS */}
           <div>
