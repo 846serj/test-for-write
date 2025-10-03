@@ -2585,10 +2585,7 @@ function isRetriableGrokError(err: unknown): boolean {
   return Number.isFinite(status) && status >= 500 && status < 600;
 }
 
-async function runGrokVerificationWithRetry(
-  prompt: string,
-  currentIsoTimestamp?: string
-): Promise<string> {
+async function runGrokVerificationWithRetry(prompt: string): Promise<string> {
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -2596,15 +2593,9 @@ async function runGrokVerificationWithRetry(
     const timeout = setTimeout(() => controller.abort(), VERIFICATION_TIMEOUT_MS);
 
     try {
-      const messages: GrokChatCompletionMessage[] = currentIsoTimestamp
-        ? [
-            {
-              role: 'system',
-              content: `The current date and time is ${currentIsoTimestamp}. Use this as the reference "today" when fact-checking claims.`,
-            },
-            { role: 'user', content: prompt },
-          ]
-        : [{ role: 'user', content: prompt }];
+      const messages: GrokChatCompletionMessage[] = [
+        { role: 'user', content: prompt },
+      ];
       const response = await runChatCompletion(
         {
           model: VERIFICATION_MODEL,
@@ -2638,24 +2629,13 @@ async function runGrokVerificationWithRetry(
     : new Error('Verification request failed unexpectedly');
 }
 
-async function runOpenAIVerificationWithTimeout(
-  prompt: string,
-  currentIsoTimestamp?: string
-): Promise<string> {
+async function runOpenAIVerificationWithTimeout(prompt: string): Promise<string> {
   const openai = getOpenAI();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), VERIFICATION_TIMEOUT_MS);
 
   try {
-    const messages = currentIsoTimestamp
-      ? [
-          {
-            role: 'system' as const,
-            content: `The current date and time is ${currentIsoTimestamp}. Use this as the reference "today" when fact-checking claims.`,
-          },
-          { role: 'user' as const, content: prompt },
-        ]
-      : [{ role: 'user' as const, content: prompt }];
+    const messages = [{ role: 'user' as const, content: prompt }];
 
     const model = process.env.OPENAI_VERIFICATION_MODEL?.trim() || 'gpt-4o-mini';
     const response = await openai.chat.completions.create(
@@ -2797,8 +2777,6 @@ async function verifyOutput(
     return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
   }
 
-  const referenceIso = deriveReferenceIsoTimestamp(normalizedSources);
-
   const formattedSources = normalizedSources
     .map((item, index) => {
       const parts = [`${index + 1}. URL: ${item.url}`];
@@ -2844,10 +2822,7 @@ async function verifyOutput(
   if (!hasGrokKey) {
     if (hasOpenAIKey) {
       try {
-        const openAiOnlyResponse = await runOpenAIVerificationWithTimeout(
-          prompt,
-          referenceIso
-        );
+        const openAiOnlyResponse = await runOpenAIVerificationWithTimeout(prompt);
         return evaluateVerificationResponse(openAiOnlyResponse, themeCoverageIssue);
       } catch (openAiErr) {
         console.warn(
@@ -2869,17 +2844,14 @@ async function verifyOutput(
   }
 
   try {
-    const response = await runGrokVerificationWithRetry(prompt, referenceIso);
+    const response = await runGrokVerificationWithRetry(prompt);
     return evaluateVerificationResponse(response, themeCoverageIssue);
   } catch (err) {
     console.warn('[api/generate] GROK_REVIEW_FAILED – verification failed', err);
 
     if (hasOpenAIKey) {
       try {
-        const fallbackResponse = await runOpenAIVerificationWithTimeout(
-          prompt,
-          referenceIso
-        );
+        const fallbackResponse = await runOpenAIVerificationWithTimeout(prompt);
         return evaluateVerificationResponse(fallbackResponse, themeCoverageIssue);
       } catch (openAiErr) {
         console.warn(

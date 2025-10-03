@@ -5,32 +5,24 @@ import { test } from 'node:test';
 const routePath = new URL('../src/app/api/generate/route.ts', import.meta.url);
 const routeTs = fs.readFileSync(routePath, 'utf8');
 
-test('runGrokVerificationWithRetry accepts optional timestamp parameter', () => {
+test('runGrokVerificationWithRetry accepts only the prompt parameter', () => {
   assert(
-    /async function runGrokVerificationWithRetry\(\s*prompt: string,\s*currentIsoTimestamp\?: string\s*\)/.test(
+    /async function runGrokVerificationWithRetry\(\s*prompt: string\s*\): Promise<string>\s*{/.test(
       routeTs
     ),
-    'runGrokVerificationWithRetry should accept the current ISO timestamp.'
+    'runGrokVerificationWithRetry should only expect the user prompt.'
   );
 });
 
-test('runGrokVerificationWithRetry adds system message with current timestamp', () => {
+test('runGrokVerificationWithRetry builds a user-only message payload', () => {
   const messageBlockMatch = routeTs.match(
-    /const messages[^=]*= currentIsoTimestamp[\s\S]*?\n\s*const response = await runChatCompletion/
+    /const messages:[^=]*= \[[\s\S]*?\{ role: 'user', content: prompt }[\s\S]*?\];\s*\n\s*const response = await runChatCompletion/
   );
   assert(messageBlockMatch, 'Expected to locate message construction block.');
   const messageBlock = messageBlockMatch[0];
   assert(
-    messageBlock.includes("role: 'system'"),
-    'System role message should be included when timestamp is available.'
-  );
-  assert(
-    messageBlock.includes('The current date and time is ${currentIsoTimestamp}'),
-    'System message should mention the current ISO timestamp.'
-  );
-  assert(
-    messageBlock.includes(": [{ role: 'user', content: prompt }]"),
-    'Fallback to a user-only message should remain for missing timestamps.'
+    !messageBlock.includes("role: 'system'"),
+    'System role message should no longer be injected for verification.'
   );
 });
 
@@ -45,21 +37,21 @@ test('runGrokVerificationWithRetry requests streaming Grok completions', () => {
   );
 });
 
-test('verifyOutput derives reference timestamp from sources', () => {
+test('verifyOutput sends prompts directly to verification helpers', () => {
   assert(
-    routeTs.includes(
-      'const referenceIso = deriveReferenceIsoTimestamp(normalizedSources);'
-    ),
-    'verifyOutput should derive the reference ISO timestamp from the normalized sources.'
+    routeTs.includes('const hasGrokKey = Boolean(process.env.GROK_API_KEY?.trim());'),
+    'verifyOutput should determine whether a Grok key is available.'
   );
   assert(
-    routeTs.includes('runGrokVerificationWithRetry(prompt, referenceIso)'),
-    'verifyOutput should pass the derived timestamp to Grok verification.'
+    routeTs.includes('const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY?.trim());'),
+    'verifyOutput should determine whether an OpenAI key is available.'
   );
-  const openAiCalls = routeTs.match(
-    /runOpenAIVerificationWithTimeout\(\s*prompt,\s*referenceIso\s*\)/g
+  assert(
+    routeTs.includes('runGrokVerificationWithRetry(prompt);'),
+    'verifyOutput should pass only the prompt to Grok verification.'
   );
-  assert(openAiCalls && openAiCalls.length >= 1, 'OpenAI verification should receive the derived timestamp.');
+  const openAiCalls = routeTs.match(/runOpenAIVerificationWithTimeout\(\s*prompt\s*\)/g);
+  assert(openAiCalls && openAiCalls.length >= 1, 'OpenAI verification should receive just the prompt.');
 });
 
 test('deriveReferenceIsoTimestamp enforces future drift guard', () => {
@@ -79,13 +71,8 @@ test('deriveReferenceIsoTimestamp enforces future drift guard', () => {
 });
 
 test('verifyOutput supports OpenAI-only verification path when Grok key missing', () => {
-  assert(
-    routeTs.includes('const hasGrokKey = Boolean(process.env.GROK_API_KEY?.trim());'),
-    'verifyOutput should determine whether a Grok key is available.'
-  );
-
   const openAiOnlyBlock = routeTs.match(
-    /if \(!hasGrokKey\) {([\s\S]*?)runOpenAIVerificationWithTimeout\(\s*prompt,\s*referenceIso\s*\)/
+    /if \(!hasGrokKey\) {([\s\S]*?)runOpenAIVerificationWithTimeout\(\s*prompt\s*\)/
   );
   assert(
     openAiOnlyBlock,
