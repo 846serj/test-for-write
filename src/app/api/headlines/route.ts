@@ -145,7 +145,16 @@ function decodeTextField(value: unknown): string {
   return '';
 }
 
-function resolveLimit(rawLimit: unknown): number {
+type ResolvedLimit = {
+  value: number | null;
+  provided: boolean;
+};
+
+function resolveLimit(rawLimit: unknown): ResolvedLimit {
+  if (rawLimit === undefined || rawLimit === null) {
+    return { value: null, provided: false };
+  }
+
   let numeric: number | null = null;
 
   if (typeof rawLimit === 'number' && Number.isFinite(rawLimit)) {
@@ -158,11 +167,12 @@ function resolveLimit(rawLimit: unknown): number {
   }
 
   if (numeric === null) {
-    return DEFAULT_LIMIT;
+    return { value: DEFAULT_LIMIT, provided: false };
   }
 
   const truncated = Math.trunc(numeric);
-  return Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, truncated));
+  const clamped = Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, truncated));
+  return { value: clamped, provided: true };
 }
 
 function badRequest(message: string) {
@@ -1869,7 +1879,8 @@ function createHeadlinesHandler(
     );
   }
 
-  const limit = resolveLimit(body.limit);
+  const limitInfo = resolveLimit(body.limit);
+  const limit = limitInfo.value ?? DEFAULT_LIMIT;
 
   let dedupeMode: DedupeMode;
   try {
@@ -2136,6 +2147,7 @@ function createHeadlinesHandler(
   const serpTimeFilter = computeSerpTimeFilter(from, to);
   const keywordHeadlineResults = new Map<string, KeywordAggregation>();
   const keywordOrder: string[] = [];
+  const applyGlobalLimit = limitInfo.provided || mode !== 'rss';
 
   const ensureKeywordEntry = (keyword: string, queryValue: string) => {
     let existing = keywordHeadlineResults.get(keyword);
@@ -2153,7 +2165,9 @@ function createHeadlinesHandler(
       attributeNamePrefix: '@_',
     });
 
-    const rssTotalQuota = Math.max(1, limit);
+    const rssTotalQuota = applyGlobalLimit
+      ? Math.max(1, limit)
+      : Number.POSITIVE_INFINITY;
     let rssAdded = 0;
 
     for (const feedUrl of rssFeeds) {
@@ -2584,7 +2598,10 @@ function createHeadlinesHandler(
     );
 
   const rankedCandidates = rankHeadlineCandidates(aggregatedHeadlines);
-  const topRanked = rankedCandidates.slice(0, limit);
+  const limitForResponse = applyGlobalLimit
+    ? limit
+    : rankedCandidates.length;
+  const topRanked = rankedCandidates.slice(0, limitForResponse);
   const headlineEntries = buildHeadlineResponses(topRanked);
 
   const payload: Record<string, unknown> = {
