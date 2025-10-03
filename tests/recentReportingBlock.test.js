@@ -16,6 +16,9 @@ const buildBlockMatch = tsCode.match(/function buildRecentReportingBlock[\s\S]*?
 const buildArticlePromptMatch = tsCode.match(
   /function buildArticlePrompt[\s\S]*?`\.trim\(\);\n\}/
 );
+const buildListicleArticlePromptMatch = tsCode.match(
+  /function buildListicleArticlePrompt[\s\S]*?\n\}/
+);
 
 if (
   !detailInstructionMatch ||
@@ -23,7 +26,8 @@ if (
   !formatPublishedMatch ||
   !normalizeSummaryMatch ||
   !buildBlockMatch ||
-  !buildArticlePromptMatch
+  !buildArticlePromptMatch ||
+  !buildListicleArticlePromptMatch
 ) {
   throw new Error('Failed to extract helper definitions from route.ts');
 }
@@ -43,12 +47,20 @@ async function transpile(snippet) {
   }
 }
 
-function extractPromptSnippet(startMarker) {
-  const start = tsCode.indexOf(startMarker);
+function extractPromptSnippet(startMarker, occurrence = 0) {
+  let fromIndex = 0;
+  let start = -1;
+  for (let i = 0; i <= occurrence; i += 1) {
+    start = tsCode.indexOf(startMarker, fromIndex);
+    if (start === -1) {
+      break;
+    }
+    fromIndex = start + startMarker.length;
+  }
   if (start === -1) {
     throw new Error(`Unable to locate marker: ${startMarker}`);
   }
-  const reportingStart = tsCode.indexOf('const reportingSection', start);
+  const reportingStart = tsCode.lastIndexOf('const reportingSection', start);
   if (reportingStart === -1) {
     throw new Error(`Unable to locate reporting section for marker: ${startMarker}`);
   }
@@ -162,10 +174,14 @@ export { details };
   assert(details.includes('Name these entities precisely: Pfizer'));
 });
 
-test('listicle prompt injects reporting block and grounding instruction', async () => {
-  const promptSnippet = extractPromptSnippet("if (articleType === 'Listicle/Gallery')");
+test('dedicated listicle prompt injects reporting block and grounding instruction', async () => {
+  const promptSnippet = extractPromptSnippet(
+    'const articlePrompt = buildListicleArticlePrompt({'
+  );
   const snippet = `
 ${reportingHelpers}
+${buildArticlePromptMatch[0]}
+${buildListicleArticlePromptMatch[0]}
 const reportingSources = [
   {
     title: 'Sample Investigation',
@@ -199,6 +215,58 @@ export { articlePrompt, reportingBlock, groundingInstruction };
   assert(
     articlePrompt.includes('accurate, highly relevant sourcing'),
     'Listicle prompt should emphasize accurate, highly relevant sourcing.'
+  );
+  assert.strictEqual(
+    reportingBlock.trim().startsWith('Key facts from recent reporting'),
+    true
+  );
+  assert.strictEqual(groundingInstruction.includes('cite the matching URL'), true);
+});
+
+test('blog listicle mode prompt injects reporting block and grounding instruction', async () => {
+  const promptSnippet = extractPromptSnippet(
+    'const articlePrompt = isListicleMode',
+    1
+  );
+  const snippet = `
+${reportingHelpers}
+${buildArticlePromptMatch[0]}
+${buildListicleArticlePromptMatch[0]}
+const isListicleMode = true;
+const blogExtraRequirements = [];
+const reportingSources = [
+  {
+    title: 'Format Toggle Source',
+    summary: 'Additional coverage when listicle mode is forced.',
+    url: 'https://news.test/toggle',
+    publishedAt: '2024-06-01T09:00:00Z',
+  },
+];
+const reportingBlock = buildRecentReportingBlock(reportingSources);
+const groundingInstruction = reportingSources.length
+  ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\\n'
+  : '';
+const linkInstruction = '';
+const title = 'Blog forcing listicle mode';
+const outline = 'INTRO:\\n- Opening\\n\\n1. Item';
+const lengthInstruction = '- Keep the list concise.\\n';
+const numberingInstruction = '- Number the items sequentially.\\n';
+const wordCountInstruction = '- Aim for 120 words per item.\\n';
+const customInstructionBlock = '';
+const toneInstruction = '';
+const povInstruction = '';
+${promptSnippet}
+export { articlePrompt, reportingBlock, groundingInstruction };
+`;
+  const { articlePrompt, reportingBlock, groundingInstruction } = await transpile(snippet);
+  assert(articlePrompt.includes('Key facts from recent reporting'));
+  assert(articlePrompt.includes('Additional coverage when listicle mode is forced.'));
+  assert(articlePrompt.includes('https://news.test/toggle'));
+  assert(articlePrompt.includes('Base every factual statement on the reporting summaries provided and cite the matching URL'));
+  assert(articlePrompt.includes('authoritative reporting summaries provided'));
+  assert(
+    articlePrompt.includes('accurate, highly relevant sourcing'),
+    'Blog listicle mode prompt should emphasize accurate, highly relevant sourcing.'
   );
   assert.strictEqual(
     reportingBlock.trim().startsWith('Key facts from recent reporting'),
