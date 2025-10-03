@@ -92,3 +92,30 @@ test('verifyOutput supports OpenAI-only verification path when Grok key missing'
     'verifyOutput should call runOpenAIVerificationWithTimeout when Grok is unavailable.'
   );
 });
+
+test('verifyOutput enforces prompt size limits with truncation notices', () => {
+  assert(
+    routeTs.includes('const MAX_ARTICLE_HTML_LENGTH = 80_000;'),
+    'Expected an article HTML length guard constant.'
+  );
+  assert(
+    routeTs.includes('const MAX_SOURCE_PROMPT_LENGTH = 60_000;'),
+    'Expected a sources prompt length guard constant.'
+  );
+  assert(
+    /trimmedContent\.length > MAX_ARTICLE_HTML_LENGTH/.test(routeTs),
+    'Article content should be sliced when exceeding the maximum length.'
+  );
+  assert(
+    /formattedSources && formattedSources\.length > MAX_SOURCE_PROMPT_LENGTH/.test(routeTs),
+    'Source listings should be sliced when exceeding the maximum length.'
+  );
+  assert(
+    routeTs.includes('[Article truncated for verification]'),
+    'Article truncation notice should be appended when slicing occurs.'
+  );
+  assert(
+    routeTs.includes('[Sources truncated for verification]'),
+    'Source truncation notice should be appended when slicing occurs.'
+  );
+});
