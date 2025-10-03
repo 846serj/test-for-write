@@ -105,6 +105,10 @@ const DEDUPE_MODES = ['default', 'strict'] as const;
 type DedupeMode = (typeof DEDUPE_MODES)[number];
 const DEDUPE_MODE_SET = new Set<string>(DEDUPE_MODES);
 
+const HEADLINE_FETCH_MODES = ['auto', 'rss', 'search'] as const;
+type HeadlineFetchMode = (typeof HEADLINE_FETCH_MODES)[number];
+const HEADLINE_FETCH_MODE_SET = new Set<string>(HEADLINE_FETCH_MODES);
+
 const ISO_DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_DATE_TIME_REGEX =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/i;
@@ -487,6 +491,7 @@ type HeadlinesRequestBody = {
   rssFeeds?: unknown;
   dedupeMode?: unknown;
   excludeUrls?: unknown;
+  mode?: unknown;
 };
 
 type OpenAIClient = {
@@ -647,6 +652,27 @@ function normalizeDedupeMode(raw: unknown): DedupeMode {
   }
 
   return trimmed as DedupeMode;
+}
+
+function normalizeFetchMode(raw: unknown): HeadlineFetchMode {
+  if (raw === undefined || raw === null) {
+    return 'auto';
+  }
+
+  if (typeof raw !== 'string') {
+    throw new Error('mode must be provided as a string');
+  }
+
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) {
+    return 'auto';
+  }
+
+  if (!HEADLINE_FETCH_MODE_SET.has(trimmed)) {
+    throw new Error(`Unsupported mode value: ${raw}`);
+  }
+
+  return trimmed as HeadlineFetchMode;
 }
 
 function toArray<T>(value: T | T[] | undefined | null): T[] {
@@ -1843,10 +1869,6 @@ function createHeadlinesHandler(
     );
   }
 
-  if (!query && keywords.length === 0 && !description) {
-    return badRequest('Either query, keywords, or description must be provided');
-  }
-
   const limit = resolveLimit(body.limit);
 
   let dedupeMode: DedupeMode;
@@ -1855,6 +1877,15 @@ function createHeadlinesHandler(
   } catch (error) {
     return badRequest(
       error instanceof Error ? error.message : 'Invalid dedupeMode parameter'
+    );
+  }
+
+  let mode: HeadlineFetchMode;
+  try {
+    mode = normalizeFetchMode(body.mode);
+  } catch (error) {
+    return badRequest(
+      error instanceof Error ? error.message : 'Invalid mode parameter'
     );
   }
 
@@ -1930,6 +1961,19 @@ function createHeadlinesHandler(
     );
   }
 
+  if (mode === 'rss' && rssFeeds.length === 0) {
+    mode = 'auto';
+  }
+
+  if (
+    !query &&
+    keywords.length === 0 &&
+    !description &&
+    !(mode === 'rss' && rssFeeds.length > 0)
+  ) {
+    return badRequest('Either query, keywords, or description must be provided');
+  }
+
   if (excludeUrls.length > 0) {
     dedupeOptions.excludedUrls = new Set(excludeUrls);
   }
@@ -1949,7 +1993,7 @@ function createHeadlinesHandler(
 
   let inferredKeywords: string[] | null = null;
 
-  if (keywords.length === 0 && description) {
+  if (mode !== 'rss' && keywords.length === 0 && description) {
     try {
       inferredKeywords = await inferKeywordsFromDescription(
         aiClient,
@@ -1973,27 +2017,29 @@ function createHeadlinesHandler(
   const searchQueryCandidates: SearchQueryDefinition[] = [];
   const fallbackKeywordCandidates: SearchQueryDefinition[] = [];
 
-  if (query) {
-    searchQueryCandidates.push({ query, type: 'manual' });
-  }
+  if (mode !== 'rss') {
+    if (query) {
+      searchQueryCandidates.push({ query, type: 'manual' });
+    }
 
-  if (keywords.length > 0) {
-    const trimmedKeywords = keywords
-      .map((keyword) => keyword.trim())
-      .filter((keyword) => keyword.length > 0);
+    if (keywords.length > 0) {
+      const trimmedKeywords = keywords
+        .map((keyword) => keyword.trim())
+        .filter((keyword) => keyword.length > 0);
 
-    if (trimmedKeywords.length > 0) {
-      for (const trimmedKeyword of trimmedKeywords) {
-        const queryValue = /\s/.test(trimmedKeyword)
-          ? `"${trimmedKeyword}"`
-          : trimmedKeyword;
+      if (trimmedKeywords.length > 0) {
+        for (const trimmedKeyword of trimmedKeywords) {
+          const queryValue = /\s/.test(trimmedKeyword)
+            ? `"${trimmedKeyword}"`
+            : trimmedKeyword;
 
-        fallbackKeywordCandidates.push({
-          query: queryValue,
-          type: 'keyword',
-          keyword: trimmedKeyword,
-          fallback: true,
-        });
+          fallbackKeywordCandidates.push({
+            query: queryValue,
+            type: 'keyword',
+            keyword: trimmedKeyword,
+            fallback: true,
+          });
+        }
       }
     }
   }
@@ -2022,7 +2068,7 @@ function createHeadlinesHandler(
     });
   }
 
-  if (searchQueries.length === 0) {
+  if (searchQueries.length === 0 && !(mode === 'rss' && rssFeeds.length > 0)) {
     return badRequest('No valid search queries were provided');
   }
 
@@ -2206,10 +2252,11 @@ function createHeadlinesHandler(
     }
   }
 
-  for (const searchEntry of searchQueries) {
-    if (aggregatedHeadlines.length >= limit) {
-      break;
-    }
+  if (mode !== 'rss') {
+    for (const searchEntry of searchQueries) {
+      if (aggregatedHeadlines.length >= limit) {
+        break;
+      }
 
     const search = searchEntry.query;
 
@@ -2477,8 +2524,9 @@ function createHeadlinesHandler(
       }
     }
 
-    if (querySucceeded) {
-      successfulQueries += 1;
+      if (querySucceeded) {
+        successfulQueries += 1;
+      }
     }
   }
 
@@ -2547,6 +2595,7 @@ function createHeadlinesHandler(
     totalResults: aggregatedHeadlines.length,
     queriesAttempted,
     successfulQueries,
+    mode,
   };
 
   if (rankedCandidates.length > 0) {

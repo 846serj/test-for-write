@@ -9,6 +9,8 @@ export type SortByValue = 'publishedAt' | 'relevancy' | 'popularity';
 
 export type HeadlineDedupeMode = 'default' | 'strict';
 
+export type HeadlineRequestMode = 'auto' | 'rss' | 'search';
+
 export type BuildHeadlineRequestArgs = {
   keywords: string[];
   profileQuery: string;
@@ -23,6 +25,7 @@ export type BuildHeadlineRequestArgs = {
   rssFeeds?: string[];
   dedupeMode?: HeadlineDedupeMode;
   excludeUrls?: string[];
+  mode?: HeadlineRequestMode | null;
 };
 
 export type BuildHeadlineRequestBaseResult = {
@@ -172,6 +175,7 @@ export function buildHeadlineRequest(
     rssFeeds,
     dedupeMode,
     excludeUrls,
+    mode,
   } = args;
 
   const trimmedProfileQuery = profileQuery.trim();
@@ -215,10 +219,18 @@ export function buildHeadlineRequest(
     };
   }
 
+  const requestedMode: HeadlineRequestMode =
+    mode === 'rss' || mode === 'search' ? mode : 'auto';
+  const effectiveMode: HeadlineRequestMode =
+    requestedMode === 'rss' && sanitizedRssFeeds.length === 0
+      ? 'auto'
+      : requestedMode;
+
   if (
     !hasProfileQuery &&
     keywords.length === 0 &&
-    !trimmedDescription
+    !trimmedDescription &&
+    !(effectiveMode === 'rss' && sanitizedRssFeeds.length > 0)
   ) {
     return {
       ok: false,
@@ -236,6 +248,8 @@ export function buildHeadlineRequest(
     limit,
     sortBy,
   };
+
+  payload.mode = effectiveMode;
 
   if (hasProfileQuery) {
     payload.query = trimmedProfileQuery;
