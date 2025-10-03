@@ -2596,6 +2596,121 @@ async function runGrokVerificationWithRetry(
     : new Error('Verification request failed unexpectedly');
 }
 
+async function runOpenAIVerificationWithTimeout(
+  prompt: string,
+  currentIsoTimestamp?: string
+): Promise<string> {
+  const openai = getOpenAI();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), VERIFICATION_TIMEOUT_MS);
+
+  try {
+    const messages = currentIsoTimestamp
+      ? [
+          {
+            role: 'system' as const,
+            content: `The current date and time is ${currentIsoTimestamp}. Use this as the reference "today" when fact-checking claims.`,
+          },
+          { role: 'user' as const, content: prompt },
+        ]
+      : [{ role: 'user' as const, content: prompt }];
+
+    const model = process.env.OPENAI_VERIFICATION_MODEL?.trim() || 'gpt-4o-mini';
+    const response = await openai.chat.completions.create(
+      {
+        model,
+        temperature: 0,
+        messages,
+      },
+      { signal: controller.signal }
+    );
+
+    const content = response.choices[0]?.message?.content?.trim();
+    if (!content) {
+      throw new Error('Verification response contained no content');
+    }
+    return content;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function evaluateVerificationResponse(
+  response: string,
+  themeCoverageIssue: ThemeCoverageIssue | null
+): VerificationResult {
+  let parsed: any;
+
+  try {
+    parsed = JSON.parse(response);
+  } catch {
+    const match = response.match(/\{[\s\S]*\}/);
+    if (match) {
+      parsed = JSON.parse(match[0]);
+    }
+  }
+
+  if (!parsed || !Array.isArray(parsed.discrepancies)) {
+    if (themeCoverageIssue) {
+      console.warn('Theme coverage issue detected:', themeCoverageIssue);
+      return {
+        isAccurate: false,
+        discrepancies: [formatThemeCoverageIssue(themeCoverageIssue)],
+        themeCoverageIssue,
+      };
+    }
+    return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
+  }
+
+  const normalizedDiscrepancies = parsed.discrepancies
+    .map((item: any) => {
+      if (!item) {
+        return null;
+      }
+      if (typeof item === 'string') {
+        return { description: item.trim(), severity: 'critical' };
+      }
+      if (typeof item === 'object') {
+        const description = typeof item.description === 'string' ? item.description.trim() : '';
+        if (!description) {
+          return null;
+        }
+        const severity = typeof item.severity === 'string' ? item.severity.toLowerCase() : 'critical';
+        return { description, severity };
+      }
+      return null;
+    })
+    .filter((item: { description: string; severity: string } | null): item is {
+      description: string;
+      severity: string;
+    } => Boolean(item && item.description));
+
+  const criticalSeverities = new Set(['critical', 'blocker', 'must-fix']);
+  const criticalIssues = normalizedDiscrepancies.filter((item) =>
+    criticalSeverities.has((item.severity || '').toLowerCase())
+  );
+
+  const discrepancies: string[] = [];
+  if (criticalIssues.length > VERIFICATION_DISCREPANCY_THRESHOLD) {
+    const summaries = criticalIssues.map(
+      (item) => `[${(item.severity || 'critical').toUpperCase()}] ${item.description}`
+    );
+    console.warn('Accuracy issues: ', summaries);
+    discrepancies.push(...summaries);
+  }
+
+  if (themeCoverageIssue) {
+    console.warn('Theme coverage issue detected:', themeCoverageIssue);
+    discrepancies.push(formatThemeCoverageIssue(themeCoverageIssue));
+  }
+
+  if (discrepancies.length > 0) {
+    return { isAccurate: false, discrepancies, themeCoverageIssue };
+  }
+
+  return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
+}
+
 async function verifyOutput(
   content: string,
   sources: VerificationSource[],
@@ -2673,77 +2788,23 @@ async function verifyOutput(
 
   try {
     const response = await runGrokVerificationWithRetry(prompt, nowIso);
-    let parsed: any;
-    try {
-      parsed = JSON.parse(response);
-    } catch {
-      const match = response.match(/\{[\s\S]*\}/);
-      if (match) {
-        parsed = JSON.parse(match[0]);
-      }
-    }
-
-    if (!parsed || !Array.isArray(parsed.discrepancies)) {
-      if (themeCoverageIssue) {
-        console.warn('Theme coverage issue detected:', themeCoverageIssue);
-        return {
-          isAccurate: false,
-          discrepancies: [formatThemeCoverageIssue(themeCoverageIssue)],
-          themeCoverageIssue,
-        };
-      }
-      return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
-    }
-
-    const normalizedDiscrepancies = parsed.discrepancies
-      .map((item: any) => {
-        if (!item) {
-          return null;
-        }
-        if (typeof item === 'string') {
-          return { description: item.trim(), severity: 'critical' };
-        }
-        if (typeof item === 'object') {
-          const description = typeof item.description === 'string' ? item.description.trim() : '';
-          if (!description) {
-            return null;
-          }
-          const severity = typeof item.severity === 'string' ? item.severity.toLowerCase() : 'critical';
-          return { description, severity };
-        }
-        return null;
-      })
-      .filter((item: { description: string; severity: string } | null): item is {
-        description: string;
-        severity: string;
-      } => Boolean(item && item.description));
-
-    const criticalSeverities = new Set(['critical', 'blocker', 'must-fix']);
-    const criticalIssues = normalizedDiscrepancies.filter((item) =>
-      criticalSeverities.has((item.severity || '').toLowerCase())
-    );
-
-    const discrepancies: string[] = [];
-    if (criticalIssues.length > VERIFICATION_DISCREPANCY_THRESHOLD) {
-      const summaries = criticalIssues.map(
-        (item) => `[${(item.severity || 'critical').toUpperCase()}] ${item.description}`
-      );
-      console.warn('Accuracy issues: ', summaries);
-      discrepancies.push(...summaries);
-    }
-
-    if (themeCoverageIssue) {
-      console.warn('Theme coverage issue detected:', themeCoverageIssue);
-      discrepancies.push(formatThemeCoverageIssue(themeCoverageIssue));
-    }
-
-    if (discrepancies.length > 0) {
-      return { isAccurate: false, discrepancies, themeCoverageIssue };
-    }
-
-    return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
+    return evaluateVerificationResponse(response, themeCoverageIssue);
   } catch (err) {
     console.warn('[api/generate] GROK_REVIEW_FAILED – verification failed', err);
+
+    const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY?.trim());
+    if (hasOpenAIKey) {
+      try {
+        const fallbackResponse = await runOpenAIVerificationWithTimeout(prompt, nowIso);
+        return evaluateVerificationResponse(fallbackResponse, themeCoverageIssue);
+      } catch (openAiErr) {
+        console.warn(
+          '[api/generate] OPENAI_FALLBACK_FAILED – verification failed',
+          openAiErr
+        );
+      }
+    }
+
     if (themeCoverageIssue) {
       console.warn('Theme coverage issue detected:', themeCoverageIssue);
       return {
