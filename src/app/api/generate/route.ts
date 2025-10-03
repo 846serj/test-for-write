@@ -3003,7 +3003,11 @@ async function verifyOutput(
 
   try {
     const response = await runGrokVerificationWithRetry(prompt);
-    return evaluateVerificationResponse(response, themeCoverageIssue);
+    const verificationResult = evaluateVerificationResponse(response, themeCoverageIssue);
+    if (verificationResult.isAccurate) {
+      console.info('[api/generate] GROK_VERIFICATION_SUCCEEDED – article approved');
+    }
+    return verificationResult;
   } catch (err) {
     console.warn('[api/generate] GROK_REVIEW_FAILED – verification failed', err);
 
