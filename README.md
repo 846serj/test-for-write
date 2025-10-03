@@ -29,11 +29,14 @@ saved footer before creating the draft post.
 
 ## Verification configuration
 
-Article verification uses OpenAI chat completions to double-check generated
-drafts whenever `OPENAI_API_KEY` is set and at least one source is available.
-You can override the defaults by setting `OPENAI_VERIFICATION_MODEL` (defaults
-to `gpt-4o-mini`) and `OPENAI_VERIFICATION_TIMEOUT_MS` (defaults to `9000`). See
-`.env.example` for the expected format.
+Article verification now uses xAI's Grok chat completions to double-check
+generated drafts whenever `GROK_API_KEY` is set and at least one source is
+available. The helper defaults to the `grok-4` model but you can override it by
+setting `GROK_VERIFICATION_MODEL`. Requests abort after 9000 ms unless you
+provide a custom `GROK_VERIFICATION_TIMEOUT_MS` value. For teams migrating from
+an OpenAI setup, the previous `OPENAI_API_KEY`, `OPENAI_VERIFICATION_MODEL`, and
+`OPENAI_VERIFICATION_TIMEOUT_MS` variables are still respected as fallbacks so
+you can transition keys gradually. See `.env.example` for the expected format.
 
 ## More Specific Articles
 

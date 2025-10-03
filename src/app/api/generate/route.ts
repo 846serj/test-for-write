@@ -1,7 +1,11 @@
 // route.ts
 import { NextResponse } from 'next/server';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { getOpenAI } from '../../../lib/openai';
+import {
+  DEFAULT_GROK_MODEL,
+  runChatCompletion,
+  type GrokChatCompletionMessage,
+} from '../../../lib/grok';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 import {
@@ -373,12 +377,12 @@ const VERIFICATION_MAX_SOURCES = 8;
 
 const DEFAULT_VERIFICATION_TIMEOUT_MS = 9_000;
 const VERIFICATION_TIMEOUT_MS = (() => {
-  const raw = process.env.OPENAI_VERIFICATION_TIMEOUT_MS;
+  const raw = process.env.GROK_VERIFICATION_TIMEOUT_MS ?? process.env.OPENAI_VERIFICATION_TIMEOUT_MS;
   const parsed = raw ? Number(raw) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : DEFAULT_VERIFICATION_TIMEOUT_MS;
 })();
 
-const VERIFICATION_MODEL = process.env.OPENAI_VERIFICATION_MODEL ?? 'gpt-4o-mini';
+const VERIFICATION_MODEL = DEFAULT_GROK_MODEL;
 
 const THEME_COVERAGE_THRESHOLD = (() => {
   const raw = process.env.TRAVEL_THEME_COVERAGE_THRESHOLD;
@@ -2520,7 +2524,7 @@ function normalizeVerificationSources(
   return normalized;
 }
 
-function isRetriableOpenAIError(err: unknown): boolean {
+function isRetriableGrokError(err: unknown): boolean {
   if (err && typeof err === 'object') {
     const status = (err as { status?: number }).status;
     if (typeof status === 'number') {
@@ -2540,11 +2544,10 @@ function isRetriableOpenAIError(err: unknown): boolean {
   return Number.isFinite(status) && status >= 500 && status < 600;
 }
 
-async function runOpenAIVerificationWithRetry(
+async function runGrokVerificationWithRetry(
   prompt: string,
   currentIsoTimestamp?: string
 ): Promise<string> {
-  const openai = getOpenAI();
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -2552,7 +2555,7 @@ async function runOpenAIVerificationWithRetry(
     const timeout = setTimeout(() => controller.abort(), VERIFICATION_TIMEOUT_MS);
 
     try {
-      const messages: ChatCompletionMessageParam[] = currentIsoTimestamp
+      const messages: GrokChatCompletionMessage[] = currentIsoTimestamp
         ? [
             {
               role: 'system',
@@ -2561,7 +2564,7 @@ async function runOpenAIVerificationWithRetry(
             { role: 'user', content: prompt },
           ]
         : [{ role: 'user', content: prompt }];
-      const response = await openai.chat.completions.create(
+      const response = await runChatCompletion(
         {
           model: VERIFICATION_MODEL,
           temperature: 0,
@@ -2580,7 +2583,7 @@ async function runOpenAIVerificationWithRetry(
     } catch (err) {
       clearTimeout(timeout);
       lastError = err;
-      if (attempt < 2 && isRetriableOpenAIError(err)) {
+      if (attempt < 2 && isRetriableGrokError(err)) {
         console.warn('[api/generate] verification attempt failed, retrying', err);
         continue;
       }
@@ -2590,7 +2593,7 @@ async function runOpenAIVerificationWithRetry(
 
   throw lastError instanceof Error
     ? lastError
-    : new Error('OpenAI verification failed unexpectedly');
+    : new Error('Verification request failed unexpectedly');
 }
 
 async function verifyOutput(
@@ -2615,8 +2618,10 @@ async function verifyOutput(
     : null;
 
   const normalizedSources = normalizeVerificationSources(sources);
-  const shouldRunAccuracyCheck =
-    Boolean(process.env.OPENAI_API_KEY) && normalizedSources.length > 0;
+  const hasVerificationKey = Boolean(
+    process.env.GROK_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim()
+  );
+  const shouldRunAccuracyCheck = hasVerificationKey && normalizedSources.length > 0;
 
   if (!shouldRunAccuracyCheck) {
     if (themeCoverageIssue) {
@@ -2667,7 +2672,7 @@ async function verifyOutput(
   ].join('\n');
 
   try {
-    const response = await runOpenAIVerificationWithRetry(prompt, nowIso);
+    const response = await runGrokVerificationWithRetry(prompt, nowIso);
     let parsed: any;
     try {
       parsed = JSON.parse(response);
@@ -2812,8 +2817,11 @@ async function generateWithVerification(
     ? sources
     : fallbackSources.map((url) => ({ url }));
   const hasThemeCheck = Boolean(verificationOptions.themeLabel?.trim());
+  const hasVerificationKey = Boolean(
+    process.env.GROK_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim()
+  );
   const shouldVerify =
-    (Boolean(process.env.OPENAI_API_KEY) && combinedSources.length > 0) ||
+    (hasVerificationKey && combinedSources.length > 0) ||
     hasThemeCheck;
 
   const initialContent = await generator();
