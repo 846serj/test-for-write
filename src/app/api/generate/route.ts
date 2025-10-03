@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getOpenAI } from '../../../lib/openai';
 import {
   DEFAULT_GROK_MODEL,
+  DEFAULT_GROK_OUTLINE_MODEL,
   runChatCompletion,
   type GrokChatCompletionMessage,
 } from '../../../lib/grok';
@@ -860,6 +861,29 @@ async function generateOutlineWithFallback(
   fallbackModel: string,
   temperature = 0.7
 ): Promise<string> {
+  const hasGrokKey = Boolean(process.env.GROK_API_KEY?.trim());
+  if (hasGrokKey) {
+    try {
+      const grokResponse = await runChatCompletion({
+        model: DEFAULT_GROK_OUTLINE_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature,
+      });
+      const grokOutline = grokResponse.choices[0]?.message?.content?.trim();
+      if (grokOutline) {
+        return grokOutline;
+      }
+      console.warn(
+        '[api/generate] Grok outline response empty, falling back to OpenAI'
+      );
+    } catch (err) {
+      console.warn(
+        '[api/generate] Grok outline generation failed, falling back to OpenAI',
+        err
+      );
+    }
+  }
+
   const openai = getOpenAI();
   const outlineRes = await openai.chat.completions.create({
     model: fallbackModel,

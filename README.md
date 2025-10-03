@@ -32,7 +32,9 @@ saved footer before creating the draft post.
 Article verification now uses xAI's Grok chat completions to double-check
 generated drafts whenever `GROK_API_KEY` is set and at least one source is
 available. The helper defaults to the `grok-4` model but you can override it by
-setting `GROK_VERIFICATION_MODEL`. Requests abort after 20 000 ms by default,
+setting `GROK_VERIFICATION_MODEL`. Outline generation also prefers Grok when
+configured and will use `GROK_OUTLINE_MODEL` when provided, falling back to the
+verification default. Requests abort after 20 000 ms by default,
 and you can still provide a custom `GROK_VERIFICATION_TIMEOUT_MS` value. For teams migrating from
 an OpenAI setup, the previous `OPENAI_API_KEY`, `OPENAI_VERIFICATION_MODEL`, and
 `OPENAI_VERIFICATION_TIMEOUT_MS` variables continue to power the optional
