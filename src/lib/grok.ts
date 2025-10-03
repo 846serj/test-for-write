@@ -188,3 +188,6 @@ export async function runChatCompletion(
 
 export const DEFAULT_GROK_MODEL =
   process.env.GROK_VERIFICATION_MODEL?.trim() || 'grok-4-fast';
+
+export const DEFAULT_GROK_OUTLINE_MODEL =
+  process.env.GROK_OUTLINE_MODEL?.trim() || DEFAULT_GROK_MODEL;
