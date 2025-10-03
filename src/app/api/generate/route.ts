@@ -97,6 +97,11 @@ const sectionRanges: Record<string, [number, number]> = {
   longer: [10, 12],
 };
 
+function buildSystemPrompt(currentIso: string): string {
+  const referenceIso = currentIso || new Date().toISOString();
+  return `The current date and time is ${referenceIso}. Treat the reporting summaries and source links supplied in prompts as authoritative context. Avoid introducing unsourced details or time-sensitive claims that are not confirmed by those references. If sources conflict, highlight both sides (e.g., "Source A reports X, while Source B claims Y"). When mentioning Donald Trump, understand that he is the current president of the United States.`;
+}
+
 type OutlinePromptOptions = {
   title: string;
   reportingContext: string;
@@ -1147,6 +1152,38 @@ function isTimestampWithinWindow(
 
 function normalizePublishedAt(timestamp: number): string {
   return new Date(timestamp).toISOString();
+}
+
+type SourceWithPublishedAt = { publishedAt?: string | null };
+
+function deriveReferenceIsoTimestamp(
+  sources: SourceWithPublishedAt[]
+): string {
+  const nowMs = Date.now();
+  let latestTimestamp: number | null = null;
+
+  for (const source of sources) {
+    const publishedAt = source?.publishedAt;
+    if (!publishedAt) {
+      continue;
+    }
+
+    const parsed = parsePublishedTimestamp(publishedAt, nowMs);
+    if (parsed === null) {
+      continue;
+    }
+
+    if (parsed > nowMs + MAX_FUTURE_DRIFT_MS) {
+      continue;
+    }
+
+    if (latestTimestamp === null || parsed > latestTimestamp) {
+      latestTimestamp = parsed;
+    }
+  }
+
+  const referenceTimestamp = latestTimestamp ?? nowMs;
+  return new Date(referenceTimestamp).toISOString();
 }
 
 async function fetchNewsArticles(
@@ -2750,7 +2787,7 @@ async function verifyOutput(
     return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
   }
 
-  const nowIso = new Date().toISOString();
+  const referenceIso = deriveReferenceIsoTimestamp(normalizedSources);
 
   const formattedSources = normalizedSources
     .map((item, index) => {
@@ -2792,7 +2829,10 @@ async function verifyOutput(
   if (!hasGrokKey) {
     if (hasOpenAIKey) {
       try {
-        const openAiOnlyResponse = await runOpenAIVerificationWithTimeout(prompt, nowIso);
+        const openAiOnlyResponse = await runOpenAIVerificationWithTimeout(
+          prompt,
+          referenceIso
+        );
         return evaluateVerificationResponse(openAiOnlyResponse, themeCoverageIssue);
       } catch (openAiErr) {
         console.warn(
@@ -2814,14 +2854,17 @@ async function verifyOutput(
   }
 
   try {
-    const response = await runGrokVerificationWithRetry(prompt, nowIso);
+    const response = await runGrokVerificationWithRetry(prompt, referenceIso);
     return evaluateVerificationResponse(response, themeCoverageIssue);
   } catch (err) {
     console.warn('[api/generate] GROK_REVIEW_FAILED – verification failed', err);
 
     if (hasOpenAIKey) {
       try {
-        const fallbackResponse = await runOpenAIVerificationWithTimeout(prompt, nowIso);
+        const fallbackResponse = await runOpenAIVerificationWithTimeout(
+          prompt,
+          referenceIso
+        );
         return evaluateVerificationResponse(fallbackResponse, themeCoverageIssue);
       } catch (openAiErr) {
         console.warn(
@@ -2981,8 +3024,6 @@ export async function POST(request: Request) {
 
     const serpEnabled = includeLinks && useSerpApi && !!process.env.SERPAPI_KEY;
     const baseMaxTokens = calcMaxTokens(lengthOption, customSections, modelVersion);
-    const nowIso = new Date().toISOString();
-    const systemPrompt = `The current date and time is ${nowIso}. Treat the reporting summaries and source links supplied in prompts as authoritative context. Avoid introducing unsourced details or time-sensitive claims that are not confirmed by those references. If sources conflict, highlight both sides (e.g., "Source A reports X, while Source B claims Y"). When mentioning Donald Trump, understand that he is the current president of the United States.`;
     const toneChoice =
       toneOfVoice === 'Custom' && customTone ? customTone : toneOfVoice;
     const toneInstruction = toneChoice
@@ -3032,6 +3073,8 @@ export async function POST(request: Request) {
           : '';
 
       const reportingBlock = buildRecentReportingBlock(articles);
+      const referenceIso = deriveReferenceIsoTimestamp(articles);
+      const systemPrompt = buildSystemPrompt(referenceIso);
       const referenceBlock =
         linkSources.length > 0
           ? `• Use these references:\n${linkSources
@@ -3201,6 +3244,8 @@ export async function POST(request: Request) {
       const count = match ? parseInt(match[0], 10) : 5;
 
       const reportingContext = reportingBlock ? `${reportingBlock}\n\n` : '';
+      const referenceIso = deriveReferenceIsoTimestamp(reportingSources);
+      const systemPrompt = buildSystemPrompt(referenceIso);
       const outlinePrompt = `
 You are a professional writer tasked with planning a factual, source-grounded listicle outline.
 
@@ -3332,6 +3377,9 @@ Write the full article in valid HTML below:
       linkSources,
       referenceBlock,
     } = await reportingContextPromise;
+
+    const referenceIso = deriveReferenceIsoTimestamp(reportingSources);
+    const systemPrompt = buildSystemPrompt(referenceIso);
 
     let sectionInstruction: string;
     if (lengthOption === 'default') {
