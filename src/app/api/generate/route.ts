@@ -2606,17 +2606,18 @@ async function runGrokVerificationWithRetry(
           model: VERIFICATION_MODEL,
           temperature: 0,
           messages,
+          stream: true,
         },
         { signal: controller.signal }
       );
 
       clearTimeout(timeout);
 
-      const content = response.choices[0]?.message?.content?.trim();
-      if (!content) {
+      const aggregated = response.choices[0]?.message?.content?.trim();
+      if (!aggregated) {
         throw new Error('Verification response contained no content');
       }
-      return content;
+      return aggregated;
     } catch (err) {
       clearTimeout(timeout);
       lastError = err;
