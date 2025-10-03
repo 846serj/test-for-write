@@ -1,9 +1,102 @@
 import assert from 'assert';
 import fs from 'fs';
+import { createRequire } from 'module';
 import { test } from 'node:test';
+import { fileURLToPath } from 'url';
+import vm from 'vm';
+import { transformSync } from 'esbuild';
 
 const routePath = new URL('../src/app/api/generate/route.ts', import.meta.url);
 const routeTs = fs.readFileSync(routePath, 'utf8');
+const routeFilename = fileURLToPath(routePath);
+const transformedRouteTs = transformSync(routeTs, {
+  loader: 'ts',
+  format: 'cjs',
+  target: 'es2020',
+}).code;
+
+function createVerificationSandbox(envOverrides = {}) {
+  const infoLogs = [];
+  const baseRequire = createRequire(routePath);
+  const mockModules = new Map([
+    ['next/server', { NextResponse: class {} }],
+    [
+      '../../../lib/openai',
+      {
+        getOpenAI: () => ({
+          chat: {
+            completions: {
+              create: async () => ({ choices: [{ message: { content: '{}' } }] }),
+            },
+          },
+        }),
+      },
+    ],
+    [
+      '../../../lib/grok',
+      {
+        DEFAULT_GROK_MODEL: 'grok-test',
+        runChatCompletion: async () => ({ choices: [{ message: { content: '{}' } }] }),
+      },
+    ],
+    ['../../../constants/lengthOptions', { DEFAULT_WORDS: 600, WORD_RANGES: {} }],
+    ['../../../lib/serpapi', { serpapiSearch: async () => ({}) }],
+    [
+      '../../../lib/themeCoverage',
+      {
+        formatThemeCoverageIssue: (issue) => `Theme issue: ${issue}`,
+        parseThemeCoverageIssue: () => null,
+        resolveThemeThreshold: (value) => (typeof value === 'number' ? value : 0.5),
+        validateThemeCoverage: () => null,
+      },
+    ],
+  ]);
+
+  const sandbox = {
+    console: {
+      info: (...args) => infoLogs.push(args.join(' ')),
+      warn: () => {},
+      error: () => {},
+      log: () => {},
+      debug: () => {},
+      trace: () => {},
+    },
+    process: { env: { GROK_API_KEY: 'test-grok-key', ...envOverrides } },
+    setTimeout,
+    clearTimeout,
+    AbortController,
+    Request,
+    Response,
+    Headers,
+    FormData,
+    URL,
+    URLSearchParams,
+    TextEncoder,
+    TextDecoder,
+    structuredClone,
+    fetch: async () => ({ json: async () => ({}), text: async () => '' }),
+    module: { exports: {} },
+    exports: {},
+    Buffer,
+    atob: (value) => Buffer.from(value, 'base64').toString('binary'),
+    btoa: (value) => Buffer.from(value, 'binary').toString('base64'),
+  };
+
+  sandbox.global = sandbox;
+  sandbox.globalThis = sandbox;
+  sandbox.self = sandbox;
+  sandbox.require = (specifier) => {
+    if (mockModules.has(specifier)) {
+      return mockModules.get(specifier);
+    }
+    return baseRequire(specifier);
+  };
+
+  const context = vm.createContext(sandbox);
+  vm.runInContext(transformedRouteTs, context, { filename: routeFilename });
+
+  return { context, infoLogs };
+}
 
 test('runGrokVerificationWithRetry accepts only the prompt parameter', () => {
   assert(
@@ -104,5 +197,72 @@ test('verifyOutput enforces prompt size limits with truncation notices', () => {
   assert(
     routeTs.includes('[Sources truncated for verification]'),
     'Source truncation notice should be appended when slicing occurs.'
+  );
+});
+
+test('verifyOutput logs a success message when Grok approves an article', async () => {
+  const { context, infoLogs } = createVerificationSandbox();
+
+  vm.runInContext(
+    `
+      runGrokVerificationWithRetry = async () => JSON.stringify({ discrepancies: [] });
+      runOpenAIVerificationWithTimeout = async () => { throw new Error('OpenAI should not run'); };
+    `,
+    context
+  );
+
+  const result = await context.verifyOutput('<p>Verified</p>', [{ url: 'https://example.com' }]);
+
+  assert.strictEqual(result.isAccurate, true);
+  assert.strictEqual(result.discrepancies.length, 0);
+  assert.strictEqual(result.themeCoverageIssue, null);
+  assert(
+    infoLogs.some((entry) => entry.includes('GROK_VERIFICATION_SUCCEEDED')),
+    'Expected Grok verification success to emit a console.info message.'
+  );
+});
+
+test('verifyOutput does not log Grok success when falling back to OpenAI', async () => {
+  const { context, infoLogs } = createVerificationSandbox({ OPENAI_API_KEY: 'openai-key' });
+
+  vm.runInContext(
+    `
+      runGrokVerificationWithRetry = async () => { throw new Error('primary failure'); };
+      runOpenAIVerificationWithTimeout = async () => JSON.stringify({ discrepancies: [] });
+    `,
+    context
+  );
+
+  const result = await context.verifyOutput('<p>Fallback</p>', [{ url: 'https://example.com' }]);
+
+  assert.strictEqual(result.isAccurate, true);
+  assert.strictEqual(result.discrepancies.length, 0);
+  assert(
+    !infoLogs.some((entry) => entry.includes('GROK_VERIFICATION_SUCCEEDED')),
+    'Grok success log should not fire when verification falls back to OpenAI.'
+  );
+});
+
+test('verifyOutput does not log Grok success when discrepancies are reported', async () => {
+  const { context, infoLogs } = createVerificationSandbox();
+
+  vm.runInContext(
+    `
+      runGrokVerificationWithRetry = async () => JSON.stringify({
+        discrepancies: [
+          { description: 'Mismatch detected', severity: 'critical' }
+        ],
+      });
+      runOpenAIVerificationWithTimeout = async () => { throw new Error('OpenAI should not run'); };
+    `,
+    context
+  );
+
+  const result = await context.verifyOutput('<p>Mismatch</p>', [{ url: 'https://example.com' }]);
+
+  assert.strictEqual(result.isAccurate, false);
+  assert(
+    !infoLogs.some((entry) => entry.includes('GROK_VERIFICATION_SUCCEEDED')),
+    'Grok success log should only fire when no discrepancies are reported.'
   );
 });
