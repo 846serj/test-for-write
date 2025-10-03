@@ -88,6 +88,10 @@ const RELATIVE_TIME_UNIT_MS: Record<string, number> = {
 const MAX_SOURCE_WINDOW_MS = 14 * MILLIS_IN_DAY;
 const SERP_14_DAY_TBS = 'qdr:d14';
 const MAX_FUTURE_DRIFT_MS = 5 * MILLIS_IN_MINUTE;
+const MAX_ARTICLE_HTML_LENGTH = 80_000;
+const MAX_SOURCE_PROMPT_LENGTH = 60_000;
+const ARTICLE_TRUNCATION_NOTICE = '\n\n[Article truncated for verification]';
+const SOURCE_TRUNCATION_NOTICE = '\n\n[Sources truncated for verification]';
 
 const sectionRanges: Record<string, [number, number]> = {
   shorter: [2, 3],
@@ -2759,6 +2763,11 @@ async function verifyOutput(
     return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
   }
 
+  const limitedContent =
+    trimmedContent.length > MAX_ARTICLE_HTML_LENGTH
+      ? `${trimmedContent.slice(0, MAX_ARTICLE_HTML_LENGTH)}${ARTICLE_TRUNCATION_NOTICE}`
+      : trimmedContent;
+
   const themeLabel = options.themeLabel?.trim();
   const themeThreshold =
     typeof options.themeCoverageThreshold === 'number'
@@ -2809,6 +2818,11 @@ async function verifyOutput(
     })
     .join('\n');
 
+  const limitedSources =
+    formattedSources && formattedSources.length > MAX_SOURCE_PROMPT_LENGTH
+      ? `${formattedSources.slice(0, MAX_SOURCE_PROMPT_LENGTH)}${SOURCE_TRUNCATION_NOTICE}`
+      : formattedSources;
+
   const prompt = [
     'Check if this article matches sources; list discrepancies.',
     '',
@@ -2818,10 +2832,10 @@ async function verifyOutput(
     'Reserve "critical" severity for issues that would seriously mislead the reader about the core facts. Use "major" for notable but non-critical gaps and "minor" for everything else.',
     '',
     'Article HTML:',
-    trimmedContent,
+    limitedContent,
     '',
     'Sources:',
-    formattedSources || 'No sources provided.',
+    limitedSources || 'No sources provided.',
   ].join('\n');
 
   const hasGrokKey = Boolean(process.env.GROK_API_KEY?.trim());
