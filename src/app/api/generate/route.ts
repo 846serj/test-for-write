@@ -2786,13 +2786,39 @@ async function verifyOutput(
     formattedSources || 'No sources provided.',
   ].join('\n');
 
+  const hasGrokKey = Boolean(process.env.GROK_API_KEY?.trim());
+  const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY?.trim());
+
+  if (!hasGrokKey) {
+    if (hasOpenAIKey) {
+      try {
+        const openAiOnlyResponse = await runOpenAIVerificationWithTimeout(prompt, nowIso);
+        return evaluateVerificationResponse(openAiOnlyResponse, themeCoverageIssue);
+      } catch (openAiErr) {
+        console.warn(
+          '[api/generate] OPENAI_VERIFICATION_FAILED – verification failed without Grok key',
+          openAiErr
+        );
+      }
+    }
+
+    if (themeCoverageIssue) {
+      console.warn('Theme coverage issue detected:', themeCoverageIssue);
+      return {
+        isAccurate: false,
+        discrepancies: [formatThemeCoverageIssue(themeCoverageIssue)],
+        themeCoverageIssue,
+      };
+    }
+    return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
+  }
+
   try {
     const response = await runGrokVerificationWithRetry(prompt, nowIso);
     return evaluateVerificationResponse(response, themeCoverageIssue);
   } catch (err) {
     console.warn('[api/generate] GROK_REVIEW_FAILED – verification failed', err);
 
-    const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY?.trim());
     if (hasOpenAIKey) {
       try {
         const fallbackResponse = await runOpenAIVerificationWithTimeout(prompt, nowIso);

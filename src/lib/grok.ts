@@ -26,9 +26,9 @@ export interface GrokChatCompletionResponse {
 let cachedHeaders: HeadersInit | null = null;
 
 function getApiKey(): string {
-  const apiKey = process.env.GROK_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.GROK_API_KEY?.trim();
   if (!apiKey) {
-    throw new Error('Missing Grok API credentials (set GROK_API_KEY or OPENAI_API_KEY)');
+    throw new Error('Missing Grok API credentials (set GROK_API_KEY)');
   }
   return apiKey;
 }
