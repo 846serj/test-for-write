@@ -28,6 +28,7 @@ const SORT_BY_OPTIONS = [
 
 const DEFAULT_HEADLINE_LIMIT = 100;
 const HEADLINE_LANGUAGE = 'en';
+type HeadlineFetchMode = 'rss' | 'search';
 
 const NO_RECENT_NEWS_MESSAGE =
   'No recent news on this topic. Adjust your topic, keywords, or timeframe to broaden the search for relevant reporting.';
@@ -362,11 +363,16 @@ export default function GeneratePage() {
   const [loading, setLoading] = useState(false);
   const [keywords, setKeywords] = useState<string[]>([]);
   const [headlineLoading, setHeadlineLoading] = useState(false);
+  const [headlineLoadingMode, setHeadlineLoadingMode] =
+    useState<HeadlineFetchMode | null>(null);
   const [headlineError, setHeadlineError] = useState<string | null>(null);
   const [headlineResults, setHeadlineResults] = useState<HeadlineItem[]>([]);
   const [headlineQueries, setHeadlineQueries] = useState<string[]>([]);
   const [headlineDescription, setHeadlineDescription] = useState('');
   const [activeSiteKey, setActiveSiteKey] = useState<HeadlineSiteKey | null>(
+    null
+  );
+  const [activeSiteMode, setActiveSiteMode] = useState<HeadlineFetchMode | null>(
     null
   );
   const [activeSiteRssFeeds, setActiveSiteRssFeeds] = useState<string[]>([]);
@@ -542,6 +548,7 @@ export default function GeneratePage() {
 
   const handleClearSitePreset = () => {
     setActiveSiteKey(null);
+    setActiveSiteMode(null);
     setActiveSiteRssFeeds([]);
     setHeadlineDescription('');
     setKeywords([]);
@@ -549,13 +556,17 @@ export default function GeneratePage() {
     setToDate('');
   };
 
-  const handleGenerateSiteHeadlines = async (siteKey: HeadlineSiteKey) => {
+  const handleGenerateSiteHeadlines = async (
+    siteKey: HeadlineSiteKey,
+    mode: HeadlineFetchMode
+  ) => {
     const preset = HEADLINE_SITES[siteKey];
     if (!preset) {
       return;
     }
 
     setActiveSiteKey(siteKey);
+    setActiveSiteMode(mode);
     setFromDate('');
     setToDate('');
     const presetKeywords =
@@ -566,13 +577,15 @@ export default function GeneratePage() {
       'rssFeeds' in preset && Array.isArray(preset.rssFeeds)
         ? [...preset.rssFeeds]
         : [];
+    const appliedKeywords = mode === 'search' ? presetKeywords : [];
+    const appliedRssFeeds = mode === 'rss' ? presetRssFeeds : [];
     const hasPresetFilters =
-      presetKeywords.length > 0 || presetRssFeeds.length > 0;
+      appliedKeywords.length > 0 || appliedRssFeeds.length > 0;
     const presetDescription = hasPresetFilters
       ? ''
       : `Top headlines for ${preset.name}`;
-    setKeywords(presetKeywords);
-    setActiveSiteRssFeeds(presetRssFeeds);
+    setKeywords(appliedKeywords);
+    setActiveSiteRssFeeds(appliedRssFeeds);
 
     let dateOverrides: { fromDate?: string; toDate?: string } = {
       fromDate: '',
@@ -600,9 +613,10 @@ export default function GeneratePage() {
 
     await handleFetchHeadlines({
       description: presetDescription,
-      keywords: presetKeywords,
-      rssFeeds: presetRssFeeds,
+      keywords: appliedKeywords,
+      rssFeeds: appliedRssFeeds,
       presetKey: siteKey,
+      mode,
       ...dateOverrides,
     });
   };
@@ -823,6 +837,7 @@ export default function GeneratePage() {
       presetKey?: HeadlineSiteKey | null;
       fromDate?: string;
       toDate?: string;
+      mode?: HeadlineFetchMode;
     }
   ) => {
     const nextDescriptionRaw =
@@ -832,6 +847,13 @@ export default function GeneratePage() {
     const nextDescription = nextDescriptionRaw.trim();
     const nextKeywords = overrides?.keywords ?? keywords;
     const nextRssFeeds = overrides?.rssFeeds ?? activeSiteRssFeeds;
+    const nextMode: HeadlineFetchMode | null =
+      overrides?.mode ??
+      (nextRssFeeds.length > 0 && nextKeywords.length === 0
+        ? 'rss'
+        : nextKeywords.length > 0
+        ? 'search'
+        : activeSiteMode);
     const nextFromDate =
       overrides && overrides.fromDate !== undefined
         ? overrides.fromDate
@@ -849,6 +871,10 @@ export default function GeneratePage() {
 
     if (overrides?.rssFeeds) {
       setActiveSiteRssFeeds(overrides.rssFeeds);
+    }
+
+    if (overrides?.mode) {
+      setActiveSiteMode(overrides.mode);
     }
 
     if (overrides?.fromDate !== undefined) {
@@ -887,6 +913,7 @@ export default function GeneratePage() {
       return;
     }
 
+    setHeadlineLoadingMode(nextMode);
     setHeadlineLoading(true);
     setHeadlineError(null);
     setHeadlineQueries([]);
@@ -1116,6 +1143,7 @@ export default function GeneratePage() {
       setHeadlineQueries([]);
     } finally {
       setHeadlineLoading(false);
+      setHeadlineLoadingMode(null);
     }
   };
 
@@ -1477,6 +1505,17 @@ export default function GeneratePage() {
                     return `Includes ${parts[0]} and ${parts[1]}.`;
                   })();
 
+                  const isActiveRss = isActive && activeSiteMode === 'rss';
+                  const isActiveSearch = isActive && activeSiteMode === 'search';
+                  const canUseRss = rssFeedCount > 0;
+                  const canUseSearch = keywordCount > 0;
+                  const activeModeLabel =
+                    isActive && activeSiteMode
+                      ? activeSiteMode === 'rss'
+                        ? 'RSS feeds'
+                        : 'Keyword search'
+                      : null;
+
                   return (
                     <div
                       key={siteKey}
@@ -1495,7 +1534,7 @@ export default function GeneratePage() {
                             </h3>
                             {isActive && (
                               <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/60 dark:text-blue-200">
-                                Active
+                                Active{activeModeLabel ? ` • ${activeModeLabel}` : ''}
                               </span>
                             )}
                           </div>
@@ -1503,21 +1542,36 @@ export default function GeneratePage() {
                             {metadataSummary}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handleGenerateSiteHeadlines(siteKey);
-                          }}
-                          className={clsx(
-                            'w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:bg-blue-500 dark:hover:bg-blue-400 sm:w-auto',
-                            headlineLoading && 'disabled:cursor-not-allowed disabled:opacity-60'
-                          )}
-                          disabled={headlineLoading}
-                        >
-                          {headlineLoading && isActive
-                            ? 'Generating…'
-                            : `Generate ${DEFAULT_HEADLINE_LIMIT} articles`}
-                        </button>
+                        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleGenerateSiteHeadlines(siteKey, 'rss');
+                            }}
+                            className={clsx(
+                              'w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-blue-500 dark:hover:bg-blue-400 sm:w-auto'
+                            )}
+                            disabled={!canUseRss || headlineLoading}
+                          >
+                            {headlineLoading && isActiveRss
+                              ? 'Fetching RSS…'
+                              : 'Fetch RSS headlines'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleGenerateSiteHeadlines(siteKey, 'search');
+                            }}
+                            className={clsx(
+                              'w-full rounded-md border border-blue-600 px-4 py-2 text-sm font-medium text-blue-600 shadow transition hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-900/40 sm:w-auto'
+                            )}
+                            disabled={!canUseSearch || headlineLoading}
+                          >
+                            {headlineLoading && isActiveSearch
+                              ? 'Searching keywords…'
+                              : 'Search keywords'}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1584,7 +1638,13 @@ export default function GeneratePage() {
                   (keywords.length === 0 && headlineDescription.length === 0)
                 }
               >
-                {headlineLoading ? 'Fetching…' : 'Fetch Headlines'}
+                {headlineLoading
+                  ? headlineLoadingMode === 'rss'
+                    ? 'Fetching RSS…'
+                    : headlineLoadingMode === 'search'
+                    ? 'Searching keywords…'
+                    : 'Fetching…'
+                  : 'Fetch Headlines'}
               </button>
             </div>
 
@@ -1596,7 +1656,11 @@ export default function GeneratePage() {
 
             {headlineLoading && !headlineError && (
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Fetching headlines…
+                {headlineLoadingMode === 'rss'
+                  ? 'Fetching headlines from RSS feeds…'
+                  : headlineLoadingMode === 'search'
+                  ? 'Searching headlines via API…'
+                  : 'Fetching headlines…'}
               </p>
             )}
 
