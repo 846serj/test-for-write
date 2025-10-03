@@ -2153,8 +2153,7 @@ function createHeadlinesHandler(
       attributeNamePrefix: '@_',
     });
 
-    const rssPerFeedQuota = Math.max(1, Math.min(3, Math.ceil(perQuery / 2)));
-    const rssTotalQuota = Math.max(rssFeeds.length, rssPerFeedQuota * rssFeeds.length);
+    const rssTotalQuota = Math.max(1, limit);
     let rssAdded = 0;
 
     for (const feedUrl of rssFeeds) {
@@ -2164,7 +2163,6 @@ function createHeadlinesHandler(
 
       let queryLabel = `RSS: ${feedUrl}`;
       let addedFromFeed = 0;
-      let feedQuotaRemaining = rssPerFeedQuota;
 
       try {
         let response: Response;
@@ -2226,14 +2224,13 @@ function createHeadlinesHandler(
         );
 
         for (const headline of headlines) {
-          if (rssAdded >= rssTotalQuota || feedQuotaRemaining <= 0) {
+          if (rssAdded >= rssTotalQuota) {
             break;
           }
 
           if (addHeadlineIfUnique(aggregatedHeadlines, headline, dedupeOptions)) {
             addedFromFeed += 1;
             rssAdded += 1;
-            feedQuotaRemaining -= 1;
           }
         }
 
