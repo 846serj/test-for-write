@@ -1,5 +1,4 @@
 const MAX_LIST_ITEMS = 20;
-const MAX_EXCLUDE_URLS = 200;
 const MAX_RSS_FEEDS = 10;
 const ALLOWED_RSS_PROTOCOLS = new Set(['http:', 'https:']);
 
@@ -29,7 +28,6 @@ export type BuildHeadlineRequestArgs = {
   description: string;
   rssFeeds?: string[];
   dedupeMode?: HeadlineDedupeMode;
-  excludeUrls?: string[];
   mode?: HeadlineRequestMode | null;
 };
 
@@ -179,7 +177,6 @@ export function buildHeadlineRequest(
     description,
     rssFeeds,
     dedupeMode,
-    excludeUrls,
     mode,
   } = args;
 
@@ -309,42 +306,6 @@ export function buildHeadlineRequest(
 
   if (sanitizedRssFeeds.length > 0) {
     payload.rssFeeds = sanitizedRssFeeds;
-  }
-
-  const sanitizedExcludeUrls = Array.isArray(excludeUrls)
-    ? (() => {
-        const seen = new Set<string>();
-        const normalized: string[] = [];
-
-        for (const entry of excludeUrls) {
-          if (typeof entry !== 'string') {
-            continue;
-          }
-
-          const trimmed = entry.trim();
-          if (!trimmed) {
-            continue;
-          }
-
-          const key = trimmed.toLowerCase();
-          if (seen.has(key)) {
-            continue;
-          }
-
-          seen.add(key);
-          normalized.push(trimmed);
-
-          if (normalized.length >= MAX_EXCLUDE_URLS) {
-            break;
-          }
-        }
-
-        return normalized;
-      })()
-    : [];
-
-  if (sanitizedExcludeUrls.length > 0) {
-    payload.excludeUrls = sanitizedExcludeUrls;
   }
 
   const normalizedDedupeMode: HeadlineDedupeMode | undefined =
