@@ -34,6 +34,17 @@ test('runGrokVerificationWithRetry adds system message with current timestamp', 
   );
 });
 
+test('runGrokVerificationWithRetry requests streaming Grok completions', () => {
+  const callMatch = routeTs.match(
+    /runChatCompletion\(\s*{[\s\S]*?}\s*,\s*{\s*signal: controller\.signal\s*}\s*\)/
+  );
+  assert(callMatch, 'Expected to locate runChatCompletion invocation.');
+  assert(
+    callMatch[0].includes('stream: true'),
+    'runGrokVerificationWithRetry should request streaming completions from Grok.'
+  );
+});
+
 test('verifyOutput derives reference timestamp from sources', () => {
   assert(
     routeTs.includes(
