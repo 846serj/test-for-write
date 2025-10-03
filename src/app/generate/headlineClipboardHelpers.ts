@@ -2,6 +2,7 @@ import type { HeadlineItem } from './types';
 
 export const HEADLINE_CLIPBOARD_HEADERS = {
   title: 'Headline',
+  description: 'Description',
   sourcePublished: 'Source & Published',
   url: 'Original Link',
 } as const;
@@ -22,6 +23,11 @@ const HEADLINE_CLIPBOARD_COLUMN_CONFIG: Record<HeadlineClipboardDataColumn, Colu
     header: HEADLINE_CLIPBOARD_HEADERS.title,
     accessor: (headline) =>
       sanitizeValue(headline.title || 'Untitled headline'),
+  },
+  description: {
+    header: HEADLINE_CLIPBOARD_HEADERS.description,
+    accessor: (headline) =>
+      sanitizeValue(headline.description || 'No description available'),
   },
   sourcePublished: {
     header: HEADLINE_CLIPBOARD_HEADERS.sourcePublished,
