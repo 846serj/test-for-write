@@ -1891,7 +1891,7 @@ export default function GeneratePage() {
                                 key={headlineUrl || index}
                                 className="odd:bg-white even:bg-gray-50 dark:odd:bg-gray-900 dark:even:bg-gray-800"
                               >
-                                <td className="px-4 py-3 align-top text-sm">
+                                <td className="px-4 py-2 align-top text-sm">
                                   <button
                                     type="button"
                                     onClick={() => handleRemoveHeadline(headline, index)}
@@ -1903,79 +1903,87 @@ export default function GeneratePage() {
                                     Remove
                                   </button>
                                 </td>
-                                <td className="min-w-[14rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100 sm:w-[30%]">
-                                  <div className="font-semibold">
-                                    {headline.title || 'Untitled headline'}
-                                  </div>
-                                  {isTrending && (
-                                    <div
-                                      className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
-                                      role="status"
-                                      aria-live="polite"
-                                    >
-                                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">
-                                        Trending
-                                      </span>
-                                      {trendingDetails && (
-                                        <span className="text-amber-700 dark:text-amber-200/90">
-                                          {trendingDetails}
+                                <td className="min-w-[14rem] align-top px-4 py-2 text-sm text-gray-900 dark:text-gray-100 sm:w-[30%]">
+                                  <div className="max-h-32 overflow-y-auto pr-2">
+                                    <div className="font-semibold">
+                                      {headline.title || 'Untitled headline'}
+                                    </div>
+                                    {isTrending && (
+                                      <div
+                                        className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+                                        role="status"
+                                        aria-live="polite"
+                                      >
+                                        <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">
+                                          Trending
                                         </span>
+                                        {trendingDetails && (
+                                          <span className="text-amber-700 dark:text-amber-200/90">
+                                            {trendingDetails}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                    {headline.matchedQuery && (
+                                      <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
+                                        Matched query:{' '}
+                                        <span className="font-medium">
+                                          {headline.matchedQuery}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="min-w-[14rem] align-top px-4 py-2 text-sm sm:w-[30%]">
+                                  <div className="max-h-32 overflow-y-auto pr-2">
+                                    {descriptionText ? (
+                                      <p className="whitespace-pre-wrap break-words text-gray-700 dark:text-gray-300">
+                                        {descriptionText}
+                                      </p>
+                                    ) : (
+                                      <span className="text-gray-500 dark:text-gray-400">
+                                        No description available
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="min-w-[11rem] align-top px-4 py-2 text-sm text-gray-700 dark:text-gray-300 sm:w-[20%]">
+                                  <div className="max-h-32 overflow-y-auto pr-2">
+                                    <div className="space-y-1">
+                                      {headline.source ? (
+                                        <div className="font-medium text-gray-900 dark:text-gray-100">
+                                          {headline.source}
+                                        </div>
+                                      ) : (
+                                        <div className="text-gray-500 dark:text-gray-400">
+                                          Source unavailable
+                                        </div>
+                                      )}
+                                      {formattedDate && (
+                                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                                          Published {formattedDate}
+                                        </div>
                                       )}
                                     </div>
-                                  )}
-                                  {headline.matchedQuery && (
-                                    <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
-                                      Matched query:{' '}
-                                      <span className="font-medium">
-                                        {headline.matchedQuery}
-                                      </span>
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="min-w-[14rem] align-top px-4 py-3 text-sm sm:w-[30%]">
-                                  {descriptionText ? (
-                                    <p className="whitespace-pre-wrap break-words text-gray-700 dark:text-gray-300">
-                                      {descriptionText}
-                                    </p>
-                                  ) : (
-                                    <span className="text-gray-500 dark:text-gray-400">
-                                      No description available
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="min-w-[11rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[20%]">
-                                  <div className="space-y-1">
-                                    {headline.source ? (
-                                      <div className="font-medium text-gray-900 dark:text-gray-100">
-                                        {headline.source}
-                                      </div>
-                                    ) : (
-                                      <div className="text-gray-500 dark:text-gray-400">
-                                        Source unavailable
-                                      </div>
-                                    )}
-                                    {formattedDate && (
-                                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                                        Published {formattedDate}
-                                      </div>
-                                    )}
                                   </div>
                                 </td>
-                                <td className="min-w-[12rem] max-w-[20rem] align-top break-words px-4 py-3 text-sm sm:w-[20%]">
-                                  {headlineUrl ? (
-                                    <a
-                                      href={headlineUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="break-words text-blue-600 hover:underline dark:text-blue-400"
-                                    >
-                                      {headlineUrl}
-                                    </a>
-                                  ) : (
-                                    <span className="text-gray-500 dark:text-gray-400">
-                                      No link available
-                                    </span>
-                                  )}
+                                <td className="min-w-[12rem] max-w-[20rem] align-top break-words px-4 py-2 text-sm sm:w-[20%]">
+                                  <div className="max-h-32 overflow-y-auto pr-2">
+                                    {headlineUrl ? (
+                                      <a
+                                        href={headlineUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="break-words text-blue-600 hover:underline dark:text-blue-400"
+                                      >
+                                        {headlineUrl}
+                                      </a>
+                                    ) : (
+                                      <span className="text-gray-500 dark:text-gray-400">
+                                        No link available
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             );
