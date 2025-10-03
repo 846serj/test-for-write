@@ -34,14 +34,36 @@ test('runGrokVerificationWithRetry adds system message with current timestamp', 
   );
 });
 
-test('verifyOutput passes current timestamp into verification helper', () => {
+test('verifyOutput derives reference timestamp from sources', () => {
   assert(
-    routeTs.includes('const nowIso = new Date().toISOString();'),
-    'verifyOutput should capture the current ISO timestamp.'
+    routeTs.includes(
+      'const referenceIso = deriveReferenceIsoTimestamp(normalizedSources);'
+    ),
+    'verifyOutput should derive the reference ISO timestamp from the normalized sources.'
   );
   assert(
-    routeTs.includes('runGrokVerificationWithRetry(prompt, nowIso)'),
-    'verifyOutput should pass the timestamp to the verification helper.'
+    routeTs.includes('runGrokVerificationWithRetry(prompt, referenceIso)'),
+    'verifyOutput should pass the derived timestamp to Grok verification.'
+  );
+  const openAiCalls = routeTs.match(
+    /runOpenAIVerificationWithTimeout\(\s*prompt,\s*referenceIso\s*\)/g
+  );
+  assert(openAiCalls && openAiCalls.length >= 1, 'OpenAI verification should receive the derived timestamp.');
+});
+
+test('deriveReferenceIsoTimestamp enforces future drift guard', () => {
+  const helperMatch = routeTs.match(
+    /function deriveReferenceIsoTimestamp\([\s\S]*?return new Date\(referenceTimestamp\)\.toISOString\(\);\s*\}/
+  );
+  assert(helperMatch, 'Expected deriveReferenceIsoTimestamp helper to be defined.');
+  const helperBody = helperMatch[0];
+  assert(
+    helperBody.includes('MAX_FUTURE_DRIFT_MS'),
+    'Helper should ignore timestamps that drift too far into the future.'
+  );
+  assert(
+    helperBody.includes('parsePublishedTimestamp'),
+    'Helper should parse publishedAt fields before comparison.'
   );
 });
 
@@ -52,7 +74,7 @@ test('verifyOutput supports OpenAI-only verification path when Grok key missing'
   );
 
   const openAiOnlyBlock = routeTs.match(
-    /if \(!hasGrokKey\) {([\s\S]*?)runOpenAIVerificationWithTimeout\(prompt, nowIso\)/
+    /if \(!hasGrokKey\) {([\s\S]*?)runOpenAIVerificationWithTimeout\(\s*prompt,\s*referenceIso\s*\)/
   );
   assert(
     openAiOnlyBlock,
