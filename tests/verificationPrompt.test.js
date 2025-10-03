@@ -44,3 +44,18 @@ test('verifyOutput passes current timestamp into verification helper', () => {
     'verifyOutput should pass the timestamp to the verification helper.'
   );
 });
+
+test('verifyOutput supports OpenAI-only verification path when Grok key missing', () => {
+  assert(
+    routeTs.includes('const hasGrokKey = Boolean(process.env.GROK_API_KEY?.trim());'),
+    'verifyOutput should determine whether a Grok key is available.'
+  );
+
+  const openAiOnlyBlock = routeTs.match(
+    /if \(!hasGrokKey\) {([\s\S]*?)runOpenAIVerificationWithTimeout\(prompt, nowIso\)/
+  );
+  assert(
+    openAiOnlyBlock,
+    'verifyOutput should call runOpenAIVerificationWithTimeout when Grok is unavailable.'
+  );
+});
