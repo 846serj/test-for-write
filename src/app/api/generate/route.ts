@@ -1,5 +1,6 @@
 // route.ts
 import { NextResponse } from 'next/server';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { getOpenAI } from '../../../lib/openai';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../../constants/lengthOptions';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
@@ -2551,7 +2552,7 @@ async function runOpenAIVerificationWithRetry(
     const timeout = setTimeout(() => controller.abort(), VERIFICATION_TIMEOUT_MS);
 
     try {
-      const messages = currentIsoTimestamp
+      const messages: ChatCompletionMessageParam[] = currentIsoTimestamp
         ? [
             {
               role: 'system',
