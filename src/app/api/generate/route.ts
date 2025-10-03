@@ -2539,7 +2539,10 @@ function isRetriableOpenAIError(err: unknown): boolean {
   return Number.isFinite(status) && status >= 500 && status < 600;
 }
 
-async function runOpenAIVerificationWithRetry(prompt: string): Promise<string> {
+async function runOpenAIVerificationWithRetry(
+  prompt: string,
+  currentIsoTimestamp?: string
+): Promise<string> {
   const openai = getOpenAI();
   let lastError: unknown;
 
@@ -2548,11 +2551,20 @@ async function runOpenAIVerificationWithRetry(prompt: string): Promise<string> {
     const timeout = setTimeout(() => controller.abort(), VERIFICATION_TIMEOUT_MS);
 
     try {
+      const messages = currentIsoTimestamp
+        ? [
+            {
+              role: 'system',
+              content: `The current date and time is ${currentIsoTimestamp}. Use this as the reference "today" when fact-checking claims.`,
+            },
+            { role: 'user', content: prompt },
+          ]
+        : [{ role: 'user', content: prompt }];
       const response = await openai.chat.completions.create(
         {
           model: VERIFICATION_MODEL,
           temperature: 0,
-          messages: [{ role: 'user', content: prompt }],
+          messages,
         },
         { signal: controller.signal }
       );
@@ -2617,6 +2629,8 @@ async function verifyOutput(
     return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
   }
 
+  const nowIso = new Date().toISOString();
+
   const formattedSources = normalizedSources
     .map((item, index) => {
       const parts = [`${index + 1}. URL: ${item.url}`];
@@ -2652,7 +2666,7 @@ async function verifyOutput(
   ].join('\n');
 
   try {
-    const response = await runOpenAIVerificationWithRetry(prompt);
+    const response = await runOpenAIVerificationWithRetry(prompt, nowIso);
     let parsed: any;
     try {
       parsed = JSON.parse(response);
