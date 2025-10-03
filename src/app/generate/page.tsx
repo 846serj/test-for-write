@@ -29,7 +29,7 @@ const SORT_BY_OPTIONS = [
   { value: 'popularity' as const, label: 'Most popular' },
 ];
 
-const DEFAULT_HEADLINE_LIMIT = 100;
+const DEFAULT_HEADLINE_LIMIT = 200;
 const HEADLINE_LANGUAGE = 'en';
 type HeadlineFetchMode = HeadlineRequestMode;
 

@@ -5,11 +5,11 @@ import { getOpenAI } from '../../../lib/openai';
 import { serpapiSearch, type SerpApiResult } from '../../../lib/serpapi';
 
 const MIN_LIMIT = 1;
-const MAX_LIMIT = 100;
+const MAX_LIMIT = 250;
 const DEFAULT_LIMIT = 5;
 const MAX_FILTER_LIST_ITEMS = 20;
 const MAX_RSS_FEEDS = 10;
-const MAX_RSS_ITEMS_PER_FEED = 50;
+const MAX_RSS_ITEMS_PER_FEED = 250;
 const RSS_FEED_REQUEST_TIMEOUT_MS = 5000;
 const RSS_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 const MAX_EXCLUDE_URLS = 200;
