@@ -35,8 +35,9 @@ available. The helper defaults to the `grok-4` model but you can override it by
 setting `GROK_VERIFICATION_MODEL`. Requests abort after 9000 ms unless you
 provide a custom `GROK_VERIFICATION_TIMEOUT_MS` value. For teams migrating from
 an OpenAI setup, the previous `OPENAI_API_KEY`, `OPENAI_VERIFICATION_MODEL`, and
-`OPENAI_VERIFICATION_TIMEOUT_MS` variables are still respected as fallbacks so
-you can transition keys gradually. See `.env.example` for the expected format.
+`OPENAI_VERIFICATION_TIMEOUT_MS` variables continue to power the optional
+OpenAI-based fallback so you can transition keys gradually. See `.env.example`
+for the expected format.
 
 ## More Specific Articles
 
