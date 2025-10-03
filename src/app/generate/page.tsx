@@ -57,6 +57,33 @@ const HEADLINE_COPY_FORMAT_LABELS: Record<HeadlineClipboardFormat, string> = {
 
 const DEFAULT_FETCH_ERROR_MESSAGE = 'Failed to fetch headlines.';
 
+const sanitizeHtmlLikeString = (value: string): string =>
+  value.replace(/<[^>]*>/g, ' ');
+
+const decodeHtmlEntities = (value: string): string => {
+  if (typeof window === 'undefined') {
+    return value;
+  }
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(value, 'text/html');
+    return doc.documentElement?.textContent ?? value;
+  } catch {
+    return value;
+  }
+};
+
+const formatHeadlineDescription = (rawValue?: string | null): string => {
+  if (!rawValue) {
+    return '';
+  }
+
+  const stripped = sanitizeHtmlLikeString(rawValue);
+  const decoded = decodeHtmlEntities(stripped);
+  return decoded.replace(/\s+/g, ' ').trim();
+};
+
 const HEADLINE_SEEN_STORAGE_KEY = 'headlineSeenUrls';
 const DEFAULT_HEADLINE_SEEN_KEY = '__default__';
 const MAX_TRACKED_SEEN_PER_KEY = 400;
@@ -1807,8 +1834,9 @@ export default function GeneratePage() {
                             const formattedDate = formatPublishedDate(
                               headline.publishedAt
                             );
-                            const descriptionText =
-                              (headline.description ?? '').trim();
+                            const descriptionText = formatHeadlineDescription(
+                              headline.description
+                            );
                             const relatedCount =
                               headline.relatedArticles?.length ?? 0;
                             const totalOutlets = relatedCount + 1;
