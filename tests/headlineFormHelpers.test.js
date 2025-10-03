@@ -117,6 +117,7 @@ test('buildHeadlineRequest creates keyword-only payloads', () => {
     assert.deepStrictEqual(result.payload, {
       limit: 7,
       sortBy: 'relevancy',
+      mode: 'auto',
       keywords,
       searchIn: ['description', 'content'],
       rssFeeds: ['https://example.com/feed'],
@@ -185,6 +186,30 @@ test('buildHeadlineRequest sanitizes rss feeds', () => {
       'https://example.com/feed',
       'http://example.com/feed',
     ]);
+  });
+});
+
+test('buildHeadlineRequest omits limit for RSS-only requests when not provided', () => {
+  withMockedNow(() => {
+    const result = buildHeadlineRequest({
+      keywords: [],
+      profileQuery: '',
+      profileLanguage: null,
+      sortBy: 'publishedAt',
+      language: 'en',
+      fromDate: '',
+      toDate: '',
+      searchIn: [],
+      description: '',
+      rssFeeds: ['https://example.com/feed'],
+      mode: 'rss',
+    });
+
+    assert.strictEqual(result.ok, true);
+    assert.ok(!('limit' in result.payload));
+    const { defaultFrom, defaultTo } = computeDefaultRange();
+    assert.strictEqual(result.payload.from, defaultFrom);
+    assert.strictEqual(result.payload.to, defaultTo);
   });
 });
 

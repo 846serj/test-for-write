@@ -869,6 +869,7 @@ export default function GeneratePage() {
       fromDate?: string;
       toDate?: string;
       mode?: HeadlineFetchMode;
+      limit?: number | null;
     }
   ) => {
     const nextDescriptionRaw =
@@ -921,11 +922,17 @@ export default function GeneratePage() {
     const storageKey = resolveSeenHeadlineKey(targetPresetKey);
     const excludeUrls = collectExcludeUrls(seenHeadlinesRef.current, storageKey);
 
+    const shouldOmitLimit =
+      nextMode === 'rss' &&
+      nextRssFeeds.length > 0 &&
+      overrides?.limit === undefined;
+    const requestLimit = shouldOmitLimit ? undefined : DEFAULT_HEADLINE_LIMIT;
+
     const buildResult = buildHeadlineRequest({
       keywords: nextKeywords,
       profileQuery: '',
       profileLanguage: null,
-      limit: DEFAULT_HEADLINE_LIMIT,
+      limit: requestLimit,
       sortBy,
       language: HEADLINE_LANGUAGE,
       fromDate: nextFromDate,

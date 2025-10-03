@@ -15,7 +15,12 @@ export type BuildHeadlineRequestArgs = {
   keywords: string[];
   profileQuery: string;
   profileLanguage?: string | null;
-  limit: number;
+  /**
+   * Optional request limit. If omitted, RSS-only requests will not send a limit
+   * so the API can return every available feed item while non-RSS searches fall
+   * back to their server defaults.
+   */
+  limit?: number | null;
   sortBy: SortByValue;
   language: string;
   fromDate: string;
@@ -244,10 +249,18 @@ export function buildHeadlineRequest(
     searchIn.includes(value)
   );
 
+  const normalizedLimit =
+    typeof limit === 'number' && Number.isFinite(limit)
+      ? Math.max(1, Math.trunc(limit))
+      : null;
+
   const payload: Record<string, unknown> = {
-    limit,
     sortBy,
   };
+
+  if (normalizedLimit !== null) {
+    payload.limit = normalizedLimit;
+  }
 
   payload.mode = effectiveMode;
 
