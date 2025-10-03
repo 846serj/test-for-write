@@ -2743,7 +2743,7 @@ async function verifyOutput(
 
     return { isAccurate: true, discrepancies: [], themeCoverageIssue: null };
   } catch (err) {
-    console.warn('[api/generate] verification failed', err);
+    console.warn('[api/generate] GROK_REVIEW_FAILED – verification failed', err);
     if (themeCoverageIssue) {
       console.warn('Theme coverage issue detected:', themeCoverageIssue);
       return {
