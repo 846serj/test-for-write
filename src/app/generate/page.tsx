@@ -42,6 +42,7 @@ const HEADLINE_COPY_COLUMN_OPTIONS: {
 }[] = [
   { value: 'all', label: 'All columns' },
   { value: 'title', label: HEADLINE_CLIPBOARD_HEADERS.title },
+  { value: 'description', label: HEADLINE_CLIPBOARD_HEADERS.description },
   {
     value: 'sourcePublished',
     label: HEADLINE_CLIPBOARD_HEADERS.sourcePublished,
@@ -1776,19 +1777,25 @@ export default function GeneratePage() {
                             </th>
                             <th
                               scope="col"
-                              className="min-w-[14rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[45%]"
+                              className="min-w-[14rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[30%]"
                             >
                               Headline
                             </th>
                             <th
                               scope="col"
-                              className="min-w-[11rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[30%]"
+                              className="min-w-[14rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[30%]"
+                            >
+                              Description
+                            </th>
+                            <th
+                              scope="col"
+                              className="min-w-[11rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[20%]"
                             >
                               Source &amp; Published
                             </th>
                             <th
                               scope="col"
-                              className="min-w-[12rem] max-w-[20rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[25%]"
+                              className="min-w-[12rem] max-w-[20rem] px-4 py-2 text-left text-sm font-semibold text-gray-900 dark:text-gray-100 sm:w-[20%]"
                             >
                               Original Link
                             </th>
@@ -1800,6 +1807,8 @@ export default function GeneratePage() {
                             const formattedDate = formatPublishedDate(
                               headline.publishedAt
                             );
+                            const descriptionText =
+                              (headline.description ?? '').trim();
                             const relatedCount =
                               headline.relatedArticles?.length ?? 0;
                             const totalOutlets = relatedCount + 1;
@@ -1866,7 +1875,7 @@ export default function GeneratePage() {
                                     Remove
                                   </button>
                                 </td>
-                                <td className="min-w-[14rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100 sm:w-[45%]">
+                                <td className="min-w-[14rem] align-top px-4 py-3 text-sm text-gray-900 dark:text-gray-100 sm:w-[30%]">
                                   <div className="font-semibold">
                                     {headline.title || 'Untitled headline'}
                                   </div>
@@ -1895,7 +1904,18 @@ export default function GeneratePage() {
                                     </div>
                                   )}
                                 </td>
-                                <td className="min-w-[11rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[30%]">
+                                <td className="min-w-[14rem] align-top px-4 py-3 text-sm sm:w-[30%]">
+                                  {descriptionText ? (
+                                    <p className="whitespace-pre-wrap break-words text-gray-700 dark:text-gray-300">
+                                      {descriptionText}
+                                    </p>
+                                  ) : (
+                                    <span className="text-gray-500 dark:text-gray-400">
+                                      No description available
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="min-w-[11rem] align-top px-4 py-3 text-sm text-gray-700 dark:text-gray-300 sm:w-[20%]">
                                   <div className="space-y-1">
                                     {headline.source ? (
                                       <div className="font-medium text-gray-900 dark:text-gray-100">
@@ -1913,7 +1933,7 @@ export default function GeneratePage() {
                                     )}
                                   </div>
                                 </td>
-                                <td className="min-w-[12rem] max-w-[20rem] align-top break-words px-4 py-3 text-sm sm:w-[25%]">
+                                <td className="min-w-[12rem] max-w-[20rem] align-top break-words px-4 py-3 text-sm sm:w-[20%]">
                                   {headlineUrl ? (
                                     <a
                                       href={headlineUrl}
