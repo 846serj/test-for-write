@@ -81,6 +81,4 @@ export async function runChatCompletion(
 }
 
 export const DEFAULT_GROK_MODEL =
-  process.env.GROK_VERIFICATION_MODEL?.trim() ||
-  process.env.OPENAI_VERIFICATION_MODEL?.trim() ||
-  'grok-4';
+  process.env.GROK_VERIFICATION_MODEL?.trim() || 'grok-4';
