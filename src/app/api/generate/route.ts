@@ -198,6 +198,164 @@ Output raw HTML only:
 `.trim();
 }
 
+type ListicleOutlinePromptOptions = {
+  title: string;
+  reportingContext: string;
+  referenceBlock: string;
+  count: number;
+  listNumberingFormat?: string;
+  extraOutlineBullets?: string[];
+};
+
+function buildListicleOutlinePrompt({
+  title,
+  reportingContext,
+  referenceBlock,
+  count,
+  listNumberingFormat,
+  extraOutlineBullets = [],
+}: ListicleOutlinePromptOptions): string {
+  const referenceSection = referenceBlock ? `${referenceBlock}\n` : '';
+  const supplementalBullets = extraOutlineBullets.length
+    ? `${extraOutlineBullets.map((item) => `• ${item}`).join('\n')}\n`
+    : '';
+
+  return `
+You are a professional writer tasked with planning a factual, source-grounded listicle outline.
+
+Title: "${title}"
+
+${reportingContext}Requirements:
+• Use exactly ${count} items.
+• Number each heading formatted like ${listNumberingFormat}.
+• Provide a short clause after each numbered heading describing the key sourced insight it should cover.
+• Keep the outline tightly focused on the authoritative reporting summaries provided so every item reflects accurate, highly relevant sourcing.
+• Preserve every concrete fact from the reporting block—names, dates, figures, locations, direct quotes—and restate them verbatim inside the relevant numbered heading or bullet instead of paraphrasing generically.
+• For every bullet that uses a reporting summary, append " (Source: URL)" with the matching link.
+• Do not merge distinct facts into one bullet: break out each specific person, organization, date, or metric so it can be cited individually.
+${supplementalBullets}${referenceSection}• Do not invent new facts beyond the provided sources.
+`.trim();
+}
+
+type ListicleLengthOptions = {
+  count: number;
+  listItemWordCount?: number;
+  listNumberingFormat?: string;
+  minWords: number;
+  maxWords: number;
+};
+
+type ListicleLengthArtifacts = {
+  minWords: number;
+  maxWords: number;
+  minWordsPerItem: number;
+  wordsPerItem: number;
+  lengthInstruction: string;
+  numberingInstruction: string;
+  wordCountInstruction: string;
+};
+
+function buildListicleLengthArtifacts({
+  count,
+  listItemWordCount,
+  listNumberingFormat,
+  minWords,
+  maxWords,
+}: ListicleLengthOptions): ListicleLengthArtifacts {
+  const safeCount = Math.max(count, 1);
+  const wordsPerItem = listItemWordCount || 100;
+  const derivedMinWords = Math.floor(safeCount * wordsPerItem * 0.8);
+  const adjustedMinWords = derivedMinWords > minWords ? derivedMinWords : minWords;
+  const minWordsPerItem = Math.ceil(adjustedMinWords / safeCount);
+  const capText =
+    maxWords > adjustedMinWords
+      ? ` while staying under ${maxWords.toLocaleString()} words`
+      : '';
+
+  const lengthInstruction = `- Use exactly ${safeCount} items, and the article must contain at least ${adjustedMinWords.toLocaleString()} words${capText}.\n`;
+  const numberingInstruction = listNumberingFormat
+    ? `- Use numbering formatted like ${listNumberingFormat}.\n`
+    : '';
+  const wordCountInstruction = listItemWordCount
+    ? `- Keep each list item around ${listItemWordCount} words while ensuring at least ${minWordsPerItem} words per item so the article clears ${adjustedMinWords.toLocaleString()} words overall.\n`
+    : `- Make sure each list item adds enough detail to reach the ${adjustedMinWords.toLocaleString()}-word minimum (roughly ${Math.ceil(
+        adjustedMinWords / safeCount
+      )} words per item on average).\n`;
+
+  return {
+    minWords: adjustedMinWords,
+    maxWords,
+    minWordsPerItem,
+    wordsPerItem,
+    lengthInstruction,
+    numberingInstruction,
+    wordCountInstruction,
+  };
+}
+
+type ListicleArticlePromptOptions = {
+  title: string;
+  outline: string;
+  reportingSection: string;
+  toneInstruction: string;
+  povInstruction: string;
+  groundingInstruction: string;
+  customInstructionBlock: string;
+  linkInstruction: string;
+  lengthInstruction: string;
+  numberingInstruction: string;
+  wordCountInstruction: string;
+  extraRequirements?: string[];
+};
+
+function buildListicleArticlePrompt({
+  title,
+  outline,
+  reportingSection,
+  toneInstruction,
+  povInstruction,
+  groundingInstruction,
+  customInstructionBlock,
+  linkInstruction,
+  lengthInstruction,
+  numberingInstruction,
+  wordCountInstruction,
+  extraRequirements = [],
+}: ListicleArticlePromptOptions): string {
+  const combinedLengthInstruction = `${lengthInstruction}${numberingInstruction}${wordCountInstruction}`;
+  const mergedExtraRequirements = [
+    'Center each list item on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.',
+    ...extraRequirements,
+  ];
+
+  return buildArticlePrompt({
+    title,
+    outline,
+    reportingSection,
+    toneInstruction,
+    povInstruction,
+    lengthInstruction: combinedLengthInstruction,
+    groundingInstruction,
+    customInstructionBlock,
+    linkInstruction,
+    extraRequirements: mergedExtraRequirements,
+  });
+}
+
+function deriveListicleItemCount(title: string, fallback = 5): number {
+  const match = title.match(/\d+/);
+  if (!match) {
+    return fallback;
+  }
+
+  const parsed = parseInt(match[0], 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
 function normalizeTitleValue(title: string | undefined | null): string {
   const holder = normalizeTitleValue as unknown as {
     _publisherData?: {
@@ -2980,6 +3138,7 @@ export async function POST(request: Request) {
       title,
       listNumberingFormat,
       listItemWordCount = 100,
+      formatAsListicle = false,
       toneOfVoice,
       customTone,
       pointOfView,
@@ -2994,6 +3153,7 @@ export async function POST(request: Request) {
       title: string;
       listNumberingFormat?: string;
       listItemWordCount?: number;
+      formatAsListicle?: boolean;
       toneOfVoice?: string;
       customTone?: string;
       pointOfView?: string;
@@ -3009,6 +3169,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing title' }, { status: 400 });
     }
 
+    const isListicleMode = Boolean(formatAsListicle) || articleType === 'Listicle/Gallery';
     const serpEnabled = includeLinks && useSerpApi && !!process.env.SERPAPI_KEY;
     const baseMaxTokens = calcMaxTokens(lengthOption, customSections, modelVersion);
     const toneChoice =
@@ -3072,78 +3233,139 @@ export async function POST(request: Request) {
         ? '- Base every factual statement on the reporting summaries provided and cite the matching URL when referencing them.\n'
         : '';
 
-      let sectionInstruction: string;
-      if (lengthOption === 'default') {
-        sectionInstruction = 'Include around 5 <h2> headings.';
-      } else if (lengthOption === 'custom' && customSections) {
-        sectionInstruction = `Use exactly ${customSections} <h2> headings.`;
-      } else if (lengthOption && sectionRanges[lengthOption]) {
-        const [minS, maxS] = sectionRanges[lengthOption];
-        sectionInstruction = `Include ${minS}–${maxS} <h2> headings.`;
-      } else {
-        sectionInstruction = 'Include at least three <h2> headings.';
-      }
-
       const reportingContext = reportingBlock ? `${reportingBlock}\n\n` : '';
-      const baseOutline = buildOutlinePrompt({
-        title,
-        reportingContext,
-        sectionInstruction,
-        referenceBlock,
-        extraBullets: [
-          'Arrange the remaining sections chronologically or by major stakeholder impact so the story flows like a news report.',
-          'Emphasize the time-sensitive angles and signal what has changed compared with previous updates.',
-        ],
-      });
-
-      const outline = await generateOutlineWithFallback(
-        baseOutline,
-        modelVersion,
-        0.6
-      );
-
       const customInstruction = customInstructions?.trim();
       const customInstructionBlock = customInstruction
         ? `- ${customInstruction}\n`
         : '';
+      const newsExtraRequirements = [
+        'Avoid starting paragraphs with dates and omit dates unless they add essential context; when a date is necessary, place it after the subject rather than leading with it.',
+        'Keep the pacing focused on timely developments, clarifying what happened, when, and why it matters now.',
+        'Attribute key facts to the appropriate source by linking the relevant URL directly in the text.',
+        'Center each section on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.',
+      ];
 
-      const [minWords, maxWords] = getWordBounds(lengthOption, customSections);
+      let outline: string;
+      let minWordsForGeneration: number;
       let lengthInstruction = '';
-      if (lengthOption === 'default') {
-        const approxPerSection = Math.round(DEFAULT_WORDS / 5);
-        lengthInstruction =
-          `- Use around 5 sections, and the article must contain at least ${minWords.toLocaleString()} words (target roughly ${DEFAULT_WORDS.toLocaleString()} words total, ~${approxPerSection.toLocaleString()} words per section, and keep it under ${maxWords.toLocaleString()} words).\n`;
-      } else if (lengthOption === 'custom' && customSections) {
-        const approx = customSections * 220;
-        lengthInstruction = `- Use exactly ${customSections} sections, and the article must contain at least ${minWords.toLocaleString()} words (~${approx.toLocaleString()} words total; keep it under ${maxWords.toLocaleString()} words).\n`;
-      } else if (lengthOption && WORD_RANGES[lengthOption]) {
-        const [minS, maxS] = sectionRanges[lengthOption] || [3, 6];
-        const minW = minWords.toLocaleString();
-        const maxW = maxWords.toLocaleString();
-        lengthInstruction = `- Include ${minS}–${maxS} sections and write between ${minW} and ${maxW} words.\n`;
+      let numberingInstruction = '';
+      let wordCountInstruction = '';
+
+      if (isListicleMode) {
+        const count = deriveListicleItemCount(title);
+        const outlinePrompt = buildListicleOutlinePrompt({
+          title,
+          reportingContext,
+          referenceBlock,
+          count,
+          listNumberingFormat,
+          extraOutlineBullets: [
+            'Arrange the remaining sections chronologically or by major stakeholder impact so the story flows like a news report.',
+            'Emphasize the time-sensitive angles and signal what has changed compared with previous updates.',
+          ],
+        });
+
+        outline = await generateOutlineWithFallback(
+          outlinePrompt,
+          modelVersion,
+          0.6
+        );
+
+        const [baseMinWords, baseMaxWords] = getWordBounds(
+          lengthOption,
+          customSections
+        );
+        const listicleLength = buildListicleLengthArtifacts({
+          count,
+          listItemWordCount,
+          listNumberingFormat,
+          minWords: baseMinWords,
+          maxWords: baseMaxWords,
+        });
+
+        minWordsForGeneration = listicleLength.minWords;
+        lengthInstruction = listicleLength.lengthInstruction;
+        numberingInstruction = listicleLength.numberingInstruction;
+        wordCountInstruction = listicleLength.wordCountInstruction;
       } else {
-        lengthInstruction = `- Include at least three <h2> headings, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
+        let sectionInstruction: string;
+        if (lengthOption === 'default') {
+          sectionInstruction = 'Include around 5 <h2> headings.';
+        } else if (lengthOption === 'custom' && customSections) {
+          sectionInstruction = `Use exactly ${customSections} <h2> headings.`;
+        } else if (lengthOption && sectionRanges[lengthOption]) {
+          const [minS, maxS] = sectionRanges[lengthOption];
+          sectionInstruction = `Include ${minS}–${maxS} <h2> headings.`;
+        } else {
+          sectionInstruction = 'Include at least three <h2> headings.';
+        }
+
+        const baseOutline = buildOutlinePrompt({
+          title,
+          reportingContext,
+          sectionInstruction,
+          referenceBlock,
+          extraBullets: [
+            'Arrange the remaining sections chronologically or by major stakeholder impact so the story flows like a news report.',
+            'Emphasize the time-sensitive angles and signal what has changed compared with previous updates.',
+          ],
+        });
+
+        outline = await generateOutlineWithFallback(
+          baseOutline,
+          modelVersion,
+          0.6
+        );
+
+        const [minWords, maxWords] = getWordBounds(lengthOption, customSections);
+        if (lengthOption === 'default') {
+          const approxPerSection = Math.round(DEFAULT_WORDS / 5);
+          lengthInstruction =
+            `- Use around 5 sections, and the article must contain at least ${minWords.toLocaleString()} words (target roughly ${DEFAULT_WORDS.toLocaleString()} words total, ~${approxPerSection.toLocaleString()} words per section, and keep it under ${maxWords.toLocaleString()} words).\n`;
+        } else if (lengthOption === 'custom' && customSections) {
+          const approx = customSections * 220;
+          lengthInstruction = `- Use exactly ${customSections} sections, and the article must contain at least ${minWords.toLocaleString()} words (~${approx.toLocaleString()} words total; keep it under ${maxWords.toLocaleString()} words).\n`;
+        } else if (lengthOption && WORD_RANGES[lengthOption]) {
+          const [minS, maxS] = sectionRanges[lengthOption] || [3, 6];
+          const minW = minWords.toLocaleString();
+          const maxW = maxWords.toLocaleString();
+          lengthInstruction = `- Include ${minS}–${maxS} sections and write between ${minW} and ${maxW} words.\n`;
+        } else {
+          lengthInstruction = `- Include at least three <h2> headings, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
+        }
+
+        minWordsForGeneration = minWords;
       }
 
       const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
 
-      const articlePrompt = buildArticlePrompt({
-        title,
-        outline,
-        reportingSection,
-        toneInstruction,
-        povInstruction,
-        lengthInstruction,
-        groundingInstruction,
-        customInstructionBlock,
-        linkInstruction,
-        extraRequirements: [
-          'Avoid starting paragraphs with dates and omit dates unless they add essential context; when a date is necessary, place it after the subject rather than leading with it.',
-          'Keep the pacing focused on timely developments, clarifying what happened, when, and why it matters now.',
-          'Attribute key facts to the appropriate source by linking the relevant URL directly in the text.',
-          'Center each section on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.',
-        ],
-      });
+      const articlePrompt = isListicleMode
+        ? buildListicleArticlePrompt({
+            title,
+            outline,
+            reportingSection,
+            toneInstruction,
+            povInstruction,
+            groundingInstruction,
+            customInstructionBlock,
+            linkInstruction,
+            lengthInstruction,
+            numberingInstruction,
+            wordCountInstruction,
+            extraRequirements: newsExtraRequirements,
+          })
+        : buildArticlePrompt({
+            title,
+            outline,
+            reportingSection,
+            toneInstruction,
+            povInstruction,
+            lengthInstruction,
+            groundingInstruction,
+            customInstructionBlock,
+            linkInstruction,
+            extraRequirements: newsExtraRequirements,
+          });
 
       const applyArticleIssues = (issues?: string[]) =>
         applyVerificationIssuesToPrompt(articlePrompt, issues);
@@ -3159,7 +3381,7 @@ export async function POST(request: Request) {
             systemPrompt,
             minLinks,
             maxTokens,
-            minWords,
+            minWordsForGeneration,
             articles
           ),
         articles,
@@ -3227,27 +3449,18 @@ export async function POST(request: Request) {
         linkSources,
         referenceBlock,
       } = await reportingContextPromise;
-      const match = title.match(/\d+/);
-      const count = match ? parseInt(match[0], 10) : 5;
+      const count = deriveListicleItemCount(title);
 
       const reportingContext = reportingBlock ? `${reportingBlock}\n\n` : '';
       const referenceIso = deriveReferenceIsoTimestamp(reportingSources);
       const systemPrompt = buildSystemPrompt(referenceIso);
-      const outlinePrompt = `
-You are a professional writer tasked with planning a factual, source-grounded listicle outline.
-
-Title: "${title}"
-
-${reportingContext}Requirements:
-• Use exactly ${count} items.
-• Number each heading formatted like ${listNumberingFormat}.
-• Provide a short clause after each numbered heading describing the key sourced insight it should cover.
-• Keep the outline tightly focused on the authoritative reporting summaries provided so every item reflects accurate, highly relevant sourcing.
-• Preserve every concrete fact from the reporting block—names, dates, figures, locations, direct quotes—and restate them verbatim inside the relevant numbered heading or bullet instead of paraphrasing generically.
-• For every bullet that uses a reporting summary, append " (Source: URL)" with the matching link.
-• Do not merge distinct facts into one bullet: break out each specific person, organization, date, or metric so it can be cited individually.
-${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond the provided sources.
-`.trim();
+      const outlinePrompt = buildListicleOutlinePrompt({
+        title,
+        reportingContext,
+        referenceBlock,
+        count,
+        listNumberingFormat,
+      });
 
       const outline = await generateOutlineWithFallback(
         outlinePrompt,
@@ -3255,29 +3468,22 @@ ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond
         0.6
       );
 
-      let [minWords, maxWords] = getWordBounds(lengthOption, customSections);
-      const wordsPerItem = listItemWordCount || 100;
-      const derivedMinWords = Math.floor(count * wordsPerItem * 0.8);
-      if (derivedMinWords > minWords) {
-        minWords = derivedMinWords;
-      }
-      const minWordsPerItem = Math.ceil(minWords / count);
-      const capText =
-        maxWords > minWords
-          ? ` while staying under ${maxWords.toLocaleString()} words`
-          : '';
-
-      const lengthInstruction = `- Use exactly ${count} items, and the article must contain at least ${minWords.toLocaleString()} words${capText}.\n`;
-      const numberingInstruction = listNumberingFormat
-        ? `- Use numbering formatted like ${listNumberingFormat}.\n`
-        : '';
-      const wordCountInstruction = listItemWordCount
-        ? `- Keep each list item around ${listItemWordCount} words while ensuring at least ${minWordsPerItem} words per item so the article clears ${minWords.toLocaleString()} words overall.\n`
-        : `- Make sure each list item adds enough detail to reach the ${minWords.toLocaleString()}-word minimum (roughly ${minWordsPerItem} words per item on average).\n`;
       const customInstruction = customInstructions?.trim();
       const customInstructionBlock = customInstruction
         ? `- ${customInstruction}\n`
         : '';
+      const [baseMinWords, baseMaxWords] = getWordBounds(
+        lengthOption,
+        customSections
+      );
+      const listicleLength = buildListicleLengthArtifacts({
+        count,
+        listItemWordCount,
+        listNumberingFormat,
+        minWords: baseMinWords,
+        maxWords: baseMaxWords,
+      });
+
       const requiredLinks = linkSources.slice(
         0,
         Math.min(Math.max(MIN_LINKS, linkSources.length), 5)
@@ -3294,42 +3500,24 @@ ${referenceBlock ? `${referenceBlock}\n` : ''}• Do not invent new facts beyond
             .map((u) => `  - ${u}`)
             .join('\n')}\n  - Embed each required link as <a href="URL" target="_blank">text</a> exactly once and do not list them at the end.${optionalInstruction}\n  - Spread the links naturally across the article.`
         : '';
-      const toneChoice =
-        toneOfVoice === 'Custom' && customTone ? customTone : toneOfVoice;
-      const toneInstruction = toneChoice
-        ? `- Write in a ${toneChoice} tone of voice.\n`
-        : '';
-      const povInstruction = pointOfView
-        ? `- Use a ${pointOfView} perspective.\n`
-        : '';
 
       const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
 
-      const articlePrompt = `
-You are a professional journalist writing a listicle-style web article.
+      const articlePrompt = buildListicleArticlePrompt({
+        title,
+        outline,
+        reportingSection,
+        toneInstruction,
+        povInstruction,
+        groundingInstruction,
+        customInstructionBlock,
+        linkInstruction,
+        lengthInstruction: listicleLength.lengthInstruction,
+        numberingInstruction: listicleLength.numberingInstruction,
+        wordCountInstruction: listicleLength.wordCountInstruction,
+      });
 
-Title: "${title}"
-Do NOT include the title or any <h1> tag in the HTML output.
-
-Outline:
-${outline}
-
-${reportingSection}${toneInstruction}${povInstruction}Requirements:
-  ${lengthInstruction}${numberingInstruction}${wordCountInstruction}${customInstructionBlock}  - Use the outline's introduction bullet to write a 2–3 sentence introduction (no <h2> tags) without including the words "INTRO:" or "Introduction".
-  - For each <h2> in the outline, write 2–3 paragraphs under it.
-  - Keep every section anchored to the authoritative reporting summaries provided so each paragraph reflects accurate, highly relevant sourcing.
-  - Center each list item on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.
-  - Use standard HTML tags such as <h2>, <h3>, <p>, <a>, <ul>, and <li> as needed.
-  - Avoid cheesy or overly rigid language (e.g., "gem", "embodiment", "endeavor", "Vigilant", "Daunting", etc.).
-  - Avoid referring to the article itself (e.g., “This article explores…” or “In this article…”) anywhere in the introduction.
-  - Do NOT wrap your output in markdown code fences or extra <p> tags.
-  ${DETAIL_INSTRUCTION}${customInstructionBlock}${groundingInstruction}${linkInstruction}  - Do NOT label the intro under "Introduction" or with prefixes like "INTRO:", and do not end with a "Conclusion" heading or closing phrases like "In conclusion".
-  - Do NOT invent sources or links.
-
-Write the full article in valid HTML below:
-`.trim();
-
-      const desired = count * wordsPerItem + 50;
+      const desired = count * listicleLength.wordsPerItem + 50;
       let maxTokens = Math.ceil((desired * 1.2) / 0.75); // add 20% buffer
       const limit = MODEL_CONTEXT_LIMITS[modelVersion] || 8000;
       maxTokens = Math.min(maxTokens, limit);
@@ -3343,7 +3531,7 @@ Write the full article in valid HTML below:
             systemPrompt,
             minLinks,
             maxTokens,
-            minWords,
+            listicleLength.minWords,
             reportingSources
           ),
         reportingSources,
@@ -3368,53 +3556,95 @@ Write the full article in valid HTML below:
     const referenceIso = deriveReferenceIsoTimestamp(reportingSources);
     const systemPrompt = buildSystemPrompt(referenceIso);
 
-    let sectionInstruction: string;
-    if (lengthOption === 'default') {
-      sectionInstruction = 'Include around 9 <h2> headings.';
-    } else if (lengthOption === 'custom' && customSections) {
-      sectionInstruction = `Use exactly ${customSections} <h2> headings.`;
-    } else if (sectionRanges[lengthOption || 'medium']) {
-      const [minS, maxS] = sectionRanges[lengthOption || 'medium'];
-      sectionInstruction =
-        `Include ${minS}–${maxS} <h2> headings.`;
-    } else {
-      sectionInstruction = 'Include at least three <h2> headings.';
-    }
-
-    const reportingContext = reportingBlock ? `${reportingBlock}\n\n` : '';
-    const baseOutline = buildOutlinePrompt({
-      title,
-      reportingContext,
-      sectionInstruction,
-      referenceBlock,
-    });
-
-    const outline = await generateOutlineWithFallback(
-      baseOutline,
-      modelVersion
-    );
-
     const customInstruction = customInstructions?.trim();
     const customInstructionBlock = customInstruction
       ? `- ${customInstruction}\n`
       : '';
-    const [minWords, maxWords] = getWordBounds(lengthOption, customSections);
-    let lengthInstruction: string;
-    if (lengthOption === 'default') {
-      lengthInstruction =
-        `- Use around 9 sections, and the article must contain at least ${minWords.toLocaleString()} words (target roughly ${DEFAULT_WORDS.toLocaleString()} words total, ~220 words per section, and keep it under ${maxWords.toLocaleString()} words).\n`;
-    } else if (lengthOption === 'custom' && customSections) {
-      const approx = customSections * 220;
-      lengthInstruction = `- Use exactly ${customSections} sections, and the article must contain at least ${minWords.toLocaleString()} words (~${approx.toLocaleString()} words total; keep it under ${maxWords.toLocaleString()} words).\n`;
-    } else if (WORD_RANGES[lengthOption || 'medium']) {
-      const [minS, maxS] = sectionRanges[lengthOption || 'medium'];
-      const minW = minWords.toLocaleString();
-      const maxW = maxWords.toLocaleString();
-      lengthInstruction =
-        `- Include ${minS}–${maxS} sections and write between ${minW} and ${maxW} words.\n`;
+    const reportingContext = reportingBlock ? `${reportingBlock}\n\n` : '';
+    const [baseMinWords, baseMaxWords] = getWordBounds(lengthOption, customSections);
+    const blogExtraRequirements = [
+      'Avoid starting paragraphs with dates and omit dates unless they add essential context; when a date is necessary, place it after the subject rather than leading with it.',
+      'Center each section on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.',
+    ];
+
+    let outline: string;
+    let lengthInstruction = '';
+    let numberingInstruction = '';
+    let wordCountInstruction = '';
+    let minWordsForGeneration = baseMinWords;
+
+    if (isListicleMode) {
+      const count = deriveListicleItemCount(title);
+      const outlinePrompt = buildListicleOutlinePrompt({
+        title,
+        reportingContext,
+        referenceBlock,
+        count,
+        listNumberingFormat,
+      });
+
+      outline = await generateOutlineWithFallback(
+        outlinePrompt,
+        modelVersion,
+        0.6
+      );
+
+      const listicleLength = buildListicleLengthArtifacts({
+        count,
+        listItemWordCount,
+        listNumberingFormat,
+        minWords: baseMinWords,
+        maxWords: baseMaxWords,
+      });
+
+      minWordsForGeneration = listicleLength.minWords;
+      lengthInstruction = listicleLength.lengthInstruction;
+      numberingInstruction = listicleLength.numberingInstruction;
+      wordCountInstruction = listicleLength.wordCountInstruction;
     } else {
-      lengthInstruction =
-        `- Include at least three <h2> headings, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
+      let sectionInstruction: string;
+      if (lengthOption === 'default') {
+        sectionInstruction = 'Include around 9 <h2> headings.';
+      } else if (lengthOption === 'custom' && customSections) {
+        sectionInstruction = `Use exactly ${customSections} <h2> headings.`;
+      } else if (sectionRanges[lengthOption || 'medium']) {
+        const [minS, maxS] = sectionRanges[lengthOption || 'medium'];
+        sectionInstruction =
+          `Include ${minS}–${maxS} <h2> headings.`;
+      } else {
+        sectionInstruction = 'Include at least three <h2> headings.';
+      }
+
+      const baseOutline = buildOutlinePrompt({
+        title,
+        reportingContext,
+        sectionInstruction,
+        referenceBlock,
+      });
+
+      outline = await generateOutlineWithFallback(
+        baseOutline,
+        modelVersion
+      );
+
+      const minWords = baseMinWords;
+      const maxWords = baseMaxWords;
+      if (lengthOption === 'default') {
+        lengthInstruction =
+          `- Use around 9 sections, and the article must contain at least ${minWords.toLocaleString()} words (target roughly ${DEFAULT_WORDS.toLocaleString()} words total, ~220 words per section, and keep it under ${maxWords.toLocaleString()} words).\n`;
+      } else if (lengthOption === 'custom' && customSections) {
+        const approx = customSections * 220;
+        lengthInstruction = `- Use exactly ${customSections} sections, and the article must contain at least ${minWords.toLocaleString()} words (~${approx.toLocaleString()} words total; keep it under ${maxWords.toLocaleString()} words).\n`;
+      } else if (WORD_RANGES[lengthOption || 'medium']) {
+        const [minS, maxS] = sectionRanges[lengthOption || 'medium'];
+        const minW = minWords.toLocaleString();
+        const maxW = maxWords.toLocaleString();
+        lengthInstruction =
+          `- Include ${minS}–${maxS} sections and write between ${minW} and ${maxW} words.\n`;
+      } else {
+        lengthInstruction =
+          `- Include at least three <h2> headings, and the article must contain at least ${minWords.toLocaleString()} words while staying under ${maxWords.toLocaleString()} words.\n`;
+      }
     }
 
     const requiredLinks = linkSources.slice(
@@ -3435,23 +3665,34 @@ Write the full article in valid HTML below:
       : '';
 
     const reportingSection = reportingBlock ? `${reportingBlock}\n\n` : '';
-    const extraRequirements = [
-      'Avoid starting paragraphs with dates and omit dates unless they add essential context; when a date is necessary, place it after the subject rather than leading with it.',
-      'Center each section on the main topic by synthesizing the reporting and mention publishers only within citations, not as standalone subjects.',
-    ];
 
-    const articlePrompt = buildArticlePrompt({
-      title,
-      outline,
-      reportingSection,
-      toneInstruction,
-      povInstruction,
-      lengthInstruction,
-      groundingInstruction,
-      customInstructionBlock,
-      linkInstruction,
-      extraRequirements,
-    });
+    const articlePrompt = isListicleMode
+      ? buildListicleArticlePrompt({
+          title,
+          outline,
+          reportingSection,
+          toneInstruction,
+          povInstruction,
+          groundingInstruction,
+          customInstructionBlock,
+          linkInstruction,
+          lengthInstruction,
+          numberingInstruction,
+          wordCountInstruction,
+          extraRequirements: blogExtraRequirements,
+        })
+      : buildArticlePrompt({
+          title,
+          outline,
+          reportingSection,
+          toneInstruction,
+          povInstruction,
+          lengthInstruction,
+          groundingInstruction,
+          customInstructionBlock,
+          linkInstruction,
+          extraRequirements: blogExtraRequirements,
+        });
 
     const runArticleGeneration = (prompt: string) =>
       generateWithVerification(
@@ -3463,7 +3704,7 @@ Write the full article in valid HTML below:
             systemPrompt,
             minLinks,
             baseMaxTokens,
-            minWords,
+            minWordsForGeneration,
             reportingSources
           ),
         reportingSources,
