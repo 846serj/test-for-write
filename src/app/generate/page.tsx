@@ -7,7 +7,10 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import clsx from 'clsx';
 import { DEFAULT_WORDS, WORD_RANGES } from '../../constants/lengthOptions';
-import { buildHeadlineRequest } from './headlineFormHelpers';
+import {
+  buildHeadlineRequest,
+  type HeadlineRequestMode,
+} from './headlineFormHelpers';
 import {
   formatHeadlinesForClipboard,
   HEADLINE_CLIPBOARD_HEADERS,
@@ -28,7 +31,7 @@ const SORT_BY_OPTIONS = [
 
 const DEFAULT_HEADLINE_LIMIT = 100;
 const HEADLINE_LANGUAGE = 'en';
-type HeadlineFetchMode = 'rss' | 'search';
+type HeadlineFetchMode = HeadlineRequestMode;
 
 const NO_RECENT_NEWS_MESSAGE =
   'No recent news on this topic. Adjust your topic, keywords, or timeframe to broaden the search for relevant reporting.';
@@ -847,13 +850,14 @@ export default function GeneratePage() {
     const nextDescription = nextDescriptionRaw.trim();
     const nextKeywords = overrides?.keywords ?? keywords;
     const nextRssFeeds = overrides?.rssFeeds ?? activeSiteRssFeeds;
-    const nextMode: HeadlineFetchMode | null =
+    const activeModeFallback: HeadlineFetchMode = activeSiteMode ?? 'auto';
+    const nextMode: HeadlineFetchMode =
       overrides?.mode ??
       (nextRssFeeds.length > 0 && nextKeywords.length === 0
         ? 'rss'
         : nextKeywords.length > 0
         ? 'search'
-        : activeSiteMode);
+        : activeModeFallback);
     const nextFromDate =
       overrides && overrides.fromDate !== undefined
         ? overrides.fromDate
@@ -874,7 +878,7 @@ export default function GeneratePage() {
     }
 
     if (overrides?.mode) {
-      setActiveSiteMode(overrides.mode);
+      setActiveSiteMode(overrides.mode === 'auto' ? null : overrides.mode);
     }
 
     if (overrides?.fromDate !== undefined) {
@@ -903,6 +907,7 @@ export default function GeneratePage() {
       rssFeeds: nextRssFeeds,
       dedupeMode: 'strict',
       excludeUrls,
+      mode: nextMode,
     });
 
     setActiveSiteRssFeeds(buildResult.sanitizedRssFeeds);
@@ -913,7 +918,14 @@ export default function GeneratePage() {
       return;
     }
 
-    setHeadlineLoadingMode(nextMode);
+    const payloadMode: HeadlineFetchMode = (() => {
+      const rawMode = (buildResult.payload as { mode?: unknown }).mode;
+      return rawMode === 'rss' || rawMode === 'search' || rawMode === 'auto'
+        ? rawMode
+        : nextMode;
+    })();
+
+    setHeadlineLoadingMode(payloadMode);
     setHeadlineLoading(true);
     setHeadlineError(null);
     setHeadlineQueries([]);
