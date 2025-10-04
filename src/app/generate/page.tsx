@@ -1221,8 +1221,9 @@ export default function GeneratePage() {
           )}
 
           {/* TONE OF VOICE */}
-          <div>
-            <label className={labelStyle}>Tone of Voice</label>
+          {articleType !== 'Recipe article' && (
+            <div>
+              <label className={labelStyle}>Tone of Voice</label>
             <select
               className={clsx(inputStyle, 'mb-2')}
               value={toneOfVoice}
@@ -1248,11 +1249,13 @@ export default function GeneratePage() {
                 onChange={(e) => setCustomTone(e.target.value)}
               />
             )}
-          </div>
+            </div>
+          )}
 
           {/* POINT OF VIEW */}
-          <div>
-            <label className={labelStyle}>Point of View</label>
+          {articleType !== 'Recipe article' && (
+            <div>
+              <label className={labelStyle}>Point of View</label>
             <select
               className={clsx(inputStyle, 'mb-2')}
               value={pointOfView}
@@ -1269,28 +1272,34 @@ export default function GeneratePage() {
                 Third Person (he, she, it, they)
               </option>
             </select>
-          </div>
+            </div>
+          )}
 
           {/* USE SERP API */}
-          <div className="flex items-center">
-          <input id="use-serp-api" type="checkbox" checked={useSerpApi} onChange={(e) => setUseSerpApi(e.target.checked)} className="mr-2 h-4 w-4" />
-          <label htmlFor="use-serp-api" className="text-sm font-medium text-gray-700 dark:text-gray-300">Use SERP API for sources</label>
-        </div>
-        <div className="flex items-center">
-          <input
-            id="include-links"
-            type="checkbox"
-            checked={includeLinks}
-            onChange={(e) => setIncludeLinks(e.target.checked)}
-            className="mr-2 h-4 w-4"
-          />
-          <label htmlFor="include-links" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Include links in article
-          </label>
-        </div>
+          {articleType !== 'Recipe article' && (
+            <>
+              <div className="flex items-center">
+                <input id="use-serp-api" type="checkbox" checked={useSerpApi} onChange={(e) => setUseSerpApi(e.target.checked)} className="mr-2 h-4 w-4" />
+                <label htmlFor="use-serp-api" className="text-sm font-medium text-gray-700 dark:text-gray-300">Use SERP API for sources</label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  id="include-links"
+                  type="checkbox"
+                  checked={includeLinks}
+                  onChange={(e) => setIncludeLinks(e.target.checked)}
+                  className="mr-2 h-4 w-4"
+                />
+                <label htmlFor="include-links" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Include links in article
+                </label>
+              </div>
+            </>
+          )}
           {/* ─── MODEL VERSION ─────────────────────────────────────────────────────── */}
-          <div>
-            <label className={labelStyle}>Model Version</label>
+          {articleType !== 'Recipe article' && (
+            <div>
+              <label className={labelStyle}>Model Version</label>
             <div className="flex space-x-2">
               {models.map((m) => (
                 <button
@@ -1307,7 +1316,8 @@ export default function GeneratePage() {
                 </button>
               ))}
             </div>
-          </div>
+            </div>
+          )}
 
           {/* GENERATE BUTTON */}
           <div className="pt-4">
