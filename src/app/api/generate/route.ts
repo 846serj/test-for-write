@@ -3113,7 +3113,6 @@ export async function POST(request: Request) {
       title,
       listNumberingFormat,
       listItemWordCount = 100,
-      formatAsListicle = false,
       toneOfVoice,
       customTone,
       pointOfView,
@@ -3128,7 +3127,6 @@ export async function POST(request: Request) {
       title: string;
       listNumberingFormat?: string;
       listItemWordCount?: number;
-      formatAsListicle?: boolean;
       toneOfVoice?: string;
       customTone?: string;
       pointOfView?: string;
@@ -3144,7 +3142,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing title' }, { status: 400 });
     }
 
-    const isListicleMode = Boolean(formatAsListicle) || articleType === 'Listicle/Gallery';
+    const isListicleMode = articleType === 'Listicle/Gallery';
     const serpEnabled = includeLinks && useSerpApi && !!process.env.SERPAPI_KEY;
     const baseMaxTokens = calcMaxTokens(lengthOption, customSections, modelVersion);
     const toneChoice =

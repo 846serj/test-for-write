@@ -183,9 +183,7 @@ export default function GeneratePage() {
     | 'Recipe article'
     | 'News article'
   >('Blog post');
-  const [formatAsListicle, setFormatAsListicle] = useState(false);
-  const isListicleMode =
-    articleType === 'Listicle/Gallery' || formatAsListicle;
+  const isListicleMode = articleType === 'Listicle/Gallery';
 
   // for blog posts
   const [lengthOption, setLengthOption] = useState<
@@ -485,7 +483,6 @@ export default function GeneratePage() {
         modelVersion,
         useSerpApi,
         includeLinks,
-        formatAsListicle,
       };
 
       if (articleType === 'Listicle/Gallery') {
@@ -499,11 +496,6 @@ export default function GeneratePage() {
         payload.lengthOption = lengthOption;
         payload.customSections =
           lengthOption === 'custom' ? customSections : undefined;
-      }
-
-      if (isListicleMode) {
-        payload.listNumberingFormat = numberingFormat;
-        payload.listItemWordCount = itemWordCount;
       }
 
       // Save payload for future regeneration
@@ -1086,9 +1078,6 @@ export default function GeneratePage() {
                   | 'Recipe article'
                   | 'News article';
                 setArticleType(nextType);
-                if (nextType === 'Listicle/Gallery') {
-                  setFormatAsListicle(true);
-                }
               }}
             >
               <option value="Blog post">Blog post</option>
@@ -1096,26 +1085,6 @@ export default function GeneratePage() {
               <option value="Recipe article">Recipe article</option>
               <option value="News article">News article</option>
             </select>
-            <div className="mt-2 flex items-center gap-2">
-              <input
-                id="generate-format-as-listicle"
-                type="checkbox"
-                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                checked={
-                  articleType === 'Listicle/Gallery' ? true : formatAsListicle
-                }
-                disabled={articleType === 'Listicle/Gallery'}
-                onChange={(event) =>
-                  setFormatAsListicle(event.target.checked)
-                }
-              />
-              <label
-                htmlFor="generate-format-as-listicle"
-                className="text-sm font-medium text-gray-700 dark:text-gray-300"
-              >
-                Format as listicle
-              </label>
-            </div>
           </div>
 
           {/* CUSTOM INSTRUCTIONS */}
