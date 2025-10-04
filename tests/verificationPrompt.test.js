@@ -136,15 +136,13 @@ test('verifyOutput sends prompts directly to verification helpers', () => {
     'verifyOutput should determine whether a Grok key is available.'
   );
   assert(
-    routeTs.includes('const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY?.trim());'),
-    'verifyOutput should determine whether an OpenAI key is available.'
-  );
-  assert(
     routeTs.includes('runGrokVerificationWithRetry(prompt);'),
     'verifyOutput should pass only the prompt to Grok verification.'
   );
-  const openAiCalls = routeTs.match(/runOpenAIVerificationWithTimeout\(\s*prompt\s*\)/g);
-  assert(openAiCalls && openAiCalls.length >= 1, 'OpenAI verification should receive just the prompt.');
+  assert(
+    !routeTs.includes('runOpenAIVerificationWithTimeout'),
+    'OpenAI verification fallback should be removed.'
+  );
 });
 
 test('deriveReferenceIsoTimestamp enforces future drift guard', () => {
@@ -160,16 +158,6 @@ test('deriveReferenceIsoTimestamp enforces future drift guard', () => {
   assert(
     helperBody.includes('parsePublishedTimestamp'),
     'Helper should parse publishedAt fields before comparison.'
-  );
-});
-
-test('verifyOutput supports OpenAI-only verification path when Grok key missing', () => {
-  const openAiOnlyBlock = routeTs.match(
-    /if \(!hasGrokKey\) {([\s\S]*?)runOpenAIVerificationWithTimeout\(\s*prompt\s*\)/
-  );
-  assert(
-    openAiOnlyBlock,
-    'verifyOutput should call runOpenAIVerificationWithTimeout when Grok is unavailable.'
   );
 });
 
@@ -206,7 +194,6 @@ test('verifyOutput logs a success message when Grok approves an article', async 
   vm.runInContext(
     `
       runGrokVerificationWithRetry = async () => JSON.stringify({ discrepancies: [] });
-      runOpenAIVerificationWithTimeout = async () => { throw new Error('OpenAI should not run'); };
     `,
     context
   );
@@ -222,13 +209,12 @@ test('verifyOutput logs a success message when Grok approves an article', async 
   );
 });
 
-test('verifyOutput does not log Grok success when falling back to OpenAI', async () => {
+test('verifyOutput does not log Grok success when verification fallback is unavailable', async () => {
   const { context, infoLogs } = createVerificationSandbox({ OPENAI_API_KEY: 'openai-key' });
 
   vm.runInContext(
     `
       runGrokVerificationWithRetry = async () => { throw new Error('primary failure'); };
-      runOpenAIVerificationWithTimeout = async () => JSON.stringify({ discrepancies: [] });
     `,
     context
   );
@@ -239,7 +225,7 @@ test('verifyOutput does not log Grok success when falling back to OpenAI', async
   assert.strictEqual(result.discrepancies.length, 0);
   assert(
     !infoLogs.some((entry) => entry.includes('GROK_VERIFICATION_SUCCEEDED')),
-    'Grok success log should not fire when verification falls back to OpenAI.'
+    'Grok success log should not fire when verification fails.'
   );
 });
 
@@ -253,7 +239,6 @@ test('verifyOutput does not log Grok success when discrepancies are reported', a
           { description: 'Mismatch detected', severity: 'critical' }
         ],
       });
-      runOpenAIVerificationWithTimeout = async () => { throw new Error('OpenAI should not run'); };
     `,
     context
   );
