@@ -2811,34 +2811,6 @@ async function runGrokVerificationWithRetry(prompt: string): Promise<string> {
     : new Error('Verification request failed unexpectedly');
 }
 
-async function runOpenAIVerificationWithTimeout(prompt: string): Promise<string> {
-  const openai = getOpenAI();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), VERIFICATION_TIMEOUT_MS);
-
-  try {
-    const messages = [{ role: 'user' as const, content: prompt }];
-
-    const model = process.env.OPENAI_VERIFICATION_MODEL?.trim() || 'gpt-4o-mini';
-    const response = await openai.chat.completions.create(
-      {
-        model,
-        temperature: 0,
-        messages,
-      },
-      { signal: controller.signal }
-    );
-
-    const content = response.choices[0]?.message?.content?.trim();
-    if (!content) {
-      throw new Error('Verification response contained no content');
-    }
-    return content;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 function evaluateVerificationResponse(
   response: string,
   themeCoverageIssue: ThemeCoverageIssue | null
@@ -2999,21 +2971,8 @@ async function verifyOutput(
   ].join('\n');
 
   const hasGrokKey = Boolean(process.env.GROK_API_KEY?.trim());
-  const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY?.trim());
 
   if (!hasGrokKey) {
-    if (hasOpenAIKey) {
-      try {
-        const openAiOnlyResponse = await runOpenAIVerificationWithTimeout(prompt);
-        return evaluateVerificationResponse(openAiOnlyResponse, themeCoverageIssue);
-      } catch (openAiErr) {
-        console.warn(
-          '[api/generate] OPENAI_VERIFICATION_FAILED – verification failed without Grok key',
-          openAiErr
-        );
-      }
-    }
-
     if (themeCoverageIssue) {
       console.warn('Theme coverage issue detected:', themeCoverageIssue);
       return {
@@ -3034,19 +2993,7 @@ async function verifyOutput(
     return verificationResult;
   } catch (err) {
     console.warn('[api/generate] GROK_REVIEW_FAILED – verification failed', err);
-
-    if (hasOpenAIKey) {
-      try {
-        const fallbackResponse = await runOpenAIVerificationWithTimeout(prompt);
-        return evaluateVerificationResponse(fallbackResponse, themeCoverageIssue);
-      } catch (openAiErr) {
-        console.warn(
-          '[api/generate] OPENAI_FALLBACK_FAILED – verification failed',
-          openAiErr
-        );
-      }
-    }
-
+    console.warn('[api/generate] Verification fallback unavailable; skipping accuracy review.');
     if (themeCoverageIssue) {
       console.warn('Theme coverage issue detected:', themeCoverageIssue);
       return {
