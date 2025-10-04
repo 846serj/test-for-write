@@ -216,7 +216,9 @@ export default function WordPressIntegration({ title, content }: Props) {
         if (isData) {
           blob = dataUrlToBlob(src);
         } else {
-          const fetched = await fetch(src);
+          // Use proxy to fetch external images to avoid CORS issues
+          const proxyUrl = `/api/wordpress/proxy?userId=${userId}&accountId=${selectedId}&url=${encodeURIComponent(src)}`;
+          const fetched = await fetch(proxyUrl);
           if (!fetched.ok) throw new Error('Failed to fetch image');
           const original = await fetched.blob();
           blob = await getCroppedImg(original);

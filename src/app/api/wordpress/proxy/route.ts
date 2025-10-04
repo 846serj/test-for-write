@@ -119,9 +119,23 @@ async function handleRequest(req: NextRequest, method: string) {
       );
     }
 
-    // 7. On success, forward the JSON data back to the client
+    // 7. On success, forward the response back to the client
+    const responseContentType = wpResponse.headers.get('content-type');
+    
+    // If it's an image or binary content, return it directly
+    if (responseContentType?.startsWith('image/') || responseContentType?.startsWith('application/octet-stream')) {
+      const buffer = await wpResponse.arrayBuffer();
+      return new NextResponse(buffer, {
+        status: wpResponse.status,
+        headers: {
+          'Content-Type': responseContentType || 'application/octet-stream',
+          'Cache-Control': 'no-store, no-cache',
+        },
+      });
+    }
+    
+    // For JSON responses, parse and return as JSON
     const data = await wpResponse.json();
-    // Include any relevant headers from WP (e.g., pagination) in the response
     const responseHeaders = new Headers();
     ['x-wp-total', 'x-wp-totalpages', 'content-type'].forEach(h => {
       const val = wpResponse.headers.get(h);
