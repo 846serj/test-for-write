@@ -4,8 +4,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "generate:recipe-embeddings": "node scripts/generateRecipeEmbeddings.js"
+    "start": "next start"
   },
   "dependencies": {
     "@supabase/ssr": "^0.6.1",

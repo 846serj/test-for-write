@@ -29,8 +29,3 @@ export interface WordPressPostResponse {
   };
 }
 
-export interface RecipeResult {
-  id: string;
-  title: string;
-  url?: string;
-}

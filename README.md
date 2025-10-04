@@ -48,15 +48,6 @@ examples. Generated content will reference real car models, release years or app
 names instead of placeholders like "App 1". You can override this by providing
 custom instructions.
 
-## Recipe embedding workflow
-
-Recipe search relies on vector embeddings stored in `data/recipeEmbeddings.json`.
-Run `npm run generate:recipe-embeddings` to regenerate this file after adding or
-editing recipes in Airtable. The script skips unchanged records by comparing a
-hash of each recipe's content, so only new or modified recipes trigger fresh
-embedding requests. A scheduled GitHub Action automatically executes this task
-weekly and commits any updates back to the repository, ensuring the JSON file
-stays current.
 
 ## Headlines fetching
 

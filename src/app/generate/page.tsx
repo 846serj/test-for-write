@@ -333,7 +333,7 @@ export default function GeneratePage() {
     | 'Third Person'
   >('First Person Singular');
 
-  // Listicle/Recipe fields
+  // Listicle fields
   const [numberingFormat, setNumberingFormat] = useState<
     | '1), 2), 3)'
     | '1., 2., 3.'
@@ -341,7 +341,7 @@ export default function GeneratePage() {
     | 'None'
   >('1), 2), 3)');
   const [itemWordCount, setItemWordCount] = useState<number>(100);
-  const [recipeItemCount, setRecipeItemCount] = useState<number>(5);
+  const [recipeQuery, setRecipeQuery] = useState<string>('');
 
   // ─── NEW: MODEL VERSION ───────────────────────────────────────────────────────
   const models = ['gpt-4', 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'];
@@ -454,6 +454,47 @@ export default function GeneratePage() {
     });
   };
 
+  const handleRecipeGenerate = async () => {
+    if (!recipeQuery.trim()) {
+      alert('Enter a recipe query first');
+      return;
+    }
+
+    setLoading(true);
+    setGenerateError(null);
+    try {
+      const response = await fetch('https://web-production-0dac.up.railway.app/api/recipe-query', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: recipeQuery,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Recipe API error: ${response.status}`);
+      }
+
+      const recipeData = await response.json();
+      
+      // Store the generated content
+      try {
+        localStorage.setItem('lastArticleContent', recipeData.content || recipeData.article || JSON.stringify(recipeData, null, 2));
+        localStorage.setItem('lastArticleSources', JSON.stringify(recipeData.sources || []));
+      } catch {}
+
+      // Redirect to editor
+      router.push(`/editor?title=${encodeURIComponent(recipeQuery)}`);
+      setGenerateError(null);
+    } catch (error) {
+      console.error('Recipe generation error:', error);
+      setGenerateError(error instanceof Error ? error.message : 'Failed to generate recipe article');
+      setLoading(false);
+    }
+  };
+
   const handleGenerate = async () => {
     if (!title.trim()) {
       alert('Enter a title first');
@@ -461,10 +502,6 @@ export default function GeneratePage() {
     }
     if (articleType === 'Blog post' && lengthOption === 'custom' && customSections < 1) {
       alert('Enter a valid number of sections');
-      return;
-    }
-    if (articleType === 'Recipe article' && recipeItemCount < 1) {
-      alert('Enter a valid number of recipes');
       return;
     }
 
@@ -488,10 +525,6 @@ export default function GeneratePage() {
       if (articleType === 'Listicle/Gallery') {
         payload.listNumberingFormat = numberingFormat;
         payload.listItemWordCount = itemWordCount;
-      } else if (articleType === 'Recipe article') {
-        payload.numberingFormat = numberingFormat;
-        payload.wordsPerItem = itemWordCount;
-        payload.itemCount = recipeItemCount;
       } else {
         payload.lengthOption = lengthOption;
         payload.customSections =
@@ -503,8 +536,7 @@ export default function GeneratePage() {
         localStorage.setItem('lastPrompt', JSON.stringify(payload));
       } catch {}
 
-      const url =
-        articleType === 'Recipe article' ? '/api/generate-recipe' : '/api/generate';
+      const url = '/api/generate';
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1048,19 +1080,21 @@ export default function GeneratePage() {
         {activeTab === 'writing' ? (
           <div className="space-y-6 bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
           {/* TITLE */}
-          <div>
-            <label className={labelStyle} htmlFor="generate-title">
-              Title
-            </label>
-            <input
-              type="text"
-              className={inputStyle}
-              placeholder="Enter article title"
-              value={title}
-              id="generate-title"
-              onChange={(e) => setTitle(e.target.value)}
-            />
-          </div>
+          {articleType !== 'Recipe article' && (
+            <div>
+              <label className={labelStyle} htmlFor="generate-title">
+                Title
+              </label>
+              <input
+                type="text"
+                className={inputStyle}
+                placeholder="Enter article title"
+                value={title}
+                id="generate-title"
+                onChange={(e) => setTitle(e.target.value)}
+              />
+            </div>
+          )}
 
           {/* ARTICLE TYPE */}
           <div>
@@ -1088,19 +1122,21 @@ export default function GeneratePage() {
           </div>
 
           {/* CUSTOM INSTRUCTIONS */}
-          <div>
-            <label className={labelStyle}>Custom Instructions (optional)</label>
-            <textarea
-              className={inputStyle}
-              rows={3}
-              placeholder="Any additional guidance for the article"
-              value={customInstructions}
-              onChange={(e) => setCustomInstructions(e.target.value)}
-            />
-          </div>
+          {articleType !== 'Recipe article' && (
+            <div>
+              <label className={labelStyle}>Custom Instructions (optional)</label>
+              <textarea
+                className={inputStyle}
+                rows={3}
+                placeholder="Any additional guidance for the article"
+                value={customInstructions}
+                onChange={(e) => setCustomInstructions(e.target.value)}
+              />
+            </div>
+          )}
 
           {/* NUMBERING FORMAT */}
-          {(isListicleMode || articleType === 'Recipe article') && (
+          {isListicleMode && (
             <div>
               <label className={labelStyle}>Numbering Format</label>
               <select
@@ -1132,27 +1168,15 @@ export default function GeneratePage() {
             </div>
           ) : articleType === 'Recipe article' ? (
             <div>
-              <div className="flex items-center space-x-2">
-                <label className={labelStyle + ' mb-0'}>Number of recipes</label>
-                <input
-                  type="number"
-                  min={1}
-                  className={inputStyle + ' w-24'}
-                  value={recipeItemCount}
-                  onChange={(e) => setRecipeItemCount(Number(e.target.value))}
-                />
-              </div>
-              <div className="mt-2 flex items-center space-x-2">
-                <label className={labelStyle + ' mb-0'}>Words per item</label>
-                <input
-                  type="number"
-                  min={1}
-                  className={inputStyle + ' w-24'}
-                  value={itemWordCount}
-                  onChange={(e) => setItemWordCount(Number(e.target.value))}
-                />
-              </div>
-              </div>
+              <label className={labelStyle}>Recipe Query</label>
+              <input
+                type="text"
+                className={inputStyle}
+                placeholder="e.g., '12 italian dinners you don't wanna miss'"
+                value={recipeQuery}
+                onChange={(e) => setRecipeQuery(e.target.value)}
+              />
+            </div>
           ) : (
             <div>
               <label className={labelStyle}>Article Length / Sections</label>
@@ -1288,7 +1312,7 @@ export default function GeneratePage() {
           {/* GENERATE BUTTON */}
           <div className="pt-4">
             <button
-              onClick={handleGenerate}
+              onClick={articleType === 'Recipe article' ? handleRecipeGenerate : handleGenerate}
               disabled={loading}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded shadow"
             >
